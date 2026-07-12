@@ -1,0 +1,27 @@
+[graph]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+
+[advisories]
+
+[bans]
+multiple-versions = "allow"
+deny = [
+    { name = "openssl" },
+    { name = "openssl-sys" },
+    { name = "openssl-src" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 1.0
+allow = [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "MIT",
+    "Unicode-3.0",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
