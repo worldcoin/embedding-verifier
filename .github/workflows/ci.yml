@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -59,8 +62,6 @@ jobs:
   deny:
     name: Cargo deny
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     strategy:
       matrix:
         checks:
