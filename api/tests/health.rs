@@ -1,3 +1,5 @@
+//! Health-route integration tests.
+
 use api::{routes, types::Environment};
 use axum::{body::Body, http::Request};
 use tower::ServiceExt;

@@ -4,10 +4,18 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.97.0"
 version = "0.1.0"
 license = "MIT"
 publish = false
+
+[workspace.lints.clippy]
+all = "deny"
+pedantic = "deny"
+nursery = "deny"
+
+[workspace.lints.rust]
+dead_code = "deny"
+missing_docs = "deny"
 
 [workspace.dependencies]
 anyhow = "1.0"
