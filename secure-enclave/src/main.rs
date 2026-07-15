@@ -1,5 +1,8 @@
-use tracing::info;
+use secure_enclave::pontifex_server;
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
+
+const PONTIFEX_PORT: u32 = 1000;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -7,9 +10,12 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    info!("Secure enclave started");
-    tokio::signal::ctrl_c().await?;
-    info!("Secure enclave shutting down");
+    info!(port = PONTIFEX_PORT, "starting enclave Pontifex server");
 
-    Ok(())
+    pontifex_server::start(PONTIFEX_PORT)
+        .await
+        .map_err(|error| {
+            error!(%error, "enclave Pontifex server stopped");
+            error
+        })
 }
