@@ -6,27 +6,24 @@ Rust workspace for the embedding verifier API and secure enclave.
 
 ```text
 embedding-verifier/
-├── api/              # Axum HTTP API
-└── secure-enclave/   # Secure enclave process
+├── api/                    # Axum HTTP API
+├── secure-enclave/         # Secure enclave process
+└── shared/enclave-types/   # Host-to-enclave wire contracts
 ```
 
 ## Development
 
 ```bash
-# Run formatting and lint checks
+# Check the workspace
 cargo fmt --all -- --check
-cargo clippy --all-targets --all-features --
-
-# Build and test the workspace
-cargo build
-cargo test --all
+cargo clippy --locked --all-targets --all-features --
+cargo test --locked --all
+cargo build --locked --release
+cargo deny check
 
 # Run the API on http://localhost:8000
 RUST_LOG=info cargo run --bin api
 curl http://localhost:8000/health
-
-# Run the secure enclave placeholder
-RUST_LOG=info cargo run --bin secure-enclave
 ```
 
 ## Nitro-enabled development host
@@ -65,22 +62,5 @@ Install Rust and the components used by this workspace:
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
-rustup component add rustfmt clippy
-cargo test --all
+cargo test --locked --all
 ```
-
-For private repository access, install and authenticate the GitHub CLI using its
-[official RPM instructions](https://github.com/cli/cli/blob/trunk/docs/install_linux.md#dnf4).
-
-Optionally install Codex for development on the remote host:
-
-```bash
-curl -fsSL https://chatgpt.com/codex/install.sh | sh
-exec "$SHELL" -l
-codex login --device-auth
-codex doctor
-```
-
-To use the Codex desktop app, add a concrete host alias to your local `~/.ssh/config`, confirm
-`ssh <alias>` works, then select the host and repository path under **Settings > Connections**.
-See the [Codex remote connection guide](https://learn.chatgpt.com/docs/remote-connections#connect-to-an-ssh-host).

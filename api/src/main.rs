@@ -1,3 +1,5 @@
+//! Embedding-verifier API process.
+
 use tracing_subscriber::EnvFilter;
 
 use api::types::Environment;

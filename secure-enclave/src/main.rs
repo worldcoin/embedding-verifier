@@ -1,3 +1,5 @@
+//! Secure-enclave process.
+
 use secure_enclave::pontifex_server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
