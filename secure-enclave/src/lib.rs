@@ -10,3 +10,7 @@
 
 /// Pontifex operations exposed to the API host.
 pub mod pontifex_server;
+/// Nitro hardware RNG verification.
+pub mod rng;
+/// Boot-scoped enclave state.
+pub mod state;
