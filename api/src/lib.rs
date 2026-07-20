@@ -8,6 +8,7 @@
     dead_code
 )]
 
+pub mod enclave;
 pub mod routes;
 pub mod server;
 pub mod types;
