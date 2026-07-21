@@ -5,4 +5,8 @@ use serde::{Deserialize, Serialize};
 pub enum EnclaveError {
     /// The enclave is reachable but not ready to process requests.
     NotReady,
+    /// The Nitro Secure Module is unavailable.
+    SecureModuleNotInitialized,
+    /// The Nitro Secure Module could not produce an attestation document.
+    AttestationFailed,
 }

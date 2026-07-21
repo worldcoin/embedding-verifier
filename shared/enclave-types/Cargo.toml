@@ -9,3 +9,4 @@ publish.workspace = true
 [dependencies]
 pontifex = { workspace = true }
 serde = { workspace = true }
+serde_bytes.workspace = true
