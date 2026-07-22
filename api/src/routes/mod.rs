@@ -12,6 +12,6 @@ use crate::types::AppState;
 pub fn handler() -> Router<AppState> {
     Router::new()
         .route("/health", get(health::handler))
-        .route("/readyz", get(readiness::handler))
+        .route("/ready", get(readiness::handler))
         .route("/v1/enclave/transit-key", get(transit_key::handler))
 }

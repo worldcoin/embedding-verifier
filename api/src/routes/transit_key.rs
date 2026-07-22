@@ -12,6 +12,8 @@ pub struct TransitKeyResponse {
 pub async fn handler(
     State(state): State<AppState>,
 ) -> Result<Json<TransitKeyResponse>, StatusCode> {
+    // TODO: Accept a client-supplied nonce and bind it into the attestation to prevent replay.
+    // TODO: Cache the transit-key attestation when its nonce and freshness semantics permit reuse.
     let response = state
         .enclave_client()
         .get_transit_key()
