@@ -3,10 +3,11 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use enclave_types::{GetTransitKeyRequest, HealthRequest};
+use enclave_types::{BindPcpRequest, GetTransitKeyRequest, HealthRequest};
 use pontifex::Router;
 
 mod health;
+mod pcp_binding;
 mod transit_key;
 
 use crate::state::EnclaveState;
@@ -27,6 +28,7 @@ fn router(state: Arc<EnclaveState>) -> Router<Arc<EnclaveState>> {
     Router::with_state(state)
         .route::<HealthRequest, _, _>(health::handler)
         .route::<GetTransitKeyRequest, _, _>(transit_key::handler)
+        .route::<BindPcpRequest, _, _>(pcp_binding::handler)
 }
 
 #[cfg(test)]

@@ -9,4 +9,14 @@ pub enum EnclaveError {
     SecureModuleNotInitialized,
     /// The Nitro Secure Module could not produce an attestation document.
     AttestationFailed,
+    /// The sealed request could not be decrypted with the enclave transit key.
+    DecryptFailed,
+    /// The decrypted payload was not valid CBOR framing.
+    MalformedPcpPayload,
+    /// hashes.json was absent, not valid JSON, or the committed thumbnail hash was malformed.
+    InvalidHashesJson,
+    /// hashes.json did not contain a `thumbnail.png` entry.
+    ThumbnailHashMissing,
+    /// The credential image did not match the committed `thumbnail.png` hash.
+    ThumbnailHashMismatch,
 }

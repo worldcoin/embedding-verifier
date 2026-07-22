@@ -8,6 +8,8 @@
     dead_code
 )]
 
+/// PCP binding verification (transport-free).
+pub mod pcp;
 /// Pontifex operations exposed to the API host.
 pub mod pontifex_server;
 /// Nitro hardware RNG verification.
