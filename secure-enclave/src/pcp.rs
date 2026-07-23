@@ -16,10 +16,14 @@ use enclave_types::EnclaveError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// CBOR framing of the sealed-box plaintext. Owned by the enclave; not a wire type.
+/// CBOR framing of the sealed-box plaintext for a 2-way match. Owned by the enclave;
+/// not a wire type.
 #[derive(Serialize, Deserialize)]
-pub(crate) struct SealedPcpPayload {
-    /// Raw credential image bytes (e.g. the Orb PCP thumbnail).
+pub(crate) struct SealedMatchPayload {
+    /// Raw liveness image bytes.
+    #[serde(with = "serde_bytes")]
+    pub live_image: Vec<u8>,
+    /// Raw credential image bytes (the Orb PCP thumbnail).
     #[serde(with = "serde_bytes")]
     pub credential_image: Vec<u8>,
     /// Raw `hashes.json` bytes from the PCP.
@@ -27,7 +31,7 @@ pub(crate) struct SealedPcpPayload {
     pub hashes_json: Vec<u8>,
 }
 
-impl SealedPcpPayload {
+impl SealedMatchPayload {
     /// Decodes the CBOR-framed sealed payload.
     pub(crate) fn from_cbor(bytes: &[u8]) -> Result<Self, EnclaveError> {
         ciborium::from_reader(Cursor::new(bytes)).map_err(|_| EnclaveError::MalformedPcpPayload)
