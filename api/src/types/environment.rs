@@ -1,5 +1,7 @@
 //! Runtime environment configuration.
 
+use std::env;
+
 /// Runtime environment for the API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
@@ -21,7 +23,7 @@ impl Environment {
     /// Panics when `APP_ENV` is not `development`, `staging`, or `production`.
     #[must_use]
     pub fn from_env() -> Self {
-        let environment = std::env::var("APP_ENV")
+        let environment = env::var("APP_ENV")
             .unwrap_or_else(|_| "development".to_owned())
             .trim()
             .to_lowercase();
@@ -32,5 +34,32 @@ impl Environment {
             "development" => Self::Development,
             _ => panic!("invalid APP_ENV: {environment}"),
         }
+    }
+
+    /// Returns the configured Nitro enclave CID.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `ENCLAVE_CID` is unset or is not a valid `u32`.
+    #[must_use]
+    pub fn enclave_cid(&self) -> u32 {
+        Self::required_u32("ENCLAVE_CID")
+    }
+
+    /// Returns the configured enclave Pontifex port.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `ENCLAVE_PORT` is unset or is not a valid `u32`.
+    #[must_use]
+    pub fn enclave_port(&self) -> u32 {
+        Self::required_u32("ENCLAVE_PORT")
+    }
+
+    fn required_u32(name: &str) -> u32 {
+        env::var(name)
+            .unwrap_or_else(|_| panic!("{name} environment variable is not set"))
+            .parse()
+            .unwrap_or_else(|_| panic!("{name} environment variable is not a valid u32"))
     }
 }

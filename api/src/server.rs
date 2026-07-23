@@ -6,7 +6,7 @@ use anyhow::Context;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
-use crate::{routes, types::Environment};
+use crate::{routes, types::AppState};
 
 const DEFAULT_PORT: u16 = 8000;
 
@@ -16,7 +16,7 @@ const DEFAULT_PORT: u16 = 8000;
 ///
 /// Returns an error when the configured port is invalid, the listener cannot bind, or the server
 /// exits unexpectedly.
-pub async fn start(environment: Environment) -> anyhow::Result<()> {
+pub async fn start(state: AppState) -> anyhow::Result<()> {
     let port = std::env::var("PORT").map_or(Ok(DEFAULT_PORT), |value| value.parse())?;
     let address = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = TcpListener::bind(address)
@@ -28,7 +28,7 @@ pub async fn start(environment: Environment) -> anyhow::Result<()> {
     axum::serve(
         listener,
         routes::handler()
-            .with_state(environment)
+            .with_state(state)
             .layer(TraceLayer::new_for_http())
             .into_make_service(),
     )

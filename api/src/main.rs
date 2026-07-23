@@ -1,6 +1,10 @@
-use tracing_subscriber::EnvFilter;
+use std::sync::Arc;
 
-use api::types::Environment;
+use api::{
+    enclave::PontifexEnclaveClient,
+    types::{AppState, Environment},
+};
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -11,5 +15,11 @@ async fn main() -> anyhow::Result<()> {
     let environment = Environment::from_env();
     tracing::info!(?environment, "Starting API");
 
-    api::server::start(environment).await
+    let enclave_client = Arc::new(PontifexEnclaveClient::new(
+        environment.enclave_cid(),
+        environment.enclave_port(),
+    ));
+    let state = AppState::new(environment, enclave_client);
+
+    api::server::start(state).await
 }
