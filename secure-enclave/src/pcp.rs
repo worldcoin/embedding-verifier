@@ -42,7 +42,7 @@ impl SealedMatchPayload {
 #[derive(Deserialize)]
 struct HashesJson {
     #[serde(rename = "thumbnail.png")]
-    thumbnail_png: Option<String>,
+    thumbnail_png: String,
 }
 
 /// Binds `credential_image` to the `thumbnail.png` hash committed in `hashes_json`
@@ -61,10 +61,7 @@ pub(crate) fn verify_pcp(
     let parsed: HashesJson =
         serde_json::from_slice(hashes_json).map_err(|_| EnclaveError::InvalidHashesJson)?;
 
-    let thumbnail_hex = parsed
-        .thumbnail_png
-        .ok_or(EnclaveError::ThumbnailHashMissing)?;
-    let committed: [u8; 32] = hex::decode(&thumbnail_hex)
+    let committed: [u8; 32] = hex::decode(&parsed.thumbnail_png)
         .map_err(|_| EnclaveError::InvalidHashesJson)?
         .try_into()
         .map_err(|_| EnclaveError::InvalidHashesJson)?;
@@ -130,9 +127,10 @@ mod tests {
 
     #[test]
     fn rejects_missing_thumbnail_entry() {
+        // Absent `thumbnail.png` is now a deserialization failure (required field).
         let result = verify_pcp(b"image", br#"{"version":"1"}"#);
 
-        assert_eq!(result, Err(EnclaveError::ThumbnailHashMissing));
+        assert_eq!(result, Err(EnclaveError::InvalidHashesJson));
     }
 
     #[test]

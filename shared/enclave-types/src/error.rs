@@ -13,10 +13,9 @@ pub enum EnclaveError {
     DecryptFailed,
     /// The decrypted payload was not valid CBOR framing.
     MalformedPcpPayload,
-    /// hashes.json was absent, not valid JSON, or the committed thumbnail hash was malformed.
+    /// hashes.json was absent, not valid JSON, missing the `thumbnail.png` entry, or the
+    /// committed thumbnail hash was malformed.
     InvalidHashesJson,
-    /// hashes.json did not contain a `thumbnail.png` entry.
-    ThumbnailHashMissing,
     /// The credential image did not match the committed `thumbnail.png` hash.
     ThumbnailHashMismatch,
 }
