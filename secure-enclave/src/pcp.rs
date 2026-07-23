@@ -16,7 +16,7 @@ use enclave_types::EnclaveError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// CBOR framing of the sealed-box plaintext for a 2-way match. Owned by the enclave;
+/// CBOR framing of the sealed-box plaintext for a 3-way match. Owned by the enclave;
 /// not a wire type.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct SealedMatchPayload {
@@ -29,6 +29,13 @@ pub(crate) struct SealedMatchPayload {
     /// Raw `hashes.json` bytes from the PCP.
     #[serde(with = "serde_bytes")]
     pub hashes_json: Vec<u8>,
+    /// Raw challenge image bytes (the RP-supplied face challenge).
+    #[serde(with = "serde_bytes")]
+    pub challenge_image: Vec<u8>,
+    /// Minimum similarity the RP requires. Kept inside the sealed payload so no input
+    /// travels in the clear. Convenience gate only; the authoritative check is the
+    /// in-circuit `match_coefficient >= match_threshold` constraint downstream.
+    pub match_threshold: f32,
 }
 
 impl SealedMatchPayload {
