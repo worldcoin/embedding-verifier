@@ -1,6 +1,6 @@
 # Builds the host-side `api` image and pushes it to the GitHub Container
 # Registry (attested). 
-name: Build Docker Image
+name: Build and Push Docker Image
 
 on:
   pull_request:
