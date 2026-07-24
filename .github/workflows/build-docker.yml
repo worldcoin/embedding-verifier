@@ -1,6 +1,5 @@
 # Builds the host-side `api` image and pushes it to the GitHub Container
-# Registry (attested). Pull requests build the image only (no push) so the
-# Dockerfile is validated before merge — nothing is published from a PR.
+# Registry (attested). 
 name: Build Docker Image
 
 on:
