@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1
+# Carrier image that launches the enclave EIF on Nitro-enabled nodes.
+# Build context: target/eif/ (produced by scripts/build-eif.sh).
+
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023
+
+RUN dnf install -y aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel jq && \
+    dnf clean all
+
+COPY embedding-verifier-enclave.eif /home/embedding-verifier-enclave.eif
+
+ENV EIF_PATH="/home/embedding-verifier-enclave.eif" \
+    ENCLAVE_CPU_COUNT=2 \
+    ENCLAVE_MEMORY_SIZE=1024 \
+    ENCLAVE_DEBUG_MODE=false
+
+COPY <<'EOF' /home/run.sh
+#!/bin/bash
+set -euo pipefail
+
+echo "[run.sh] Starting enclave: eif=${EIF_PATH} cpu=${ENCLAVE_CPU_COUNT} mem=${ENCLAVE_MEMORY_SIZE}MiB debug=${ENCLAVE_DEBUG_MODE}"
+
+DEBUG_FLAG=""
+if [[ "${ENCLAVE_DEBUG_MODE}" == "true" || "${ENCLAVE_DEBUG_MODE}" == "1" ]]; then
+    DEBUG_FLAG="--debug-mode"
+fi
+
+run_output=$(nitro-cli run-enclave \
+    --cpu-count  "${ENCLAVE_CPU_COUNT}" \
+    --memory     "${ENCLAVE_MEMORY_SIZE}" \
+    --eif-path   "${EIF_PATH}" \
+    ${DEBUG_FLAG})
+
+enclave_id=$(echo "${run_output}" | jq -r '.EnclaveID')
+echo "[run.sh] Enclave started: ${enclave_id}"
+
+# Blocking — keeps the container alive.
+nitro-cli console --enclave-id "${enclave_id}"
+EOF
+
+RUN chmod +x /home/run.sh
+
+CMD ["/home/run.sh"]
