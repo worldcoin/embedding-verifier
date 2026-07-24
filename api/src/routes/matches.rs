@@ -1,28 +1,10 @@
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Json, body::Bytes, extract::State, http::StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use enclave_types::{self as enclave, EnclaveError};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::enclave::EnclaveClientError;
 use crate::types::AppState;
-
-/// A match request from an HTTP client.
-///
-/// `sealed_payload` is base64-encoded ciphertext for the enclave transit key.
-#[derive(Debug, Deserialize)]
-pub struct MatchRequest {
-    sealed_payload: String,
-}
-
-impl TryFrom<MatchRequest> for enclave::MatchRequest {
-    type Error = base64::DecodeError;
-
-    fn try_from(request: MatchRequest) -> Result<Self, Self::Error> {
-        Ok(Self {
-            sealed_payload: STANDARD.decode(request.sealed_payload)?,
-        })
-    }
-}
 
 /// A match statement rendered for HTTP clients.
 ///
@@ -67,21 +49,23 @@ impl From<enclave::MatchResponse> for MatchResponse {
 }
 
 /// Forwards a sealed match request to the enclave.
+///
+/// The request body is the raw sealed-box ciphertext (`application/octet-stream`); the host
+/// relays it opaquely and never inspects it.
 pub async fn handler(
     State(state): State<AppState>,
-    Json(body): Json<MatchRequest>,
+    body: Bytes,
 ) -> Result<Json<MatchResponse>, StatusCode> {
-    let request: enclave::MatchRequest = body.try_into().map_err(|error| {
-        tracing::warn!(
-            ?error,
-            "match request had a malformed base64 sealed payload"
-        );
-        StatusCode::BAD_REQUEST
-    })?;
+    if body.is_empty() {
+        tracing::warn!("match request had an empty body");
+        return Err(StatusCode::BAD_REQUEST);
+    }
 
     let response = state
         .enclave_client()
-        .run_match(request)
+        .run_match(enclave::MatchRequest {
+            sealed_payload: body.to_vec(),
+        })
         .await
         .map_err(|error| {
             let status = status_for(&error);
@@ -123,10 +107,10 @@ mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
-    use axum::{Json, extract::State, http::StatusCode};
+    use axum::{body::Bytes, extract::State, http::StatusCode};
     use enclave_types::{self as enclave, EnclaveError, GetTransitKeyResponse};
 
-    use super::{MatchRequest, handler, status_for};
+    use super::{handler, status_for};
     use crate::enclave::{EnclaveClient, EnclaveClientError};
     use crate::types::{AppState, Environment};
 
@@ -178,11 +162,8 @@ mod tests {
     #[tokio::test]
     async fn forwards_sealed_payload_and_encodes_statement() {
         let state = state_returning(Ok(sample_response()));
-        let body = MatchRequest {
-            sealed_payload: base64_of(b"sealed"),
-        };
 
-        let response = handler(State(state), Json(body))
+        let response = handler(State(state), Bytes::from_static(b"sealed"))
             .await
             .expect("valid match should return a statement")
             .0;
@@ -202,15 +183,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_malformed_base64_with_bad_request() {
+    async fn rejects_empty_body_with_bad_request() {
         let state = state_returning(Ok(sample_response()));
-        let body = MatchRequest {
-            sealed_payload: "not valid base64!!!".to_string(),
-        };
 
-        let status = handler(State(state), Json(body))
+        let status = handler(State(state), Bytes::new())
             .await
-            .expect_err("malformed base64 should be rejected");
+            .expect_err("an empty body should be rejected");
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
