@@ -1,6 +1,7 @@
 //! Boot-scoped state owned by the secure enclave.
 
 use crypto_box::{SecretKey, aead::OsRng};
+use enclave_types::EnclaveError;
 
 /// Immutable state generated once during enclave boot.
 pub struct EnclaveState {
@@ -21,6 +22,24 @@ impl EnclaveState {
     #[must_use]
     pub fn transit_public_key(&self) -> [u8; 32] {
         self.transit_secret_key.public_key().to_bytes()
+    }
+
+    /// Unseals a libsodium sealed box addressed to this boot's transit public key.
+    ///
+    /// The client encrypts to the enclave public key with an ephemeral sender key
+    /// (anonymous sealed box), so this provides confidentiality and integrity of the
+    /// ciphertext but no sender authentication — by design, as callers are not
+    /// pre-registered and provenance is enforced downstream, not here.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EnclaveError::DecryptFailed`] when the ciphertext is malformed or is
+    /// not addressed to this key. The error is deliberately opaque: no plaintext,
+    /// ciphertext, or key material is surfaced or logged.
+    pub fn unseal(&self, ciphertext: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+        self.transit_secret_key
+            .unseal(ciphertext)
+            .map_err(|_| EnclaveError::DecryptFailed)
     }
 }
 

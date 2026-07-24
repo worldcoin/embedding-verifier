@@ -10,8 +10,10 @@
 
 mod error;
 mod health;
+mod matches;
 mod transit_key;
 
 pub use error::EnclaveError;
 pub use health::HealthRequest;
+pub use matches::{MatchRequest, MatchResponse, MatchStatement};
 pub use transit_key::{GetTransitKeyRequest, GetTransitKeyResponse};
