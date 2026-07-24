@@ -5,17 +5,11 @@ use crate::EnclaveError;
 
 /// Requests a 3-way face match.
 ///
-/// `sealed_payload` is a an anonymous X25519 sealed box encrypted to the enclave's transit public key.
-/// Its plaintext is the CBOR-framed match inputs:
-/// - credential image
-/// - PCP `hashes.json`
-/// - live image
-/// - challenge image
-/// - match threshold
+/// `sealed_payload` is an anonymous X25519 sealed box, encrypted to the enclave's
+/// transit public key, wrapping the CBOR-framed match inputs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchRequest {
-    /// Sealed-box ciphertext addressed to the enclave transit public key. Its
-    /// plaintext is the CBOR-framed match inputs.
+    /// Sealed-box ciphertext addressed to the enclave transit public key.
     #[serde(with = "serde_bytes")]
     pub sealed_payload: Vec<u8>,
 }
@@ -35,31 +29,18 @@ pub struct MatchResponse {
     pub signature: Vec<u8>,
 }
 
-/// The claims a match statement commits to.
-///
-/// Mirrors the TEE-output CWT claims in the protocol design: the enclave
-/// commits to the hashes of the images it compared plus the resulting coefficient,
-/// and the downstream circuit re-binds each hash to its attested source (AAT signal,
-/// credential claims, RP-supplied challenge hash). Common WDP83 claims not yet
-/// populated (model bundle, enclave PCR measurement, timestamp) are intentionally
-/// omitted until the corresponding features exist.
+/// The claims a match statement commits to — the TEE-output CWT claims.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MatchStatement {
     /// Statement format version.
     pub version: u8,
-    /// SHA256 of the live image. The circuit binds this to the AAT `signal`.
+    /// SHA256 of the live image.
     pub live_image_hash: [u8; 32],
-    /// Commitment to the PCP: `SHA256(hashes.json)`. Binds the compared credential
-    /// image to the credential the circuit validates. A commitment, not a proof of
-    /// genuine Orb enrollment (see [`MatchRequest`]).
+    /// PCP commitment `SHA256(hashes.json)`; a commitment, not a proof of enrollment.
     pub credential_claim: [u8; 32],
-    /// SHA256 of the challenge image. The RP verifies this against the challenge it
-    /// supplied as a public circuit input.
+    /// SHA256 of the challenge image.
     pub challenger_image_hash: [u8; 32],
-    /// Similarity score of the credential-vs-live comparison. The circuit re-checks
-    /// `match_coefficient >= match_threshold`. **Dummy** until the face engine is
-    /// integrated. The credential-vs-challenge comparison is enforced inside the
-    /// enclave and vouched for by the issuance of this statement.
+    /// Credential-vs-live similarity score. **Dummy** until the face engine lands.
     pub match_coefficient: f32,
 }
 

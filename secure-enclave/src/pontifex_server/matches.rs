@@ -9,20 +9,17 @@ use sha2::{Digest, Sha256};
 use crate::pcp;
 use crate::state::EnclaveState;
 
-/// Statement format version emitted by this skeleton.
+/// Statement format version.
 const STATEMENT_VERSION: u8 = 1;
 
-/// Placeholder similarity score until the face engine is integrated. Chosen at the
-/// top of the range so the threshold gate passes for any sane RP threshold.
+/// Placeholder similarity score until the face engine lands; clears any sane threshold.
 const DUMMY_MATCH_COEFFICIENT: f32 = 1.0;
 
-/// Placeholder statement signature until output signing is implemented.
+/// Placeholder statement signature until signing lands.
 const DUMMY_SIGNATURE: [u8; 64] = [0u8; 64];
 
-/// The decrypted match inputs — the CBOR-framed plaintext of a [`MatchRequest`]'s
-/// sealed box. This framing is a private contract between the sealing client and the
-/// enclave; the API host only forwards the opaque ciphertext and never sees these
-/// fields, so this is intentionally not a shared wire type.
+/// The decrypted, CBOR-framed plaintext of a [`MatchRequest`]'s sealed box.
+/// Enclave-internal: the host only forwards the opaque ciphertext.
 #[derive(Serialize, Deserialize)]
 pub(super) struct MatchInputs {
     /// Raw liveness image bytes.
@@ -37,9 +34,7 @@ pub(super) struct MatchInputs {
     /// Raw challenge image bytes (the RP-supplied face challenge).
     #[serde(with = "serde_bytes")]
     pub challenge_image: Vec<u8>,
-    /// Minimum similarity the RP requires. Kept inside the sealed payload so no input
-    /// travels in the clear. Convenience gate only; the authoritative check is the
-    /// in-circuit `match_coefficient >= match_threshold` constraint downstream.
+    /// Minimum similarity the RP requires. Convenience gate only.
     pub match_threshold: f32,
 }
 
@@ -50,14 +45,11 @@ impl MatchInputs {
     }
 }
 
-/// Runs a 3-way face match: the credential image is compared against both the live
-/// image and the RP-supplied challenge image.
+/// Runs a 3-way face match: the credential image against both the live and challenge
+/// images.
 ///
-/// SKELETON: everything that does not require the face engine or output signing is
-/// real — the payload is unsealed, the credential image is bound to its PCP
-/// `hashes.json`, the image hashes are committed, and the threshold gate is enforced.
-/// The two face comparisons (`match_coefficient`) and the statement `signature` are
-/// **dummies**; this response is not usable for real verification.
+/// SKELETON: unseal, PCP binding, hashing, and the threshold gate are real; the face
+/// comparisons and the statement signature are dummies.
 pub async fn handler(
     state: Arc<EnclaveState>,
     request: MatchRequest,
@@ -78,7 +70,7 @@ pub async fn handler(
         );
     })?;
 
-    // Real (no face engine needed): bind the credential image to its PCP commitment.
+    // Bind the credential image to its PCP commitment.
     let credential_claim = pcp::verify_pcp(&payload.credential_image, &payload.hashes_json)
         .inspect_err(|error| {
             tracing::warn!(
@@ -91,9 +83,7 @@ pub async fn handler(
     let live_image_hash: [u8; 32] = Sha256::digest(&payload.live_image).into();
     let challenger_image_hash: [u8; 32] = Sha256::digest(&payload.challenge_image).into();
 
-    // DUMMY: the face-engine comparisons are not yet implemented. Both the
-    // credential-vs-live and credential-vs-challenge comparisons must clear the
-    // RP-supplied threshold, otherwise no statement is issued.
+    // DUMMY comparisons: both must clear the threshold or no statement is issued.
     let live_coefficient = DUMMY_MATCH_COEFFICIENT;
     let challenge_coefficient = DUMMY_MATCH_COEFFICIENT;
     if live_coefficient < payload.match_threshold || challenge_coefficient < payload.match_threshold
@@ -110,8 +100,7 @@ pub async fn handler(
         live_image_hash,
         credential_claim,
         challenger_image_hash,
-        // Only the credential-vs-live score is surfaced; the challenge comparison is
-        // enforced above and vouched for by issuing this statement.
+        // Only the credential-vs-live score is surfaced.
         match_coefficient: live_coefficient,
     };
 
