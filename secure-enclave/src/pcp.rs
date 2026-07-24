@@ -10,40 +10,9 @@
 //! `credential_claim` to an issuer-signed, registry-included credential inside the
 //! ZK circuit, which is out of scope for this enclave.
 
-use std::io::Cursor;
-
 use enclave_types::EnclaveError;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
-
-/// CBOR framing of the sealed-box plaintext for a 3-way match. Owned by the enclave;
-/// not a wire type.
-#[derive(Serialize, Deserialize)]
-pub(crate) struct SealedMatchPayload {
-    /// Raw liveness image bytes.
-    #[serde(with = "serde_bytes")]
-    pub live_image: Vec<u8>,
-    /// Raw credential image bytes (the Orb PCP thumbnail).
-    #[serde(with = "serde_bytes")]
-    pub credential_image: Vec<u8>,
-    /// Raw `hashes.json` bytes from the PCP.
-    #[serde(with = "serde_bytes")]
-    pub hashes_json: Vec<u8>,
-    /// Raw challenge image bytes (the RP-supplied face challenge).
-    #[serde(with = "serde_bytes")]
-    pub challenge_image: Vec<u8>,
-    /// Minimum similarity the RP requires. Kept inside the sealed payload so no input
-    /// travels in the clear. Convenience gate only; the authoritative check is the
-    /// in-circuit `match_coefficient >= match_threshold` constraint downstream.
-    pub match_threshold: f32,
-}
-
-impl SealedMatchPayload {
-    /// Decodes the CBOR-framed sealed payload.
-    pub(crate) fn from_cbor(bytes: &[u8]) -> Result<Self, EnclaveError> {
-        ciborium::from_reader(Cursor::new(bytes)).map_err(|_| EnclaveError::MalformedPcpPayload)
-    }
-}
 
 /// Subset of `hashes.json` we consume — the committed thumbnail hash.
 #[derive(Deserialize)]

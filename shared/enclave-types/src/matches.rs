@@ -5,17 +5,13 @@ use crate::EnclaveError;
 
 /// Requests a 3-way face match.
 ///
-/// The entire set of match inputs — credential image, PCP `hashes.json`, live image,
-/// challenge image, and the RP-supplied match threshold — is CBOR-framed (framing
-/// owned by the enclave) and encrypted into `sealed_payload` as a libsodium sealed
-/// box (anonymous X25519) addressed to the enclave's boot-scoped transit public key
-/// (see [`crate::GetTransitKeyRequest`]). Nothing travels in the clear: the doc
-/// requires the whole payload to be encrypted to the TEE.
-///
-/// The enclave verifies internal PCP consistency (the credential image binds to the
-/// self-declared `hashes.json` commitment) but performs **no** orb-attestation
-/// signature verification and makes no provenance claim on the inputs. Provenance is
-/// re-anchored downstream in the Deep Face Proof Circuit.
+/// `sealed_payload` is a an anonymous X25519 sealed box encrypted to the enclave's transit public key.
+/// Its plaintext is the CBOR-framed match inputs:
+/// - credential image
+/// - PCP `hashes.json`
+/// - live image
+/// - challenge image
+/// - match threshold
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchRequest {
     /// Sealed-box ciphertext addressed to the enclave transit public key. Its
@@ -29,12 +25,7 @@ impl Request for MatchRequest {
     type Response = Result<MatchResponse, EnclaveError>;
 }
 
-/// A match statement plus its signature.
-///
-/// SKELETON: `signature` is a placeholder (all-zero) and
-/// [`MatchStatement::match_coefficient`] is a dummy value. The face comparison and
-/// statement signing are not yet implemented, so this response is **not** usable for
-/// real verification.
+/// The match statement and its enclave signature.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MatchResponse {
     /// The claims the enclave attests to.

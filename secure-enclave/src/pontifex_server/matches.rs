@@ -1,10 +1,12 @@
+use std::io::Cursor;
 use std::sync::Arc;
 
 use enclave_types::{EnclaveError, MatchRequest, MatchResponse, MatchStatement};
 use pontifex::Request;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::pcp::{self, SealedMatchPayload};
+use crate::pcp;
 use crate::state::EnclaveState;
 
 /// Statement format version emitted by this skeleton.
@@ -16,6 +18,37 @@ const DUMMY_MATCH_COEFFICIENT: f32 = 1.0;
 
 /// Placeholder statement signature until output signing is implemented.
 const DUMMY_SIGNATURE: [u8; 64] = [0u8; 64];
+
+/// The decrypted match inputs — the CBOR-framed plaintext of a [`MatchRequest`]'s
+/// sealed box. This framing is a private contract between the sealing client and the
+/// enclave; the API host only forwards the opaque ciphertext and never sees these
+/// fields, so this is intentionally not a shared wire type.
+#[derive(Serialize, Deserialize)]
+pub(super) struct MatchInputs {
+    /// Raw liveness image bytes.
+    #[serde(with = "serde_bytes")]
+    pub live_image: Vec<u8>,
+    /// Raw credential image bytes (the Orb PCP thumbnail).
+    #[serde(with = "serde_bytes")]
+    pub credential_image: Vec<u8>,
+    /// Raw `hashes.json` bytes from the PCP.
+    #[serde(with = "serde_bytes")]
+    pub hashes_json: Vec<u8>,
+    /// Raw challenge image bytes (the RP-supplied face challenge).
+    #[serde(with = "serde_bytes")]
+    pub challenge_image: Vec<u8>,
+    /// Minimum similarity the RP requires. Kept inside the sealed payload so no input
+    /// travels in the clear. Convenience gate only; the authoritative check is the
+    /// in-circuit `match_coefficient >= match_threshold` constraint downstream.
+    pub match_threshold: f32,
+}
+
+impl MatchInputs {
+    /// Decodes the CBOR-framed match inputs.
+    fn from_cbor(bytes: &[u8]) -> Result<Self, EnclaveError> {
+        ciborium::from_reader(Cursor::new(bytes)).map_err(|_| EnclaveError::MalformedMatchPayload)
+    }
+}
 
 /// Runs a 3-way face match: the credential image is compared against both the live
 /// image and the RP-supplied challenge image.
@@ -37,7 +70,7 @@ pub async fn handler(
         );
     })?;
 
-    let payload = SealedMatchPayload::from_cbor(&plaintext).inspect_err(|error| {
+    let payload = MatchInputs::from_cbor(&plaintext).inspect_err(|error| {
         tracing::warn!(
             ?error,
             route = MatchRequest::ROUTE_ID,
@@ -97,8 +130,7 @@ mod tests {
     use enclave_types::{EnclaveError, MatchRequest};
     use sha2::{Digest, Sha256};
 
-    use super::{DUMMY_SIGNATURE, handler};
-    use crate::pcp::SealedMatchPayload;
+    use super::{DUMMY_SIGNATURE, MatchInputs, handler};
     use crate::state::EnclaveState;
 
     fn seal_to(state: &EnclaveState, plaintext: &[u8]) -> Vec<u8> {
@@ -116,7 +148,7 @@ mod tests {
         challenge: &[u8],
         match_threshold: f32,
     ) -> Vec<u8> {
-        let payload = SealedMatchPayload {
+        let payload = MatchInputs {
             live_image: live.to_vec(),
             credential_image: credential.to_vec(),
             hashes_json: hashes_json.to_vec(),
@@ -182,7 +214,7 @@ mod tests {
 
         let result = handler(state, request(sealed_payload)).await;
 
-        assert_eq!(result, Err(EnclaveError::MalformedPcpPayload));
+        assert_eq!(result, Err(EnclaveError::MalformedMatchPayload));
     }
 
     #[tokio::test]

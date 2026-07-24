@@ -11,8 +11,8 @@ pub enum EnclaveError {
     AttestationFailed,
     /// The sealed request could not be decrypted with the enclave transit key.
     DecryptFailed,
-    /// The decrypted payload was not valid CBOR framing.
-    MalformedPcpPayload,
+    /// The decrypted match payload was not valid CBOR framing.
+    MalformedMatchPayload,
     /// hashes.json was absent, not valid JSON, missing the `thumbnail.png` entry, or the
     /// committed thumbnail hash was malformed.
     InvalidHashesJson,
