@@ -9,6 +9,8 @@ RUN dnf install -y aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel jq && \
 
 COPY embedding-verifier-enclave.eif /home/embedding-verifier-enclave.eif
 
+# ENCLAVE_CID is unset by default (auto-assigned CID). Set it to pin the
+# enclave's vsock CID so a co-located client can address it statically.
 ENV EIF_PATH="/home/embedding-verifier-enclave.eif" \
     ENCLAVE_CPU_COUNT=2 \
     ENCLAVE_MEMORY_SIZE=1024 \
@@ -18,24 +20,38 @@ COPY <<'EOF' /home/run.sh
 #!/bin/bash
 set -euo pipefail
 
-echo "[run.sh] Starting enclave: eif=${EIF_PATH} cpu=${ENCLAVE_CPU_COUNT} mem=${ENCLAVE_MEMORY_SIZE}MiB debug=${ENCLAVE_DEBUG_MODE}"
+CID_FLAG=""
+if [[ -n "${ENCLAVE_CID:-}" ]]; then
+    CID_FLAG="--enclave-cid ${ENCLAVE_CID}"
+fi
 
 DEBUG_FLAG=""
 if [[ "${ENCLAVE_DEBUG_MODE}" == "true" || "${ENCLAVE_DEBUG_MODE}" == "1" ]]; then
     DEBUG_FLAG="--debug-mode"
 fi
 
-run_output=$(nitro-cli run-enclave \
+echo "[run.sh] Starting enclave: eif=${EIF_PATH} cid=${ENCLAVE_CID:-auto} cpu=${ENCLAVE_CPU_COUNT} mem=${ENCLAVE_MEMORY_SIZE}MiB debug=${ENCLAVE_DEBUG_MODE}"
+nitro-cli run-enclave \
+    --eif-path   "${EIF_PATH}" \
     --cpu-count  "${ENCLAVE_CPU_COUNT}" \
     --memory     "${ENCLAVE_MEMORY_SIZE}" \
-    --eif-path   "${EIF_PATH}" \
-    ${DEBUG_FLAG})
+    ${CID_FLAG} \
+    ${DEBUG_FLAG}
 
-enclave_id=$(echo "${run_output}" | jq -r '.EnclaveID')
+enclave_id=$(nitro-cli describe-enclaves | jq -r '.[0].EnclaveID')
 echo "[run.sh] Enclave started: ${enclave_id}"
 
-# Blocking — keeps the container alive.
-nitro-cli console --enclave-id "${enclave_id}"
+# In debug mode, stream the enclave console to stdout (best-effort).
+if [[ "${ENCLAVE_DEBUG_MODE}" == "true" || "${ENCLAVE_DEBUG_MODE}" == "1" ]]; then
+    nitro-cli console --enclave-id "${enclave_id}" &
+fi
+
+# Keep the container alive; exit non-zero (restart the pod) if the enclave dies.
+while nitro-cli describe-enclaves | jq -e '.[0].State == "RUNNING"' >/dev/null 2>&1; do
+    sleep 15
+done
+echo "[run.sh] Enclave ${enclave_id} no longer running — exiting to trigger restart"
+exit 1
 EOF
 
 RUN chmod +x /home/run.sh
