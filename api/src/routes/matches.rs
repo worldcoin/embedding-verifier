@@ -1,5 +1,4 @@
 use axum::{Json, body::Bytes, extract::State, http::StatusCode};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use enclave_types::{self as enclave, EnclaveError};
 use serde::Serialize;
 
@@ -8,13 +7,16 @@ use crate::types::AppState;
 
 /// A match statement rendered for HTTP clients.
 ///
-/// Binary fields are base64-encoded.
+/// Binary fields keep their fixed-size type and serialize as hex strings.
 #[derive(Debug, Serialize)]
 pub struct MatchStatement {
     version: u8,
-    live_image_hash: String,
-    credential_claim: String,
-    challenger_image_hash: String,
+    #[serde(with = "hex::serde")]
+    live_image_hash: [u8; 32],
+    #[serde(with = "hex::serde")]
+    credential_claim: [u8; 32],
+    #[serde(with = "hex::serde")]
+    challenger_image_hash: [u8; 32],
     match_coefficient: f32,
 }
 
@@ -22,7 +24,9 @@ pub struct MatchStatement {
 #[derive(Debug, Serialize)]
 pub struct MatchResponse {
     statement: MatchStatement,
-    signature: String,
+    /// Serialized as hex. Length is not yet pinned — signing is still a placeholder.
+    #[serde(with = "hex::serde")]
+    signature: Vec<u8>,
 }
 
 impl From<enclave::MatchResponse> for MatchResponse {
@@ -38,12 +42,12 @@ impl From<enclave::MatchResponse> for MatchResponse {
         Self {
             statement: MatchStatement {
                 version,
-                live_image_hash: STANDARD.encode(live_image_hash),
-                credential_claim: STANDARD.encode(credential_claim),
-                challenger_image_hash: STANDARD.encode(challenger_image_hash),
+                live_image_hash,
+                credential_claim,
+                challenger_image_hash,
                 match_coefficient,
             },
-            signature: STANDARD.encode(response.signature),
+            signature: response.signature,
         }
     }
 }
@@ -110,7 +114,7 @@ mod tests {
     use axum::{body::Bytes, extract::State, http::StatusCode};
     use enclave_types::{self as enclave, EnclaveError, GetTransitKeyResponse};
 
-    use super::{handler, status_for};
+    use super::{MatchResponse, handler, status_for};
     use crate::enclave::{EnclaveClient, EnclaveClientError};
     use crate::types::{AppState, Environment};
 
@@ -160,7 +164,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forwards_sealed_payload_and_encodes_statement() {
+    async fn forwards_sealed_payload_and_maps_statement() {
         let state = state_returning(Ok(sample_response()));
 
         let response = handler(State(state), Bytes::from_static(b"sealed"))
@@ -169,17 +173,34 @@ mod tests {
             .0;
 
         assert_eq!(response.statement.version, 1);
-        assert_eq!(response.statement.live_image_hash, base64_of(&[1u8; 32]));
-        assert_eq!(response.statement.credential_claim, base64_of(&[2u8; 32]));
-        assert_eq!(
-            response.statement.challenger_image_hash,
-            base64_of(&[3u8; 32])
-        );
+        assert_eq!(response.statement.live_image_hash, [1u8; 32]);
+        assert_eq!(response.statement.credential_claim, [2u8; 32]);
+        assert_eq!(response.statement.challenger_image_hash, [3u8; 32]);
         assert_eq!(
             response.statement.match_coefficient.to_bits(),
             1.0f32.to_bits()
         );
-        assert_eq!(response.signature, base64_of(&[7u8; 64]));
+        assert_eq!(response.signature, vec![7u8; 64]);
+    }
+
+    #[test]
+    fn serializes_binary_fields_as_hex() {
+        let json =
+            serde_json::to_value(MatchResponse::from(sample_response())).expect("should serialize");
+
+        assert_eq!(
+            json["statement"]["live_image_hash"],
+            hex::encode([1u8; 32]).as_str()
+        );
+        assert_eq!(
+            json["statement"]["credential_claim"],
+            hex::encode([2u8; 32]).as_str()
+        );
+        assert_eq!(
+            json["statement"]["challenger_image_hash"],
+            hex::encode([3u8; 32]).as_str()
+        );
+        assert_eq!(json["signature"], hex::encode([7u8; 64]).as_str());
     }
 
     #[tokio::test]
@@ -229,10 +250,5 @@ mod tests {
             status_for(&EnclaveClientError::Transport("boom".to_string())),
             StatusCode::SERVICE_UNAVAILABLE
         );
-    }
-
-    fn base64_of(bytes: &[u8]) -> String {
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
-        STANDARD.encode(bytes)
     }
 }
