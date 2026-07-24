@@ -88,7 +88,6 @@ pub async fn handler(
 const fn status_for(error: &EnclaveClientError) -> StatusCode {
     match error {
         EnclaveClientError::Operation(operation) => match operation {
-            // The client sealed a request the enclave could not use.
             EnclaveError::DecryptFailed
             | EnclaveError::MalformedMatchPayload
             | EnclaveError::InvalidHashesJson => StatusCode::BAD_REQUEST,
@@ -96,7 +95,6 @@ const fn status_for(error: &EnclaveClientError) -> StatusCode {
             EnclaveError::ThumbnailHashMismatch | EnclaveError::MatchBelowThreshold => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
-            // The enclave is reachable but not able to serve.
             EnclaveError::NotReady
             | EnclaveError::SecureModuleNotInitialized
             | EnclaveError::AttestationFailed => StatusCode::SERVICE_UNAVAILABLE,
@@ -114,7 +112,7 @@ mod tests {
     use axum::{body::Bytes, extract::State, http::StatusCode};
     use enclave_types::{self as enclave, EnclaveError, GetTransitKeyResponse};
 
-    use super::{MatchResponse, handler, status_for};
+    use super::{handler, status_for};
     use crate::enclave::{EnclaveClient, EnclaveClientError};
     use crate::types::{AppState, Environment};
 
@@ -164,7 +162,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forwards_sealed_payload_and_maps_statement() {
+    async fn forwards_sealed_payload_and_serializes_statement_as_hex() {
         let state = state_returning(Ok(sample_response()));
 
         let response = handler(State(state), Bytes::from_static(b"sealed"))
@@ -173,21 +171,12 @@ mod tests {
             .0;
 
         assert_eq!(response.statement.version, 1);
-        assert_eq!(response.statement.live_image_hash, [1u8; 32]);
-        assert_eq!(response.statement.credential_claim, [2u8; 32]);
-        assert_eq!(response.statement.challenger_image_hash, [3u8; 32]);
         assert_eq!(
             response.statement.match_coefficient.to_bits(),
             1.0f32.to_bits()
         );
-        assert_eq!(response.signature, vec![7u8; 64]);
-    }
 
-    #[test]
-    fn serializes_binary_fields_as_hex() {
-        let json =
-            serde_json::to_value(MatchResponse::from(sample_response())).expect("should serialize");
-
+        let json = serde_json::to_value(&response).expect("response should serialize");
         assert_eq!(
             json["statement"]["live_image_hash"],
             hex::encode([1u8; 32]).as_str()
