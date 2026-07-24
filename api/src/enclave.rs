@@ -10,11 +10,9 @@ use enclave_types::{
 use pontifex::client::ConnectionDetails;
 use tokio::time::timeout;
 
-/// Deadline for lightweight control-plane operations (health, transit key).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Deadline for a match. Larger than [`REQUEST_TIMEOUT`] because the request ships raw
-/// image bytes over vsock and (once the face engine lands) drives comparison compute.
+// Match requests can carry large payloads and require expensive computation.
 const MATCH_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Failures while calling a secure-enclave operation.
@@ -37,7 +35,7 @@ pub trait EnclaveClient: Send + Sync {
     /// Fetches an attestation document containing the enclave's transit public key.
     async fn get_transit_key(&self) -> Result<GetTransitKeyResponse, EnclaveClientError>;
 
-    /// Forwards a sealed match request to the enclave and returns its signed statement.
+    /// Runs a match inside the enclave.
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError>;
 }
 

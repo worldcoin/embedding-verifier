@@ -1,6 +1,6 @@
 use axum::{Json, extract::State, http::StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use enclave_types::{EnclaveError, MatchRequest, MatchResponse, MatchStatement};
+use enclave_types::{self as enclave, EnclaveError};
 use serde::{Deserialize, Serialize};
 
 use crate::enclave::EnclaveClientError;
@@ -8,20 +8,27 @@ use crate::types::AppState;
 
 /// A match request from an HTTP client.
 ///
-/// The host is a thin forwarder: `sealed_payload` is an opaque X25519 sealed box the client
-/// encrypts to the enclave transit key. It is base64 (standard alphabet, with padding) so it
-/// survives JSON transport.
+/// `sealed_payload` is base64-encoded ciphertext for the enclave transit key.
 #[derive(Debug, Deserialize)]
-pub struct MatchHttpRequest {
+pub struct MatchRequest {
     sealed_payload: String,
+}
+
+impl TryFrom<MatchRequest> for enclave::MatchRequest {
+    type Error = base64::DecodeError;
+
+    fn try_from(request: MatchRequest) -> Result<Self, Self::Error> {
+        Ok(Self {
+            sealed_payload: STANDARD.decode(request.sealed_payload)?,
+        })
+    }
 }
 
 /// A match statement rendered for HTTP clients.
 ///
-/// The fixed-size hashes and the signature are base64-encoded opaque bytes, matching the
-/// encoding used by the transit-key route.
+/// Binary fields are base64-encoded.
 #[derive(Debug, Serialize)]
-pub struct MatchStatementResponse {
+pub struct MatchStatement {
     version: u8,
     live_image_hash: String,
     credential_claim: String,
@@ -31,14 +38,14 @@ pub struct MatchStatementResponse {
 
 /// A successful match response.
 #[derive(Debug, Serialize)]
-pub struct MatchHttpResponse {
-    statement: MatchStatementResponse,
+pub struct MatchResponse {
+    statement: MatchStatement,
     signature: String,
 }
 
-impl From<MatchResponse> for MatchHttpResponse {
-    fn from(response: MatchResponse) -> Self {
-        let MatchStatement {
+impl From<enclave::MatchResponse> for MatchResponse {
+    fn from(response: enclave::MatchResponse) -> Self {
+        let enclave::MatchStatement {
             version,
             live_image_hash,
             credential_claim,
@@ -47,7 +54,7 @@ impl From<MatchResponse> for MatchHttpResponse {
         } = response.statement;
 
         Self {
-            statement: MatchStatementResponse {
+            statement: MatchStatement {
                 version,
                 live_image_hash: STANDARD.encode(live_image_hash),
                 credential_claim: STANDARD.encode(credential_claim),
@@ -59,15 +66,12 @@ impl From<MatchResponse> for MatchHttpResponse {
     }
 }
 
-/// Forwards a sealed match request to the enclave and returns its signed statement.
-///
-/// The host never inspects the payload: it decodes the base64 envelope and relays the opaque
-/// ciphertext. Enclave outcomes are mapped to HTTP status codes by [`status_for`].
+/// Forwards a sealed match request to the enclave.
 pub async fn handler(
     State(state): State<AppState>,
-    Json(body): Json<MatchHttpRequest>,
-) -> Result<Json<MatchHttpResponse>, StatusCode> {
-    let sealed_payload = STANDARD.decode(&body.sealed_payload).map_err(|error| {
+    Json(body): Json<MatchRequest>,
+) -> Result<Json<MatchResponse>, StatusCode> {
+    let request: enclave::MatchRequest = body.try_into().map_err(|error| {
         tracing::warn!(
             ?error,
             "match request had a malformed base64 sealed payload"
@@ -77,7 +81,7 @@ pub async fn handler(
 
     let response = state
         .enclave_client()
-        .run_match(MatchRequest { sealed_payload })
+        .run_match(request)
         .await
         .map_err(|error| {
             let status = status_for(&error);
@@ -92,10 +96,7 @@ pub async fn handler(
     Ok(Json(response.into()))
 }
 
-/// Maps an enclave-client failure to the HTTP status returned to the caller.
-///
-/// Client-caused enclave errors surface as 4xx; enclave unavailability and transport faults
-/// surface as 5xx so callers and probes can distinguish a bad request from a broken dependency.
+/// Maps an enclave-client failure to an HTTP status.
 const fn status_for(error: &EnclaveClientError) -> StatusCode {
     match error {
         EnclaveClientError::Operation(operation) => match operation {
@@ -123,17 +124,14 @@ mod tests {
 
     use async_trait::async_trait;
     use axum::{Json, extract::State, http::StatusCode};
-    use enclave_types::{
-        EnclaveError, GetTransitKeyResponse, MatchRequest, MatchResponse, MatchStatement,
-    };
+    use enclave_types::{self as enclave, EnclaveError, GetTransitKeyResponse};
 
-    use super::{MatchHttpRequest, handler, status_for};
+    use super::{MatchRequest, handler, status_for};
     use crate::enclave::{EnclaveClient, EnclaveClientError};
     use crate::types::{AppState, Environment};
 
-    /// Enclave client that returns a preconfigured match outcome.
     struct StubEnclaveClient {
-        result: Result<MatchResponse, EnclaveClientError>,
+        result: Result<enclave::MatchResponse, EnclaveClientError>,
     }
 
     #[async_trait]
@@ -150,22 +148,23 @@ mod tests {
 
         async fn run_match(
             &self,
-            _request: MatchRequest,
-        ) -> Result<MatchResponse, EnclaveClientError> {
+            request: enclave::MatchRequest,
+        ) -> Result<enclave::MatchResponse, EnclaveClientError> {
+            assert_eq!(request.sealed_payload, b"sealed");
             self.result.clone()
         }
     }
 
-    fn state_returning(result: Result<MatchResponse, EnclaveClientError>) -> AppState {
+    fn state_returning(result: Result<enclave::MatchResponse, EnclaveClientError>) -> AppState {
         AppState::new(
             Environment::Development,
             Arc::new(StubEnclaveClient { result }),
         )
     }
 
-    fn sample_response() -> MatchResponse {
-        MatchResponse {
-            statement: MatchStatement {
+    fn sample_response() -> enclave::MatchResponse {
+        enclave::MatchResponse {
+            statement: enclave::MatchStatement {
                 version: 1,
                 live_image_hash: [1u8; 32],
                 credential_claim: [2u8; 32],
@@ -179,7 +178,7 @@ mod tests {
     #[tokio::test]
     async fn forwards_sealed_payload_and_encodes_statement() {
         let state = state_returning(Ok(sample_response()));
-        let body = MatchHttpRequest {
+        let body = MatchRequest {
             sealed_payload: base64_of(b"sealed"),
         };
 
@@ -205,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_malformed_base64_with_bad_request() {
         let state = state_returning(Ok(sample_response()));
-        let body = MatchHttpRequest {
+        let body = MatchRequest {
             sealed_payload: "not valid base64!!!".to_string(),
         };
 
@@ -214,22 +213,6 @@ mod tests {
             .expect_err("malformed base64 should be rejected");
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn maps_enclave_failure_to_status() {
-        let state = state_returning(Err(EnclaveClientError::Operation(
-            EnclaveError::MatchBelowThreshold,
-        )));
-        let body = MatchHttpRequest {
-            sealed_payload: base64_of(b"sealed"),
-        };
-
-        let status = handler(State(state), Json(body))
-            .await
-            .expect_err("a below-threshold match should be an error");
-
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[test]
@@ -252,7 +235,7 @@ mod tests {
         );
         assert_eq!(
             status_for(&EnclaveClientError::Operation(
-                EnclaveError::ThumbnailHashMismatch
+                EnclaveError::MatchBelowThreshold
             )),
             StatusCode::UNPROCESSABLE_ENTITY
         );
