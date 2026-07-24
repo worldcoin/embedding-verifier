@@ -41,13 +41,13 @@ jobs:
       attestations: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 
       - name: Cache nitro-cli build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: target/eif/aws-nitro-enclaves-cli-${{ env.NITRO_CLI_VERSION }}
           key: nitro-cli-${{ runner.os }}-${{ env.NITRO_CLI_VERSION }}
@@ -70,6 +70,9 @@ jobs:
             echo "is_stable=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Prepare nitro-cli log directory
+        run: sudo install -d -m 1777 /var/log/nitro_enclaves
+
       - name: Build EIF and PCRs
         run: scripts/build-eif.sh target/eif
 
@@ -83,7 +86,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload PCR measurements
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: enclave-pcrs
           path: target/eif/pcrs.json
@@ -91,7 +94,7 @@ jobs:
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ghcr.io/${{ github.repository }}-enclave-eif
           tags: |
@@ -100,11 +103,11 @@ jobs:
             type=raw,value=${{ steps.version.outputs.version }},enable=${{ steps.version.outputs.version != '' }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Login to GitHub Container Registry
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -112,7 +115,7 @@ jobs:
 
       - name: Build and push carrier image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           # Context is the EIF output dir so the .eif is always included.
           context: target/eif
@@ -124,7 +127,7 @@ jobs:
 
       - name: Attest build provenance
         if: github.event_name != 'pull_request'
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
         with:
           push-to-registry: true
           subject-name: ghcr.io/${{ github.repository }}-enclave-eif
