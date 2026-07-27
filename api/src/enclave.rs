@@ -3,11 +3,17 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use enclave_types::{EnclaveError, GetTransitKeyRequest, GetTransitKeyResponse, HealthRequest};
+use enclave_types::{
+    EnclaveError, GetTransitKeyRequest, GetTransitKeyResponse, HealthRequest, MatchRequest,
+    MatchResponse,
+};
 use pontifex::client::ConnectionDetails;
 use tokio::time::timeout;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+
+// Match requests can carry large payloads and require expensive computation.
+const MATCH_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Failures while calling a secure-enclave operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +34,9 @@ pub trait EnclaveClient: Send + Sync {
 
     /// Fetches an attestation document containing the enclave's transit public key.
     async fn get_transit_key(&self) -> Result<GetTransitKeyResponse, EnclaveClientError>;
+
+    /// Runs a match inside the enclave.
+    async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError>;
 }
 
 /// Pontifex-backed secure-enclave client.
@@ -64,6 +73,18 @@ impl EnclaveClient for PontifexEnclaveClient {
         let response = timeout(
             REQUEST_TIMEOUT,
             pontifex::client::send(self.connection, &GetTransitKeyRequest),
+        )
+        .await
+        .map_err(|_| EnclaveClientError::Timeout)?
+        .map_err(|error| EnclaveClientError::Transport(error.to_string()))?;
+
+        response.map_err(EnclaveClientError::Operation)
+    }
+
+    async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError> {
+        let response = timeout(
+            MATCH_REQUEST_TIMEOUT,
+            pontifex::client::send(self.connection, &request),
         )
         .await
         .map_err(|_| EnclaveClientError::Timeout)?
