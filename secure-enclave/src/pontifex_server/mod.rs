@@ -3,10 +3,9 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use enclave_types::{CompareFacesRequest, GetTransitKeyRequest, HealthRequest, MatchRequest};
+use enclave_types::{GetTransitKeyRequest, HealthRequest, MatchRequest};
 use pontifex::Router;
 
-mod face_comparison;
 mod health;
 mod matches;
 mod transit_key;
@@ -30,18 +29,36 @@ fn router(state: Arc<EnclaveState>) -> Router<Arc<EnclaveState>> {
         .route::<HealthRequest, _, _>(health::handler)
         .route::<GetTransitKeyRequest, _, _>(transit_key::handler)
         .route::<MatchRequest, _, _>(matches::handler)
-        .route::<CompareFacesRequest, _, _>(face_comparison::handler)
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
+    use enclave_types::EnclaveError;
+
     use super::router;
-    use crate::state::EnclaveState;
+    use crate::{
+        face_engine::{ComparisonScores, FaceComparator},
+        state::EnclaveState,
+    };
+
+    struct NoopFaceEngine;
+
+    impl FaceComparator for NoopFaceEngine {
+        fn compare_reference_to_probes(
+            &self,
+            _: &[u8],
+            _: &[u8],
+            _: &[u8],
+        ) -> Result<ComparisonScores, EnclaveError> {
+            Err(EnclaveError::NotReady)
+        }
+    }
 
     #[test]
     fn router_registers_enclave_operations() {
-        let _router = router(Arc::new(EnclaveState::generate()));
+        let state = EnclaveState::generate(Arc::new(NoopFaceEngine));
+        let _router = router(Arc::new(state));
     }
 }

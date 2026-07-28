@@ -1,11 +1,8 @@
 //! Face Engine initialization and in-enclave embedding comparison.
 
-use std::{
-    io::Cursor,
-    sync::{Arc, OnceLock},
-};
+use std::{io::Cursor, sync::Arc};
 
-use enclave_types::{CompareFacesResponse, EnclaveError};
+use enclave_types::EnclaveError;
 use face_engine::{
     components::{
         captured_image_analyzer::CapturedImageAnalyzer, template_generator::TemplateGenerator,
@@ -18,17 +15,39 @@ use image::ImageReader;
 
 const FACE_ANALYZER_CONFIG: &str = include_str!("../config/face_analyzer.yaml");
 const FACE_TEMPLATE_GENERATOR_CONFIG: &str = include_str!("../config/face_template_generator.yaml");
-const SIMILARITY_THRESHOLD: f32 = 0.46;
-
-static FACE_ENGINE: OnceLock<FaceEngine> = OnceLock::new();
 
 // TODO: Inject production Face Engine configs and model artifacts at runtime instead of compiling
 // the prototype configs and fixed `/models` paths into the enclave.
-struct FaceEngine {
+/// Similarity scores for one credential image against the live and challenge images.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ComparisonScores {
+    /// Credential-to-live cosine similarity.
+    pub live_similarity: f32,
+    /// Credential-to-challenge cosine similarity.
+    pub challenge_similarity: f32,
+}
+
+/// Face comparison behavior required by the enclave match operation.
+pub trait FaceComparator: Send + Sync {
+    /// Generates one credential embedding and compares it with the live and challenge images.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured enclave error when an image is invalid, embedding generation fails,
+    /// or the embeddings cannot be compared.
+    fn compare_reference_to_probes(
+        &self,
+        credential_image: &[u8],
+        live_image: &[u8],
+        challenge_image: &[u8],
+    ) -> Result<ComparisonScores, EnclaveError>;
+}
+
+/// Face Engine implementation backed by the configured ONNX models.
+pub struct FaceEngine {
     template_generator: TemplateGenerator,
     analyzer: CapturedImageAnalyzer,
     matcher: CosineSimilarity,
-    similarity_threshold: f32,
 }
 
 impl Default for FaceEngine {
@@ -39,13 +58,12 @@ impl Default for FaceEngine {
             analyzer: CapturedImageAnalyzer::new(FACE_ANALYZER_CONFIG)
                 .expect("built-in Face Engine analyzer config and model should load"),
             matcher: CosineSimilarity::default(),
-            similarity_threshold: SIMILARITY_THRESHOLD,
         }
     }
 }
 
 impl FaceEngine {
-    fn generate_embedding(&self, image_bytes: Vec<u8>) -> Result<EmbeddingVector, EnclaveError> {
+    fn generate_embedding(&self, image_bytes: &[u8]) -> Result<EmbeddingVector, EnclaveError> {
         let dynamic_image = ImageReader::new(Cursor::new(image_bytes))
             .with_guessed_format()
             .map_err(|error| {
@@ -109,54 +127,37 @@ impl FaceEngine {
         })
     }
 
-    fn compare(
+    fn compute_score(
         &self,
-        reference_image: Vec<u8>,
-        probe_image: Vec<u8>,
-    ) -> Result<CompareFacesResponse, EnclaveError> {
-        let reference = self.generate_embedding(reference_image)?;
-        let probe = self.generate_embedding(probe_image)?;
-        let similarity = self
-            .matcher
-            .compute_score(&probe, &reference)
+        probe: &EmbeddingVector,
+        reference: &EmbeddingVector,
+    ) -> Result<f32, EnclaveError> {
+        self.matcher
+            .compute_score(probe, reference)
             .map_err(|error| {
                 tracing::error!(%error, "Face Engine embedding comparison failed");
                 EnclaveError::EmbeddingComparisonFailed
-            })?;
-
-        Ok(CompareFacesResponse {
-            similarity,
-            matches: similarity >= self.similarity_threshold,
-        })
+            })
     }
 }
 
-/// Initializes the process-global Face Engine with its built-in prototype configuration.
-///
-/// # Errors
-///
-/// Returns an error when Face Engine was already initialized.
-pub fn initialize() -> anyhow::Result<()> {
-    let engine = FaceEngine::default();
-    FACE_ENGINE
-        .set(engine)
-        .map_err(|_| anyhow::anyhow!("Face Engine is already initialized"))?;
-    tracing::info!("initialized Face Engine");
-    Ok(())
-}
+impl FaceComparator for FaceEngine {
+    fn compare_reference_to_probes(
+        &self,
+        credential_image: &[u8],
+        live_image: &[u8],
+        challenge_image: &[u8],
+    ) -> Result<ComparisonScores, EnclaveError> {
+        let reference = self.generate_embedding(credential_image)?;
+        let live = self.generate_embedding(live_image)?;
+        let challenge = self.generate_embedding(challenge_image)?;
 
-/// Generates both face embeddings inside the enclave and compares them.
-///
-/// # Errors
-///
-/// Returns a structured enclave error when an image is invalid, embedding generation fails, or
-/// the embeddings cannot be compared.
-pub fn compare(
-    reference_image: Vec<u8>,
-    probe_image: Vec<u8>,
-) -> Result<CompareFacesResponse, EnclaveError> {
-    FACE_ENGINE
-        .get()
-        .ok_or(EnclaveError::NotReady)?
-        .compare(reference_image, probe_image)
+        let live_similarity = self.compute_score(&live, &reference)?;
+        let challenge_similarity = self.compute_score(&challenge, &reference)?;
+
+        Ok(ComparisonScores {
+            live_similarity,
+            challenge_similarity,
+        })
+    }
 }

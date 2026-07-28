@@ -26,6 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/target/release/secure-enclave /usr/local/bin/secure-enclave
+COPY --from=builder /src/models/face_embedding_generator.onnx /models/face_embedding_generator.onnx
+COPY --from=builder /src/models/rgbnet.onnx /models/rgbnet.onnx
 
 ENV RUST_LOG=info
 

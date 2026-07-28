@@ -4,15 +4,13 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use enclave_types::{
-    CompareFacesRequest, CompareFacesResponse, EnclaveError, GetTransitKeyRequest,
-    GetTransitKeyResponse, HealthRequest, MatchRequest, MatchResponse,
+    EnclaveError, GetTransitKeyRequest, GetTransitKeyResponse, HealthRequest, MatchRequest,
+    MatchResponse,
 };
 use pontifex::client::ConnectionDetails;
 use tokio::time::timeout;
 
 const CONTROL_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
-const INFERENCE_REQUEST_TIMEOUT: Duration = Duration::from_mins(1);
-
 // Match requests can carry large payloads and require expensive computation.
 const MATCH_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -38,12 +36,6 @@ pub trait EnclaveClient: Send + Sync {
 
     /// Runs a match inside the enclave.
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError>;
-
-    /// Generates and compares embeddings for two face images inside the enclave.
-    async fn compare_faces(
-        &self,
-        request: CompareFacesRequest,
-    ) -> Result<CompareFacesResponse, EnclaveClientError>;
 }
 
 /// Pontifex-backed secure-enclave client.
@@ -91,21 +83,6 @@ impl EnclaveClient for PontifexEnclaveClient {
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError> {
         let response = timeout(
             MATCH_REQUEST_TIMEOUT,
-            pontifex::client::send(self.connection, &request),
-        )
-        .await
-        .map_err(|_| EnclaveClientError::Timeout)?
-        .map_err(|error| EnclaveClientError::Transport(error.to_string()))?;
-
-        response.map_err(EnclaveClientError::Operation)
-    }
-
-    async fn compare_faces(
-        &self,
-        request: CompareFacesRequest,
-    ) -> Result<CompareFacesResponse, EnclaveClientError> {
-        let response = timeout(
-            INFERENCE_REQUEST_TIMEOUT,
             pontifex::client::send(self.connection, &request),
         )
         .await

@@ -141,15 +141,6 @@ mod tests {
             assert_eq!(request.sealed_payload, b"sealed");
             self.result.clone()
         }
-
-        async fn compare_faces(
-            &self,
-            _request: enclave::CompareFacesRequest,
-        ) -> Result<enclave::CompareFacesResponse, EnclaveClientError> {
-            Err(EnclaveClientError::Transport(
-                "face comparison is not configured in this test stub".to_owned(),
-            ))
-        }
     }
 
     fn state_returning(result: Result<enclave::MatchResponse, EnclaveClientError>) -> AppState {
