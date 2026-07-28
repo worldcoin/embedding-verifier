@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use secure_enclave::{pontifex_server, rng, state::EnclaveState};
+use secure_enclave::{face_engine, pontifex_server, rng, state::EnclaveState};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -14,6 +14,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     rng::verify_nsm_hwrng_current().context("Nitro hardware RNG is not configured")?;
+    face_engine::initialize().context("failed to initialize Face Engine")?;
     let state = Arc::new(EnclaveState::generate());
 
     info!(port = PONTIFEX_PORT, "starting enclave Pontifex server");

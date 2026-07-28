@@ -17,7 +17,9 @@ base64 = "0.22"
 ciborium = "0.2"
 crypto_box = { version = "0.9.1", default-features = false, features = ["getrandom"] }
 enclave-types = { path = "shared/enclave-types" }
+face-engine = { git = "https://github.com/worldcoin/biometric-engines", rev = "face-engine-v2.16.0", default-features = false, features = ["tract"] }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
+image = { version = "=0.25.6", default-features = false, features = ["jpeg", "png", "webp"] }
 pontifex = { version = "1.1.2", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"

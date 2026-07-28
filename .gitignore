@@ -15,3 +15,9 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Private Face Engine model artifacts
+models/
+
+# Python
+**/__pycache__/

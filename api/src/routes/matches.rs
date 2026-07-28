@@ -90,11 +90,13 @@ const fn status_for(error: &EnclaveClientError) -> StatusCode {
         EnclaveClientError::Operation(operation) => match operation {
             EnclaveError::DecryptFailed
             | EnclaveError::MalformedMatchPayload
-            | EnclaveError::InvalidHashesJson => StatusCode::BAD_REQUEST,
+            | EnclaveError::InvalidHashesJson
+            | EnclaveError::InvalidImage => StatusCode::BAD_REQUEST,
             // Well-formed request, but the match itself did not hold.
-            EnclaveError::ThumbnailHashMismatch | EnclaveError::MatchBelowThreshold => {
-                StatusCode::UNPROCESSABLE_ENTITY
-            }
+            EnclaveError::ThumbnailHashMismatch
+            | EnclaveError::MatchBelowThreshold
+            | EnclaveError::EmbeddingGenerationFailed => StatusCode::UNPROCESSABLE_ENTITY,
+            EnclaveError::EmbeddingComparisonFailed => StatusCode::INTERNAL_SERVER_ERROR,
             EnclaveError::NotReady
             | EnclaveError::SecureModuleNotInitialized
             | EnclaveError::AttestationFailed => StatusCode::SERVICE_UNAVAILABLE,
@@ -138,6 +140,15 @@ mod tests {
         ) -> Result<enclave::MatchResponse, EnclaveClientError> {
             assert_eq!(request.sealed_payload, b"sealed");
             self.result.clone()
+        }
+
+        async fn compare_faces(
+            &self,
+            _request: enclave::CompareFacesRequest,
+        ) -> Result<enclave::CompareFacesResponse, EnclaveClientError> {
+            Err(EnclaveClientError::Transport(
+                "face comparison is not configured in this test stub".to_owned(),
+            ))
         }
     }
 
