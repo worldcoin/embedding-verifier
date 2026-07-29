@@ -17,7 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 COPY . .
 
-RUN cargo build --release --locked --package secure-enclave --bin secure-enclave
+RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
+    GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)" && \
+    git config --global \
+      url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf \
+      "https://github.com/" && \
+    CARGO_NET_GIT_FETCH_WITH_CLI=true \
+      cargo build --release --locked --package secure-enclave --bin secure-enclave && \
+    git config --global --unset-all \
+      url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf
 
 FROM debian:bookworm-slim
 

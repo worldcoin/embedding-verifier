@@ -74,6 +74,8 @@ jobs:
         run: sudo install -d -m 1777 /var/log/nitro_enclaves
 
       - name: Build EIF and PCRs
+        env:
+          GIT_HUB_TOKEN: ${{ secrets.GIT_HUB_TOKEN }}
         run: scripts/build-eif.sh target/eif
 
       - name: Publish PCR measurements

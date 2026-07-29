@@ -19,15 +19,29 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 
-RUN cargo chef cook --release --locked \
+RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
+    GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)" && \
+    git config --global \
+      url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf \
+      "https://github.com/" && \
+    CARGO_NET_GIT_FETCH_WITH_CLI=true cargo chef cook --release --locked \
       --target x86_64-unknown-linux-musl \
       --recipe-path recipe.json \
-      --package api
+      --package api && \
+    git config --global --unset-all \
+      url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf
 COPY . .
-RUN cargo build --release --locked \
+RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
+    GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)" && \
+    git config --global \
+      url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf \
+      "https://github.com/" && \
+    CARGO_NET_GIT_FETCH_WITH_CLI=true cargo build --release --locked \
       --target x86_64-unknown-linux-musl \
       --package api \
- && mv target/x86_64-unknown-linux-musl/release/api /app/api-bin
+ && mv target/x86_64-unknown-linux-musl/release/api /app/api-bin \
+ && git config --global --unset-all \
+      url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf
 
 FROM scratch AS runtime
 WORKDIR /app

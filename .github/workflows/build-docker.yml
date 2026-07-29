@@ -73,6 +73,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
+      - name: Check private dependency token
+        env:
+          GIT_HUB_TOKEN: ${{ secrets.GIT_HUB_TOKEN }}
+        run: |
+          if [[ -z "$GIT_HUB_TOKEN" ]]; then
+            echo "::error::GIT_HUB_TOKEN is required to fetch private dependencies"
+            exit 1
+          fi
+
       - name: Login to GitHub Container Registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -93,6 +102,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
+          secrets: |
+            GITHUB_TOKEN=${{ secrets.GIT_HUB_TOKEN }}
 
       - name: Attest build provenance
         if: github.event_name != 'pull_request'
