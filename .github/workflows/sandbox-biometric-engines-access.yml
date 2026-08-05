@@ -1,10 +1,16 @@
 # Sandbox / temporary: verifies the biometric-engines GitHub App (INFRA-7034) can
 # actually read worldcoin/biometric-engines from this public repo's Actions runs,
 # before wiring the token into the real cargo build steps. Delete once confirmed.
+#
+# Triggered on pull_request (scoped to this file) instead of workflow_dispatch:
+# workflow_dispatch only runs workflow files that exist on the default branch,
+# and this is intentionally not being merged to main.
 name: Sandbox - biometric-engines App access test
 
 on:
-  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/sandbox-biometric-engines-access.yml"
 
 permissions:
   contents: read
