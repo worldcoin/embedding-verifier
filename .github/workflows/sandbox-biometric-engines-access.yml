@@ -1,0 +1,33 @@
+# Sandbox / temporary: verifies the biometric-engines GitHub App (INFRA-7034) can
+# actually read worldcoin/biometric-engines from this public repo's Actions runs,
+# before wiring the token into the real cargo build steps. Delete once confirmed.
+name: Sandbox - biometric-engines App access test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-access:
+    name: Test GitHub App access to biometric-engines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
+          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
+          owner: worldcoin
+          repositories: biometric-engines
+
+      - name: Verify git read access
+        run: |
+          git ls-remote "https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/worldcoin/biometric-engines" refs/tags/face-engine-v2.16.0
+
+      - name: Verify API read access
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api repos/worldcoin/biometric-engines --jq '{full_name, private}'
