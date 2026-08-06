@@ -10,9 +10,22 @@
 //! `credential_claim` to an issuer-signed, registry-included credential inside the
 //! ZK circuit, which is out of scope for this enclave.
 
-use enclave_types::EnclaveError;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+
+/// Why a PCP binding check did not pass.
+///
+/// Kept separate from the wire errors so the caller decides what the client is told:
+/// a malformed `hashes.json` is a caller mistake and stays in the clear, while a
+/// thumbnail mismatch says *why a face failed* and is only ever sent sealed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PcpError {
+    /// hashes.json was absent, not valid JSON, missing the `thumbnail.png` entry, or the
+    /// committed thumbnail hash was malformed.
+    InvalidHashesJson,
+    /// The credential image did not match the committed `thumbnail.png` hash.
+    ThumbnailHashMismatch,
+}
 
 /// Subset of `hashes.json` we consume — the committed thumbnail hash.
 #[derive(Deserialize)]
@@ -30,21 +43,21 @@ struct HashesJson {
 pub(crate) fn verify_pcp(
     credential_image: &[u8],
     hashes_json: &[u8],
-) -> Result<[u8; 32], EnclaveError> {
+) -> Result<[u8; 32], PcpError> {
     // Commitment is over the raw bytes, taken before parsing.
     let credential_claim: [u8; 32] = Sha256::digest(hashes_json).into();
 
     let parsed: HashesJson =
-        serde_json::from_slice(hashes_json).map_err(|_| EnclaveError::InvalidHashesJson)?;
+        serde_json::from_slice(hashes_json).map_err(|_| PcpError::InvalidHashesJson)?;
 
     let committed: [u8; 32] = hex::decode(&parsed.thumbnail_png)
-        .map_err(|_| EnclaveError::InvalidHashesJson)?
+        .map_err(|_| PcpError::InvalidHashesJson)?
         .try_into()
-        .map_err(|_| EnclaveError::InvalidHashesJson)?;
+        .map_err(|_| PcpError::InvalidHashesJson)?;
 
     let observed: [u8; 32] = Sha256::digest(credential_image).into();
     if observed != committed {
-        return Err(EnclaveError::ThumbnailHashMismatch);
+        return Err(PcpError::ThumbnailHashMismatch);
     }
 
     Ok(credential_claim)
@@ -52,10 +65,9 @@ pub(crate) fn verify_pcp(
 
 #[cfg(test)]
 mod tests {
-    use enclave_types::EnclaveError;
     use sha2::{Digest, Sha256};
 
-    use super::verify_pcp;
+    use super::{PcpError, verify_pcp};
 
     fn hashes_json_for(image: &[u8]) -> Vec<u8> {
         let hash = hex::encode(Sha256::digest(image));
@@ -91,14 +103,14 @@ mod tests {
 
         let result = verify_pcp(b"a-different-image", &hashes_json);
 
-        assert_eq!(result, Err(EnclaveError::ThumbnailHashMismatch));
+        assert_eq!(result, Err(PcpError::ThumbnailHashMismatch));
     }
 
     #[test]
     fn rejects_malformed_hashes_json() {
         let result = verify_pcp(b"image", b"not valid json");
 
-        assert_eq!(result, Err(EnclaveError::InvalidHashesJson));
+        assert_eq!(result, Err(PcpError::InvalidHashesJson));
     }
 
     #[test]
@@ -106,14 +118,14 @@ mod tests {
         // Absent `thumbnail.png` is now a deserialization failure (required field).
         let result = verify_pcp(b"image", br#"{"version":"1"}"#);
 
-        assert_eq!(result, Err(EnclaveError::InvalidHashesJson));
+        assert_eq!(result, Err(PcpError::InvalidHashesJson));
     }
 
     #[test]
     fn rejects_bad_thumbnail_hex() {
         let result = verify_pcp(b"image", br#"{"thumbnail.png":"zz"}"#);
 
-        assert_eq!(result, Err(EnclaveError::InvalidHashesJson));
+        assert_eq!(result, Err(PcpError::InvalidHashesJson));
     }
 
     #[test]
@@ -121,6 +133,6 @@ mod tests {
         // Valid hex, but only 2 bytes instead of 32.
         let result = verify_pcp(b"image", br#"{"thumbnail.png":"abcd"}"#);
 
-        assert_eq!(result, Err(EnclaveError::InvalidHashesJson));
+        assert_eq!(result, Err(PcpError::InvalidHashesJson));
     }
 }
