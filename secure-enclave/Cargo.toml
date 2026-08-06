@@ -12,10 +12,15 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+# Named explicitly for the response half of the channel: RFC 9180 §9.8 derives the
+# response key and nonce from the request's HPKE exporter and hands them to a standalone
+# AEAD, which `hpke` does not expose a constructor for. Already in the tree via `hpke`'s
+# `chacha` feature, so this adds a manifest entry, not a crate.
+chacha20poly1305.workspace = true
 ciborium.workspace = true
-crypto_box = { workspace = true, features = ["seal", "salsa20"] }
 enclave-types.workspace = true
 hex.workspace = true
+hpke.workspace = true
 pontifex = { workspace = true, features = ["nsm", "server"] }
 serde = { workspace = true }
 serde_bytes.workspace = true
@@ -24,3 +29,4 @@ sha2.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+zeroize.workspace = true

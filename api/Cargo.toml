@@ -16,7 +16,6 @@ async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
 enclave-types.workspace = true
-hex = { workspace = true, features = ["serde"] }
 pontifex = { workspace = true, features = ["client"] }
 serde.workspace = true
 tokio.workspace = true

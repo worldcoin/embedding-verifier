@@ -14,10 +14,15 @@ anyhow = "1.0"
 async-trait = "0.1"
 axum = "0.8"
 base64 = "0.22"
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"] }
 ciborium = "0.2"
-crypto_box = { version = "0.9.1", default-features = false, features = ["getrandom"] }
 enclave-types = { path = "shared/enclave-types" }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
+# rust-hpke: the only Rust HPKE with an independent security review and a maintained
+# release. The ciphersuite is pinned at the type level in `secure-enclave::state`, so the
+# feature set here is exactly DHKEM(X25519, HKDF-SHA256) + ChaCha20-Poly1305 and nothing
+# else — no post-quantum KEMs, no NIST curves, no AES-GCM.
+hpke = { version = "0.14", default-features = false, features = ["alloc", "getrandom", "x25519", "chacha"] }
 pontifex = { version = "1.1.2", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
@@ -28,3 +33,4 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zeroize = { version = "1", default-features = false }

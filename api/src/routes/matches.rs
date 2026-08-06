@@ -1,75 +1,30 @@
-use axum::{Json, body::Bytes, extract::State, http::StatusCode};
-use enclave_types::{self as enclave, EnclaveError};
-use serde::Serialize;
+use axum::{
+    body::Bytes,
+    extract::State,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
+};
+use enclave_types::{self as enclave, AEAD_TAG_LEN, ENCAPPED_KEY_LEN, EnclaveError, MatchOutcome};
 
 use crate::enclave::EnclaveClientError;
 use crate::types::AppState;
 
-/// A match statement rendered for HTTP clients.
+/// Content type of both the request and response bodies.
+const OCTET_STREAM: &str = "application/octet-stream";
+
+/// Relays an HPKE-sealed match request to the enclave and returns the sealed response.
 ///
-/// Binary fields keep their fixed-size type and serialize as hex strings.
-#[derive(Debug, Serialize)]
-pub struct MatchStatement {
-    version: u8,
-    #[serde(with = "hex::serde")]
-    live_image_hash: [u8; 32],
-    #[serde(with = "hex::serde")]
-    credential_claim: [u8; 32],
-    #[serde(with = "hex::serde")]
-    challenger_image_hash: [u8; 32],
-    match_coefficient: f32,
-}
-
-/// A successful match response.
-#[derive(Debug, Serialize)]
-pub struct MatchResponse {
-    statement: MatchStatement,
-    /// Serialized as hex. Length is not yet pinned — signing is still a placeholder.
-    #[serde(with = "hex::serde")]
-    signature: Vec<u8>,
-}
-
-impl From<enclave::MatchResponse> for MatchResponse {
-    fn from(response: enclave::MatchResponse) -> Self {
-        let enclave::MatchStatement {
-            version,
-            live_image_hash,
-            credential_claim,
-            challenger_image_hash,
-            match_coefficient,
-        } = response.statement;
-
-        Self {
-            statement: MatchStatement {
-                version,
-                live_image_hash,
-                credential_claim,
-                challenger_image_hash,
-                match_coefficient,
-            },
-            signature: response.signature,
-        }
-    }
-}
-
-/// Forwards a sealed match request to the enclave.
-///
-/// The request body is the raw sealed-box ciphertext (`application/octet-stream`); the host
-/// relays it opaquely and never inspects it.
-pub async fn handler(
-    State(state): State<AppState>,
-    body: Bytes,
-) -> Result<Json<MatchResponse>, StatusCode> {
-    if body.is_empty() {
-        tracing::warn!("match request had an empty body");
-        return Err(StatusCode::BAD_REQUEST);
-    }
+/// Both directions are opaque to this host. The request body is the client's encapsulated
+/// key followed by the ciphertext; the response body is the enclave's sealed outcome,
+/// which only the requesting client holds the key material to open. The host contributes
+/// nothing but the HTTP status, derived from a coarse class the enclave binds into the
+/// response AAD — rewriting it here would only break the client's decryption.
+pub async fn handler(State(state): State<AppState>, body: Bytes) -> Result<Response, StatusCode> {
+    let (enc, ciphertext) = split_request(&body)?;
 
     let response = state
         .enclave_client()
-        .run_match(enclave::MatchRequest {
-            sealed_payload: body.to_vec(),
-        })
+        .run_match(enclave::MatchRequest { enc, ciphertext })
         .await
         .map_err(|error| {
             let status = status_for(&error);
@@ -81,23 +36,50 @@ pub async fn handler(
             status
         })?;
 
-    Ok(Json(response.into()))
+    let status = match response.outcome {
+        MatchOutcome::Statement => StatusCode::OK,
+        // Well-formed request, but the match itself did not hold. The reason is inside
+        // the body and readable only by the client.
+        MatchOutcome::Rejected => StatusCode::UNPROCESSABLE_ENTITY,
+    };
+
+    Ok((
+        status,
+        [(header::CONTENT_TYPE, OCTET_STREAM)],
+        response.ciphertext,
+    )
+        .into_response())
+}
+
+/// Splits the request body into the HPKE encapsulated key and the ciphertext.
+///
+/// The framing is positional because the host has no reason to parse a structure it
+/// cannot read: a fixed-width `enc` for the pinned ciphersuite, then the rest. The length
+/// floor rejects bodies that cannot possibly carry an authentication tag; everything
+/// beyond that is the enclave's call.
+fn split_request(body: &Bytes) -> Result<(Vec<u8>, Vec<u8>), StatusCode> {
+    if body.len() <= ENCAPPED_KEY_LEN + AEAD_TAG_LEN {
+        tracing::warn!(
+            length = body.len(),
+            "match request body is too short to be a sealed request"
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let (enc, ciphertext) = body.split_at(ENCAPPED_KEY_LEN);
+
+    Ok((enc.to_vec(), ciphertext.to_vec()))
 }
 
 /// Maps an enclave-client failure to an HTTP status.
 const fn status_for(error: &EnclaveClientError) -> StatusCode {
     match error {
         EnclaveClientError::Operation(operation) => match operation {
-            EnclaveError::DecryptFailed
-            | EnclaveError::MalformedMatchPayload
-            | EnclaveError::InvalidHashesJson => StatusCode::BAD_REQUEST,
-            // Well-formed request, but the match itself did not hold.
-            EnclaveError::ThumbnailHashMismatch | EnclaveError::MatchBelowThreshold => {
-                StatusCode::UNPROCESSABLE_ENTITY
-            }
+            EnclaveError::BadRequest => StatusCode::BAD_REQUEST,
             EnclaveError::NotReady
             | EnclaveError::SecureModuleNotInitialized
-            | EnclaveError::AttestationFailed => StatusCode::SERVICE_UNAVAILABLE,
+            | EnclaveError::AttestationFailed
+            | EnclaveError::Internal => StatusCode::SERVICE_UNAVAILABLE,
         },
         EnclaveClientError::Timeout => StatusCode::GATEWAY_TIMEOUT,
         EnclaveClientError::Transport(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -110,9 +92,12 @@ mod tests {
 
     use async_trait::async_trait;
     use axum::{body::Bytes, extract::State, http::StatusCode};
-    use enclave_types::{self as enclave, EnclaveError, GetTransitKeyResponse};
+    use enclave_types::{
+        self as enclave, AEAD_TAG_LEN, ENCAPPED_KEY_LEN, EnclaveError, GetTransitKeyResponse,
+        MatchOutcome,
+    };
 
-    use super::{handler, status_for};
+    use super::{handler, split_request, status_for};
     use crate::enclave::{EnclaveClient, EnclaveClientError};
     use crate::types::{AppState, Environment};
 
@@ -136,7 +121,8 @@ mod tests {
             &self,
             request: enclave::MatchRequest,
         ) -> Result<enclave::MatchResponse, EnclaveClientError> {
-            assert_eq!(request.sealed_payload, b"sealed");
+            assert_eq!(request.enc, vec![1u8; ENCAPPED_KEY_LEN]);
+            assert_eq!(request.ciphertext, vec![2u8; AEAD_TAG_LEN + 1]);
             self.result.clone()
         }
     }
@@ -148,87 +134,104 @@ mod tests {
         )
     }
 
-    fn sample_response() -> enclave::MatchResponse {
+    /// A body whose `enc` and ciphertext the stub asserts on.
+    fn sealed_body() -> Bytes {
+        let mut body = vec![1u8; ENCAPPED_KEY_LEN];
+        body.extend_from_slice(&[2u8; AEAD_TAG_LEN + 1]);
+
+        Bytes::from(body)
+    }
+
+    fn sealed_response(outcome: MatchOutcome) -> enclave::MatchResponse {
         enclave::MatchResponse {
-            statement: enclave::MatchStatement {
-                version: 1,
-                live_image_hash: [1u8; 32],
-                credential_claim: [2u8; 32],
-                challenger_image_hash: [3u8; 32],
-                match_coefficient: 1.0,
-            },
-            signature: vec![7u8; 64],
+            outcome,
+            ciphertext: vec![9u8; 48],
         }
     }
 
     #[tokio::test]
-    async fn forwards_sealed_payload_and_serializes_statement_as_hex() {
-        let state = state_returning(Ok(sample_response()));
+    async fn returns_the_sealed_statement_verbatim() {
+        let state = state_returning(Ok(sealed_response(MatchOutcome::Statement)));
 
-        let response = handler(State(state), Bytes::from_static(b"sealed"))
+        let response = handler(State(state), sealed_body())
             .await
-            .expect("valid match should return a statement")
-            .0;
+            .expect("a sealed statement should be relayed");
 
-        assert_eq!(response.statement.version, 1);
+        assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
-            response.statement.match_coefficient.to_bits(),
-            1.0f32.to_bits()
+            response
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .expect("content type should be set"),
+            "application/octet-stream"
         );
-
-        let json = serde_json::to_value(&response).expect("response should serialize");
-        assert_eq!(
-            json["statement"]["live_image_hash"],
-            hex::encode([1u8; 32]).as_str()
-        );
-        assert_eq!(
-            json["statement"]["credential_claim"],
-            hex::encode([2u8; 32]).as_str()
-        );
-        assert_eq!(
-            json["statement"]["challenger_image_hash"],
-            hex::encode([3u8; 32]).as_str()
-        );
-        assert_eq!(json["signature"], hex::encode([7u8; 64]).as_str());
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        assert_eq!(body.as_ref(), &[9u8; 48]);
     }
 
     #[tokio::test]
-    async fn rejects_empty_body_with_bad_request() {
-        let state = state_returning(Ok(sample_response()));
+    async fn maps_a_sealed_rejection_to_unprocessable_entity() {
+        let state = state_returning(Ok(sealed_response(MatchOutcome::Rejected)));
 
-        let status = handler(State(state), Bytes::new())
+        let response = handler(State(state), sealed_body())
             .await
-            .expect_err("an empty body should be rejected");
+            .expect("a sealed rejection is still a response body");
 
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        // The reason travels in the body, sealed — the host adds nothing to it.
+        assert_eq!(body.as_ref(), &[9u8; 48]);
+    }
+
+    #[tokio::test]
+    async fn rejects_bodies_that_cannot_carry_a_sealed_request() {
+        let state = state_returning(Ok(sealed_response(MatchOutcome::Statement)));
+
+        for length in [0, ENCAPPED_KEY_LEN, ENCAPPED_KEY_LEN + AEAD_TAG_LEN] {
+            let status = handler(State(state.clone()), Bytes::from(vec![0u8; length]))
+                .await
+                .expect_err("a short body should be rejected");
+
+            assert_eq!(status, StatusCode::BAD_REQUEST, "length {length}");
+        }
+    }
+
+    #[test]
+    fn splits_the_body_at_the_encapsulated_key() {
+        let (enc, ciphertext) = split_request(&sealed_body()).expect("body should split");
+
+        assert_eq!(enc, vec![1u8; ENCAPPED_KEY_LEN]);
+        assert_eq!(ciphertext, vec![2u8; AEAD_TAG_LEN + 1]);
     }
 
     #[test]
     fn status_mapping_is_exhaustive_and_classified() {
         assert_eq!(
-            status_for(&EnclaveClientError::Operation(EnclaveError::DecryptFailed)),
+            status_for(&EnclaveClientError::Operation(EnclaveError::BadRequest)),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
-            status_for(&EnclaveClientError::Operation(
-                EnclaveError::MalformedMatchPayload
-            )),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_for(&EnclaveClientError::Operation(
-                EnclaveError::InvalidHashesJson
-            )),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_for(&EnclaveClientError::Operation(
-                EnclaveError::MatchBelowThreshold
-            )),
-            StatusCode::UNPROCESSABLE_ENTITY
+            status_for(&EnclaveClientError::Operation(EnclaveError::Internal)),
+            StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(
             status_for(&EnclaveClientError::Operation(EnclaveError::NotReady)),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_for(&EnclaveClientError::Operation(
+                EnclaveError::SecureModuleNotInitialized
+            )),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_for(&EnclaveClientError::Operation(
+                EnclaveError::AttestationFailed
+            )),
             StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(
