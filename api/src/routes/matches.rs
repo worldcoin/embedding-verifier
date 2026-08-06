@@ -33,6 +33,7 @@ pub async fn handler(State(state): State<AppState>, body: Bytes) -> Result<Respo
             } else {
                 tracing::warn!(?error, %status, "match request rejected");
             }
+            state.observe_enclave_failure(&error);
             status
         })?;
 
