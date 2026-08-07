@@ -20,4 +20,10 @@ pub enum EnclaveError {
     ThumbnailHashMismatch,
     /// A comparison scored below the RP-supplied `match_threshold`.
     MatchBelowThreshold,
+    /// An input could not be decoded as a supported image.
+    InvalidImage,
+    /// Face Engine could not generate an embedding for an input image.
+    EmbeddingGenerationFailed,
+    /// Face Engine could not compare the generated embeddings.
+    EmbeddingComparisonFailed,
 }

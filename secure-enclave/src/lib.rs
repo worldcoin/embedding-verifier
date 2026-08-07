@@ -1,4 +1,4 @@
-//! Secure-enclave runtime for private face verification.
+//! Secure-enclave runtime for private face comparison.
 
 #![deny(
     clippy::all,
@@ -8,6 +8,8 @@
     dead_code
 )]
 
+/// Face embedding generation and comparison.
+pub mod face_engine;
 /// PCP binding verification (transport-free).
 pub mod pcp;
 /// Pontifex operations exposed to the API host.

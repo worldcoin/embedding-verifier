@@ -7,7 +7,8 @@ set -euo pipefail
 #
 # Usage: scripts/build-eif.sh [output-dir]   (default: target/eif)
 # Outputs: embedding-verifier-enclave.eif, pcrs.json
-# Env: NITRO_CLI_VERSION (default v1.4.2), ENCLAVE_IMAGE_TAG
+# Env: NITRO_CLI_VERSION (default v1.4.2), ENCLAVE_IMAGE_TAG,
+#      GIT_HUB_TOKEN (read access to private GitHub dependencies)
 
 if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
   echo "[ERROR] EIF builds require Linux x86_64 (got $(uname -s)/$(uname -m))." >&2
@@ -25,7 +26,15 @@ mkdir -p "$out_dir"
 out_dir="$(cd "$out_dir" && pwd)"
 
 echo "[1/3] Building enclave container image ($ENCLAVE_IMAGE_TAG)..."
-docker build -t "$ENCLAVE_IMAGE_TAG" -f secure-enclave/Dockerfile .
+if [[ -z "${GIT_HUB_TOKEN:-}" ]]; then
+  echo "[ERROR] GIT_HUB_TOKEN is required to fetch private GitHub dependencies." >&2
+  exit 1
+fi
+docker build \
+  --secret id=GITHUB_TOKEN,env=GIT_HUB_TOKEN \
+  -t "$ENCLAVE_IMAGE_TAG" \
+  -f secure-enclave/Dockerfile \
+  .
 
 echo "[2/3] Building nitro-cli $NITRO_CLI_VERSION..."
 nitro_cli_dir="$out_dir/aws-nitro-enclaves-cli-$NITRO_CLI_VERSION"
