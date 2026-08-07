@@ -31,21 +31,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Mint biometric-engines access token
+        id: biometric-engines-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
+          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
+          owner: worldcoin
+          repositories: biometric-engines
       - uses: dtolnay/rust-toolchain@1.97.0
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Configure private Git dependencies
         env:
-          GIT_HUB_TOKEN: ${{ secrets.GIT_HUB_TOKEN }}
+          BIOMETRIC_ENGINES_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
         run: |
-          if [[ -z "$GIT_HUB_TOKEN" ]]; then
-            echo "::error::GIT_HUB_TOKEN is required to fetch private dependencies"
-            exit 1
-          fi
           git config --global \
-            url."https://${GIT_HUB_TOKEN}:x-oauth-basic@github.com/".insteadOf \
-            "https://github.com/"
+            url."https://x-access-token:${BIOMETRIC_ENGINES_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
+            "https://github.com/worldcoin/biometric-engines"
       - name: Run Clippy
         run: cargo clippy --locked --all-targets --all-features --
 
@@ -54,19 +58,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Mint biometric-engines access token
+        id: biometric-engines-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
+          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
+          owner: worldcoin
+          repositories: biometric-engines
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
       - name: Configure private Git dependencies
         env:
-          GIT_HUB_TOKEN: ${{ secrets.GIT_HUB_TOKEN }}
+          BIOMETRIC_ENGINES_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
         run: |
-          if [[ -z "$GIT_HUB_TOKEN" ]]; then
-            echo "::error::GIT_HUB_TOKEN is required to fetch private dependencies"
-            exit 1
-          fi
           git config --global \
-            url."https://${GIT_HUB_TOKEN}:x-oauth-basic@github.com/".insteadOf \
-            "https://github.com/"
+            url."https://x-access-token:${BIOMETRIC_ENGINES_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
+            "https://github.com/worldcoin/biometric-engines"
       - name: Build debug
         run: cargo build --locked --verbose
       - name: Build release
@@ -77,19 +85,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Mint biometric-engines access token
+        id: biometric-engines-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
+          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
+          owner: worldcoin
+          repositories: biometric-engines
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
       - name: Configure private Git dependencies
         env:
-          GIT_HUB_TOKEN: ${{ secrets.GIT_HUB_TOKEN }}
+          BIOMETRIC_ENGINES_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
         run: |
-          if [[ -z "$GIT_HUB_TOKEN" ]]; then
-            echo "::error::GIT_HUB_TOKEN is required to fetch private dependencies"
-            exit 1
-          fi
           git config --global \
-            url."https://${GIT_HUB_TOKEN}:x-oauth-basic@github.com/".insteadOf \
-            "https://github.com/"
+            url."https://x-access-token:${BIOMETRIC_ENGINES_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
+            "https://github.com/worldcoin/biometric-engines"
       - name: Run tests
         run: cargo test --locked --all --verbose
 
@@ -104,17 +116,21 @@ jobs:
     continue-on-error: ${{ matrix.checks == 'advisories' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Mint biometric-engines access token
+        id: biometric-engines-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
+          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
+          owner: worldcoin
+          repositories: biometric-engines
       - name: Configure private Git dependencies
         env:
-          GIT_HUB_TOKEN: ${{ secrets.GIT_HUB_TOKEN }}
+          BIOMETRIC_ENGINES_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
         run: |
-          if [[ -z "$GIT_HUB_TOKEN" ]]; then
-            echo "::error::GIT_HUB_TOKEN is required to fetch private dependencies"
-            exit 1
-          fi
           git config --global \
-            url."https://${GIT_HUB_TOKEN}:x-oauth-basic@github.com/".insteadOf \
-            "https://github.com/"
+            url."https://x-access-token:${BIOMETRIC_ENGINES_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
+            "https://github.com/worldcoin/biometric-engines"
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check ${{ matrix.checks }}
