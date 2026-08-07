@@ -113,7 +113,6 @@ jobs:
         checks:
           - advisories
           - bans licenses sources
-    continue-on-error: ${{ matrix.checks == 'advisories' }}
     steps:
       - uses: actions/checkout@v4
       - name: Mint biometric-engines access token
@@ -125,6 +124,7 @@ jobs:
           owner: worldcoin
           repositories: biometric-engines
       - uses: EmbarkStudios/cargo-deny-action@v2
+        continue-on-error: ${{ matrix.checks == 'advisories' }}
         with:
           command: check ${{ matrix.checks }}
           rust-version: 1.97.0
