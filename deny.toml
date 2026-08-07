@@ -19,6 +19,9 @@ deny = [
 [licenses]
 version = 2
 confidence-threshold = 1.0
+# biometric-engines is a private first-party repository whose crates are not
+# published with SPDX metadata. Keep enforcing licenses for every other source.
+private = { ignore = true, ignore-sources = ["https://github.com/worldcoin/biometric-engines"] }
 allow = [
     "Apache-2.0",
     "BSD-3-Clause",
