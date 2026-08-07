@@ -124,14 +124,8 @@ jobs:
           private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
           owner: worldcoin
           repositories: biometric-engines
-      - name: Configure private Git dependencies
-        env:
-          BIOMETRIC_ENGINES_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
-        run: |
-          git config --global \
-            url."https://x-access-token:${BIOMETRIC_ENGINES_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
-            "https://github.com/worldcoin/biometric-engines"
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check ${{ matrix.checks }}
           rust-version: 1.97.0
+          credentials: https://x-access-token:${{ steps.biometric-engines-token.outputs.token }}@github.com
