@@ -5,8 +5,8 @@ use chacha20poly1305::{
     aead::{Aead as _, Key, Nonce},
 };
 use enclave_types::{
-    CHANNEL_VERSION, EnclaveError, RESPONSE_KEY_LABEL, RESPONSE_KEY_LEN, RESPONSE_NONCE_LABEL,
-    RESPONSE_NONCE_LEN, channel_info,
+    AEAD_TAG_LEN, CHANNEL_VERSION, ENCAPPED_KEY_LEN, EnclaveError, RESPONSE_KEY_LABEL,
+    RESPONSE_KEY_LEN, RESPONSE_NONCE_LABEL, RESPONSE_NONCE_LEN, channel_info,
 };
 use hpke::{
     Deserializable, Kem as KemTrait, OpModeR, Serializable, aead::AeadCtxR, setup_receiver,
@@ -62,9 +62,10 @@ impl EnclaveState {
 
     /// Opens an HPKE request addressed to this boot's transit public key.
     ///
-    /// Runs `SetupBaseR` (RFC 9180 §5.1.1) against the client's encapsulated key and
-    /// opens `ciphertext`. Base mode means the sender is anonymous — by design, as
-    /// callers are not pre-registered and provenance is enforced downstream, not here.
+    /// Splits the raw `enc || ciphertext` body, then runs `SetupBaseR` (RFC 9180
+    /// §5.1.1) against the client's encapsulated key and opens the ciphertext. Base mode
+    /// means the sender is anonymous — by design, as callers are not pre-registered and
+    /// provenance is enforced downstream, not here.
     ///
     /// Returns the plaintext together with a [`ResponseSealer`] derived from the *same*
     /// context, which is what makes the reply readable only by this request's sender
@@ -72,15 +73,16 @@ impl EnclaveState {
     ///
     /// # Errors
     ///
-    /// Returns [`EnclaveError::BadRequest`] when the encapsulated key is malformed or
-    /// yields the all-zero shared secret (RFC 9180 §7.1.4, enforced by the KEM), or when
-    /// the ciphertext fails authentication. The error is deliberately opaque: no
-    /// plaintext, ciphertext, or key material is surfaced or logged.
-    pub fn open_request(
-        &self,
-        enc: &[u8],
-        ciphertext: &[u8],
-    ) -> Result<(Vec<u8>, ResponseSealer), EnclaveError> {
+    /// Returns [`EnclaveError::BadRequest`] when the body is too short, the encapsulated
+    /// key is malformed or yields the all-zero shared secret (RFC 9180 §7.1.4, enforced
+    /// by the KEM), or the ciphertext fails authentication. The error is deliberately
+    /// opaque: no plaintext, ciphertext, or key material is surfaced or logged.
+    pub fn open_request(&self, body: &[u8]) -> Result<(Vec<u8>, ResponseSealer), EnclaveError> {
+        if body.len() <= ENCAPPED_KEY_LEN + AEAD_TAG_LEN {
+            return Err(EnclaveError::BadRequest);
+        }
+        let (enc, ciphertext) = body.split_at(ENCAPPED_KEY_LEN);
+
         let encapped_key = <Kem as KemTrait>::EncappedKey::from_bytes(enc)
             .map_err(|_| EnclaveError::BadRequest)?;
 
@@ -195,8 +197,8 @@ pub(crate) mod test_client {
 
     impl ClientChannel {
         /// Runs `SetupBaseS` against an enclave's advertised transit key and seals
-        /// `plaintext`, returning the wire `(enc, ciphertext)` pair.
-        pub fn seal(transit_public_key: &[u8; 32], plaintext: &[u8]) -> (Self, Vec<u8>, Vec<u8>) {
+        /// `plaintext`, returning the raw wire body `enc || ciphertext`.
+        pub fn seal(transit_public_key: &[u8; 32], plaintext: &[u8]) -> (Self, Vec<u8>) {
             Self::seal_with_info(
                 transit_public_key,
                 plaintext,
@@ -210,7 +212,7 @@ pub(crate) mod test_client {
             transit_public_key: &[u8; 32],
             plaintext: &[u8],
             info: &[u8],
-        ) -> (Self, Vec<u8>, Vec<u8>) {
+        ) -> (Self, Vec<u8>) {
             let public_key = <Kem as KemTrait>::PublicKey::from_bytes(transit_public_key)
                 .expect("transit key should deserialize");
 
@@ -218,8 +220,10 @@ pub(crate) mod test_client {
                 setup_sender::<Aead, Kdf, Kem>(&OpModeS::Base, &public_key, info)
                     .expect("sender setup should succeed");
             let ciphertext = context.seal(plaintext, &[]).expect("seal should succeed");
+            let mut body = enc.to_bytes().to_vec();
+            body.extend_from_slice(&ciphertext);
 
-            (Self { context }, enc.to_bytes().to_vec(), ciphertext)
+            (Self { context }, body)
         }
 
         /// Opens a response sealed to this channel (RFC 9180 §9.8).
@@ -251,7 +255,9 @@ pub(crate) mod test_client {
 
 #[cfg(test)]
 mod tests {
-    use enclave_types::{CHANNEL_VERSION, ENCAPPED_KEY_LEN, EnclaveError, channel_info};
+    use enclave_types::{
+        AEAD_TAG_LEN, CHANNEL_VERSION, ENCAPPED_KEY_LEN, EnclaveError, channel_info,
+    };
 
     use super::{EnclaveState, test_client::ClientChannel};
 
@@ -273,10 +279,10 @@ mod tests {
     #[test]
     fn opens_a_request_sealed_to_the_transit_key() {
         let state = EnclaveState::generate();
-        let (_, enc, ciphertext) = ClientChannel::seal(&state.transit_public_key(), b"inputs");
+        let (_, body) = ClientChannel::seal(&state.transit_public_key(), b"inputs");
 
         let (plaintext, _) = state
-            .open_request(&enc, &ciphertext)
+            .open_request(&body)
             .expect("a well-formed request should open");
 
         assert_eq!(plaintext, b"inputs");
@@ -285,8 +291,8 @@ mod tests {
     #[test]
     fn response_key_material_agrees_across_the_channel() {
         let state = EnclaveState::generate();
-        let (client, enc, ciphertext) = ClientChannel::seal(&state.transit_public_key(), b"inputs");
-        let (_, sealer) = state.open_request(&enc, &ciphertext).expect("should open");
+        let (client, body) = ClientChannel::seal(&state.transit_public_key(), b"inputs");
+        let (_, sealer) = state.open_request(&body).expect("should open");
 
         let response = sealer
             .seal(b"statement", b"\x01")
@@ -302,10 +308,10 @@ mod tests {
     fn rejects_a_request_sealed_to_another_boot() {
         let state = EnclaveState::generate();
         let other = EnclaveState::generate();
-        let (_, enc, ciphertext) = ClientChannel::seal(&other.transit_public_key(), b"inputs");
+        let (_, body) = ClientChannel::seal(&other.transit_public_key(), b"inputs");
 
         assert_eq!(
-            state.open_request(&enc, &ciphertext).err(),
+            state.open_request(&body).err(),
             Some(EnclaveError::BadRequest)
         );
     }
@@ -314,14 +320,14 @@ mod tests {
     fn rejects_a_request_bound_to_another_channel_version() {
         let state = EnclaveState::generate();
         let transit_public_key = state.transit_public_key();
-        let (_, enc, ciphertext) = ClientChannel::seal_with_info(
+        let (_, body) = ClientChannel::seal_with_info(
             &transit_public_key,
             b"inputs",
             &channel_info(CHANNEL_VERSION + 1, &transit_public_key),
         );
 
         assert_eq!(
-            state.open_request(&enc, &ciphertext).err(),
+            state.open_request(&body).err(),
             Some(EnclaveError::BadRequest)
         );
     }
@@ -330,30 +336,34 @@ mod tests {
     fn rejects_a_low_order_encapsulated_key() {
         // RFC 9180 §7.1.4: an all-zero X25519 shared secret must abort.
         let state = EnclaveState::generate();
-        let (_, _, ciphertext) = ClientChannel::seal(&state.transit_public_key(), b"inputs");
+        let (_, mut body) = ClientChannel::seal(&state.transit_public_key(), b"inputs");
+        body[..ENCAPPED_KEY_LEN].fill(0);
 
-        let result = state.open_request(&[0u8; ENCAPPED_KEY_LEN], &ciphertext);
+        let result = state.open_request(&body);
 
         assert_eq!(result.err(), Some(EnclaveError::BadRequest));
     }
 
     #[test]
-    fn rejects_a_malformed_encapsulated_key() {
+    fn rejects_a_short_sealed_body() {
         let state = EnclaveState::generate();
-        let (_, _, ciphertext) = ClientChannel::seal(&state.transit_public_key(), b"inputs");
 
-        let result = state.open_request(&[0u8; 5], &ciphertext);
-
-        assert_eq!(result.err(), Some(EnclaveError::BadRequest));
+        for length in [0, ENCAPPED_KEY_LEN, ENCAPPED_KEY_LEN + AEAD_TAG_LEN] {
+            assert_eq!(
+                state.open_request(&vec![0u8; length]).err(),
+                Some(EnclaveError::BadRequest),
+                "length {length}"
+            );
+        }
     }
 
     #[test]
     fn rejects_a_tampered_request_ciphertext() {
         let state = EnclaveState::generate();
-        let (_, enc, mut ciphertext) = ClientChannel::seal(&state.transit_public_key(), b"inputs");
-        ciphertext[0] ^= 0x01;
+        let (_, mut body) = ClientChannel::seal(&state.transit_public_key(), b"inputs");
+        body[ENCAPPED_KEY_LEN] ^= 0x01;
 
-        let result = state.open_request(&enc, &ciphertext);
+        let result = state.open_request(&body);
 
         assert_eq!(result.err(), Some(EnclaveError::BadRequest));
     }

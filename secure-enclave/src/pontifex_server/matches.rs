@@ -72,15 +72,13 @@ pub async fn handler(
     state: Arc<EnclaveState>,
     request: MatchRequest,
 ) -> Result<MatchResponse, EnclaveError> {
-    let (plaintext, sealer) = state
-        .open_request(&request.enc, &request.ciphertext)
-        .inspect_err(|error| {
-            tracing::warn!(
-                ?error,
-                route = MatchRequest::ROUTE_ID,
-                "failed to open request"
-            );
-        })?;
+    let (plaintext, sealer) = state.open_request(&request.body).inspect_err(|error| {
+        tracing::warn!(
+            ?error,
+            route = MatchRequest::ROUTE_ID,
+            "failed to open request"
+        );
+    })?;
 
     let inputs = MatchInputs::from_cbor(&plaintext).inspect_err(|error| {
         tracing::warn!(
@@ -208,9 +206,9 @@ mod tests {
 
     /// Seals `plaintext` to `state` and returns the client channel plus the wire request.
     fn request_for(state: &EnclaveState, plaintext: &[u8]) -> (ClientChannel, MatchRequest) {
-        let (client, enc, ciphertext) = ClientChannel::seal(&state.transit_public_key(), plaintext);
+        let (client, body) = ClientChannel::seal(&state.transit_public_key(), plaintext);
 
-        (client, MatchRequest { enc, ciphertext })
+        (client, MatchRequest { body })
     }
 
     /// Opens a response the way a client would, and decodes the sealed payload.
@@ -314,7 +312,7 @@ mod tests {
         let (_, request) = request_for(&state, &cbor(&inputs));
         // A second setup against the same transit key: a different ephemeral, so a
         // different exporter secret.
-        let (eavesdropper, _, _) = ClientChannel::seal(&state.transit_public_key(), b"unrelated");
+        let (eavesdropper, _) = ClientChannel::seal(&state.transit_public_key(), b"unrelated");
 
         let response = handler(state, request).await.expect("match should succeed");
 
@@ -362,16 +360,10 @@ mod tests {
     async fn rejects_an_unopenable_request() {
         let state = Arc::new(EnclaveState::generate());
         let inputs = inputs_for(b"credential-thumbnail", 0.5);
-        let (_, request) = request_for(&state, &cbor(&inputs));
+        let (_, mut request) = request_for(&state, &cbor(&inputs));
+        request.body[..ENCAPPED_KEY_LEN].fill(0);
 
-        let result = handler(
-            state,
-            MatchRequest {
-                enc: vec![0u8; ENCAPPED_KEY_LEN],
-                ciphertext: request.ciphertext,
-            },
-        )
-        .await;
+        let result = handler(state, request).await;
 
         assert_eq!(result.err(), Some(EnclaveError::BadRequest));
     }

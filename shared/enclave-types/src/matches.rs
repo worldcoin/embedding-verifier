@@ -48,17 +48,15 @@ pub fn channel_info(version: u8, transit_public_key: &[u8; 32]) -> Vec<u8> {
 /// Requests a 3-way face match over an HPKE channel (RFC 9180 base mode).
 ///
 /// The client runs `SetupBaseS` against the enclave's attested transit public key and
-/// seals the CBOR-framed match inputs. The host relays both fields opaquely: it can
+/// seals the CBOR-framed match inputs. The host relays the HTTP body opaquely: it can
 /// neither read the request nor tamper with it undetected, and it holds no key that
-/// would let it open the response.
+/// would let it open the response. The enclave splits the body into the fixed-width
+/// encapsulated key followed by the ciphertext.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchRequest {
-    /// HPKE encapsulated key (`enc`), [`ENCAPPED_KEY_LEN`] bytes.
+    /// Raw sealed request body: `enc || ciphertext`.
     #[serde(with = "serde_bytes")]
-    pub enc: Vec<u8>,
-    /// HPKE ciphertext over the CBOR-framed match inputs.
-    #[serde(with = "serde_bytes")]
-    pub ciphertext: Vec<u8>,
+    pub body: Vec<u8>,
 }
 
 impl Request for MatchRequest {

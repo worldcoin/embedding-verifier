@@ -4,7 +4,7 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
-use enclave_types::{self as enclave, AEAD_TAG_LEN, ENCAPPED_KEY_LEN, EnclaveError, MatchOutcome};
+use enclave_types::{self as enclave, EnclaveError, MatchOutcome};
 
 use crate::enclave::EnclaveClientError;
 use crate::types::AppState;
@@ -14,17 +14,18 @@ const OCTET_STREAM: &str = "application/octet-stream";
 
 /// Relays an HPKE-sealed match request to the enclave and returns the sealed response.
 ///
-/// Both directions are opaque to this host. The request body is the client's encapsulated
-/// key followed by the ciphertext; the response body is the enclave's sealed outcome,
-/// which only the requesting client holds the key material to open. The host contributes
-/// nothing but the HTTP status, derived from a coarse class the enclave binds into the
-/// response AAD — rewriting it here would only break the client's decryption.
+/// Both directions are opaque to this host. It forwards the request body unchanged to the
+/// enclave, where the client's encapsulated key and ciphertext are parsed. The response
+/// body is the enclave's sealed outcome, which only the requesting client holds the key
+/// material to open. The host contributes nothing but the HTTP status, derived from a
+/// coarse class the enclave binds into the response AAD — rewriting it here would only
+/// break the client's decryption.
 pub async fn handler(State(state): State<AppState>, body: Bytes) -> Result<Response, StatusCode> {
-    let (enc, ciphertext) = split_request(&body)?;
-
     let response = state
         .enclave_client()
-        .run_match(enclave::MatchRequest { enc, ciphertext })
+        .run_match(enclave::MatchRequest {
+            body: body.to_vec(),
+        })
         .await
         .map_err(|error| {
             let status = status_for(&error);
@@ -49,26 +50,6 @@ pub async fn handler(State(state): State<AppState>, body: Bytes) -> Result<Respo
         response.ciphertext,
     )
         .into_response())
-}
-
-/// Splits the request body into the HPKE encapsulated key and the ciphertext.
-///
-/// The framing is positional because the host has no reason to parse a structure it
-/// cannot read: a fixed-width `enc` for the pinned ciphersuite, then the rest. The length
-/// floor rejects bodies that cannot possibly carry an authentication tag; everything
-/// beyond that is the enclave's call.
-fn split_request(body: &Bytes) -> Result<(Vec<u8>, Vec<u8>), StatusCode> {
-    if body.len() <= ENCAPPED_KEY_LEN + AEAD_TAG_LEN {
-        tracing::warn!(
-            length = body.len(),
-            "match request body is too short to be a sealed request"
-        );
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    let (enc, ciphertext) = body.split_at(ENCAPPED_KEY_LEN);
-
-    Ok((enc.to_vec(), ciphertext.to_vec()))
 }
 
 /// Maps an enclave-client failure to an HTTP status.
@@ -97,7 +78,7 @@ mod tests {
         MatchOutcome,
     };
 
-    use super::{handler, split_request, status_for};
+    use super::{handler, status_for};
     use crate::enclave::{EnclaveClient, EnclaveClientError};
     use crate::types::{AppState, Environment};
 
@@ -121,8 +102,7 @@ mod tests {
             &self,
             request: enclave::MatchRequest,
         ) -> Result<enclave::MatchResponse, EnclaveClientError> {
-            assert_eq!(request.enc, vec![1u8; ENCAPPED_KEY_LEN]);
-            assert_eq!(request.ciphertext, vec![2u8; AEAD_TAG_LEN + 1]);
+            assert_eq!(request.body, sealed_body());
             self.result.clone()
         }
     }
@@ -185,27 +165,6 @@ mod tests {
             .expect("body should be readable");
         // The reason travels in the body, sealed — the host adds nothing to it.
         assert_eq!(body.as_ref(), &[9u8; 48]);
-    }
-
-    #[tokio::test]
-    async fn rejects_bodies_that_cannot_carry_a_sealed_request() {
-        let state = state_returning(Ok(sealed_response(MatchOutcome::Statement)));
-
-        for length in [0, ENCAPPED_KEY_LEN, ENCAPPED_KEY_LEN + AEAD_TAG_LEN] {
-            let status = handler(State(state.clone()), Bytes::from(vec![0u8; length]))
-                .await
-                .expect_err("a short body should be rejected");
-
-            assert_eq!(status, StatusCode::BAD_REQUEST, "length {length}");
-        }
-    }
-
-    #[test]
-    fn splits_the_body_at_the_encapsulated_key() {
-        let (enc, ciphertext) = split_request(&sealed_body()).expect("body should split");
-
-        assert_eq!(enc, vec![1u8; ENCAPPED_KEY_LEN]);
-        assert_eq!(ciphertext, vec![2u8; AEAD_TAG_LEN + 1]);
     }
 
     #[test]
