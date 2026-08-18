@@ -8,7 +8,10 @@
     dead_code
 )]
 
+pub mod config;
 pub mod enclave;
+pub mod readiness;
 pub mod routes;
 pub mod server;
+pub mod telemetry;
 pub mod types;

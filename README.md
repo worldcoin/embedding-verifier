@@ -22,12 +22,27 @@ cargo build
 cargo test --all
 
 # Run the API on http://localhost:8000
-RUST_LOG=info cargo run --bin api
-curl http://localhost:8000/health
+RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin api
+curl http://localhost:8000/healthz   # liveness: the process
+curl http://localhost:8000/readyz    # readiness: names any unmet condition
 
 # Run the secure enclave placeholder
 RUST_LOG=info cargo run --bin secure-enclave
 ```
+
+## Configuration
+
+Resolved once at startup; the process refuses to boot listing every problem it found.
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `ENCLAVE_CID` | yes | — | vsock CID of the local enclave |
+| `ENCLAVE_PORT` | yes | — | Pontifex port the enclave serves on |
+| `APP_ENV` | no | `development` | `production`, `staging`, or `development` |
+| `PORT` | no | `8000` | HTTP listener port |
+| `SHUTDOWN_DRAIN_SECONDS` | no | `5` | Time spent unready but still serving after SIGTERM. Must exceed load-balancer deregistration |
+| `DD_AGENT_HOST` | no | — | DogStatsD host. Unset disables metrics |
+| `DD_DOGSTATSD_PORT` | no | `8125` | DogStatsD port |
 
 ## Nitro-enabled development host
 

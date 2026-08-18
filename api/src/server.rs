@@ -1,44 +1,81 @@
 //! Axum server setup and lifecycle.
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use anyhow::Context;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, signal::unix::SignalKind};
 use tower_http::trace::TraceLayer;
 
-use crate::{routes, types::AppState};
+use crate::readiness::Readiness;
+use crate::telemetry::http;
+use crate::types::AppState;
 
-const DEFAULT_PORT: u16 = 8000;
-
-/// Starts the API server.
+/// Starts the API server and serves until a shutdown signal arrives.
 ///
 /// # Errors
 ///
-/// Returns an error when the configured port is invalid, the listener cannot bind, or the server
-/// exits unexpectedly.
+/// Returns an error when the listener cannot bind or the server exits unexpectedly.
 pub async fn start(state: AppState) -> anyhow::Result<()> {
-    let port = std::env::var("PORT").map_or(Ok(DEFAULT_PORT), |value| value.parse())?;
-    let address = SocketAddr::from(([0, 0, 0, 0], port));
+    let address = SocketAddr::from(([0, 0, 0, 0], state.config().port));
+    let drain = state.config().shutdown_drain;
+    let readiness = state.readiness();
+
     let listener = TcpListener::bind(address)
         .await
         .with_context(|| format!("failed to bind API to {address}"))?;
 
     tracing::info!(%address, "API listening");
 
-    axum::serve(
-        listener,
-        routes::handler()
-            .with_state(state)
-            .layer(TraceLayer::new_for_http())
-            .into_make_service(),
-    )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .context("API server failed")
+    // Outermost first: mint a correlation id, open a span carrying it, echo it back.
+    let app = crate::routes::handler(state)
+        .layer(http::propagate_request_id_layer())
+        .layer(TraceLayer::new_for_http().make_span_with(http::make_span))
+        .layer(http::set_request_id_layer());
+
+    axum::serve(listener, app.into_make_service())
+        .with_graceful_shutdown(drain_then_shutdown(readiness, drain))
+        .await
+        .context("API server failed")
 }
 
-async fn shutdown_signal() {
-    if let Err(error) = tokio::signal::ctrl_c().await {
-        tracing::error!(%error, "failed to install shutdown signal handler");
+/// Resolves once the process should stop accepting new connections.
+///
+/// Goes unready *before* the drain window rather than after, so the load balancer stops
+/// routing here while we are still able to finish what is already in flight. Returning
+/// immediately on signal would drop in-flight requests that the balancer has not yet
+/// learned to stop sending.
+async fn drain_then_shutdown(readiness: std::sync::Arc<Readiness>, drain: Duration) {
+    await_signal().await;
+
+    readiness.begin_draining();
+    tracing::warn!(
+        drain_seconds = drain.as_secs(),
+        "shutdown signal received — draining"
+    );
+
+    tokio::time::sleep(drain).await;
+
+    tracing::warn!("drain complete — shutting down");
+}
+
+/// Waits for SIGTERM or SIGINT.
+///
+/// SIGTERM is what Kubernetes sends; handling only ctrl-c would mean every pod termination
+/// is an ungraceful kill after the grace period expires.
+async fn await_signal() {
+    let mut terminate = match tokio::signal::unix::signal(SignalKind::terminate()) {
+        Ok(signal) => signal,
+        Err(error) => {
+            tracing::error!(%error, "failed to install SIGTERM handler");
+            return;
+        }
+    };
+
+    tokio::select! {
+        _ = terminate.recv() => tracing::warn!("received SIGTERM"),
+        result = tokio::signal::ctrl_c() => match result {
+            Ok(()) => tracing::warn!("received SIGINT"),
+            Err(error) => tracing::error!(%error, "failed to install SIGINT handler"),
+        },
     }
 }

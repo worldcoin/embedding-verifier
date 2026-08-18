@@ -2,6 +2,7 @@ use axum::{Json, extract::State, http::StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Serialize;
 
+use crate::telemetry::{FailureClass, metrics};
 use crate::types::AppState;
 
 #[derive(Debug, Serialize)]
@@ -19,9 +20,32 @@ pub async fn handler(
         .get_transit_key()
         .await
         .map_err(|error| {
-            tracing::error!(?error, "failed to fetch enclave transit key");
+            let class = FailureClass::from(&error);
+            state.metrics().count(
+                metrics::TRANSIT_KEY,
+                &[("result", "error"), ("class", class.as_str())],
+            );
+
+            if class.is_our_fault() {
+                tracing::error!(
+                    ?error,
+                    class = class.as_str(),
+                    "failed to fetch enclave transit key"
+                );
+            } else {
+                tracing::warn!(
+                    ?error,
+                    class = class.as_str(),
+                    "transit key request rejected"
+                );
+            }
+
             StatusCode::SERVICE_UNAVAILABLE
         })?;
+
+    state
+        .metrics()
+        .count(metrics::TRANSIT_KEY, &[("result", "ok"), ("class", "none")]);
 
     Ok(Json(TransitKeyResponse {
         attestation: STANDARD.encode(response.attestation),

@@ -14,6 +14,7 @@ anyhow = "1.0"
 async-trait = "0.1"
 axum = "0.8"
 base64 = "0.22"
+cadence = "1.5"
 ciborium = "0.2"
 crypto_box = { version = "0.9.1", default-features = false, features = ["getrandom"] }
 enclave-types = { path = "shared/enclave-types" }
@@ -25,6 +26,6 @@ serde_json = "1.0"
 sha2 = { version = "0.10", default-features = false }
 tokio = { version = "1.48", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["trace"] }
+tower-http = { version = "0.6", features = ["request-id", "trace", "util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

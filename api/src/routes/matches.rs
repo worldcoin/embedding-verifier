@@ -113,8 +113,11 @@ mod tests {
     use enclave_types::{self as enclave, EnclaveError, GetTransitKeyResponse};
 
     use super::{handler, status_for};
+    use crate::config::Config;
     use crate::enclave::{EnclaveClient, EnclaveClientError};
-    use crate::types::{AppState, Environment};
+    use crate::readiness::Readiness;
+    use crate::telemetry::Metrics;
+    use crate::types::AppState;
 
     struct StubEnclaveClient {
         result: Result<enclave::MatchResponse, EnclaveClientError>,
@@ -143,8 +146,10 @@ mod tests {
 
     fn state_returning(result: Result<enclave::MatchResponse, EnclaveClientError>) -> AppState {
         AppState::new(
-            Environment::Development,
+            Arc::new(Config::default()),
             Arc::new(StubEnclaveClient { result }),
+            Arc::new(Readiness::new()),
+            Arc::new(Metrics::disabled()),
         )
     }
 
