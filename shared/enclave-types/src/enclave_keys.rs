@@ -18,7 +18,7 @@ impl Request for GetEnclaveKeysRequest {
 /// `public_key` field. Both documents are public and relay unsealed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GetEnclaveKeysResponse {
-    /// Raw COSE-encoded document attesting the HPKE encryption public key.
+    /// Raw COSE-encoded document attesting the encryption public key.
     #[serde(with = "serde_bytes")]
     pub encryption_key_attestation: Vec<u8>,
     /// Raw COSE-encoded document attesting the `BabyJubJub` `EdDSA` public key.
