@@ -65,15 +65,16 @@ pub async fn handler(
         );
     })?;
 
-    // Bind the credential image to its PCP commitment.
-    let credential_claim = pcp::verify_pcp(&payload.credential_image, &payload.hashes_json)
-        .inspect_err(|error| {
-            tracing::warn!(
-                ?error,
-                route = MatchRequest::ROUTE_ID,
-                "pcp binding rejected"
-            );
-        })?;
+    // Bind the credential image to its PCP commitment. Hash binding only — provenance
+    // is re-anchored in the ZK circuit, see `pcp`.
+    let binding = pcp::bind_credential_claim(&payload.credential_image, &payload.hashes_json);
+    let credential_claim = binding.inspect_err(|error| {
+        tracing::warn!(
+            ?error,
+            route = MatchRequest::ROUTE_ID,
+            "pcp binding rejected"
+        );
+    })?;
 
     let live_image_hash: [u8; 32] = Sha256::digest(&payload.live_image).into();
     let challenger_image_hash: [u8; 32] = Sha256::digest(&payload.challenge_image).into();

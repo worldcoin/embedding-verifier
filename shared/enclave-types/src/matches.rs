@@ -37,6 +37,8 @@ pub struct MatchStatement {
     /// SHA256 of the live image.
     pub live_image_hash: [u8; 32],
     /// PCP commitment `SHA256(hashes.json)`; a commitment, not a proof of enrollment.
+    /// The `DeepFace` circuit binds it to the credential's `claims`, which is what makes
+    /// the in-enclave image-to-`hashes.json` binding meaningful.
     pub credential_claim: [u8; 32],
     /// SHA256 of the challenge image.
     pub challenger_image_hash: [u8; 32],
