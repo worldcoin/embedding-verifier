@@ -6,9 +6,9 @@
 use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSASignature};
 use enclave_types::{
     EnclaveError,
-    sealing::{self, Aead, Kdf, Kem},
+    sealing::{self, Kem, ResponseKey},
 };
-use hpke::{Deserializable, Kem as _, OpModeR, Serializable, single_shot_open};
+use hpke::{Kem as _, Serializable};
 
 /// The field element a `BabyJubJub` `EdDSA` signature commits to.
 pub type SigningMessage = ark_babyjubjub::Fq;
@@ -43,25 +43,20 @@ impl EncryptionKey {
 
     /// Opens a payload sealed to this key.
     ///
+    /// Returns the plaintext and the key the response must be sealed under. Both come
+    /// from one HPKE context, which is what lets the enclave answer without a
+    /// client-held keypair (RFC 9180 §9.8).
+    ///
     /// # Errors
     ///
-    /// Returns [`EnclaveError::DecryptFailed`] when the payload is misframed or was sealed
-    /// to another key.
-    pub fn decrypt_request(&self, sealed_payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        let (encapped_key, ciphertext) =
-            sealing::split(sealed_payload).ok_or(EnclaveError::DecryptFailed)?;
-        let encapped_key = <Kem as hpke::Kem>::EncappedKey::from_bytes(encapped_key)
-            .map_err(|_| EnclaveError::DecryptFailed)?;
-
-        single_shot_open::<Aead, Kdf, Kem>(
-            &OpModeR::Base,
-            &self.private_key,
-            &encapped_key,
-            sealing::INFO,
-            ciphertext,
-            &[],
-        )
-        .map_err(|_| EnclaveError::DecryptFailed)
+    /// Returns [`EnclaveError::DecryptFailed`] when the payload is misframed, was sealed
+    /// to another key, or fails authentication. One opaque error for all three.
+    pub fn decrypt_request(
+        &self,
+        sealed_payload: &[u8],
+    ) -> Result<(Vec<u8>, ResponseKey), EnclaveError> {
+        sealing::open_request(&self.private_key, sealed_payload)
+            .map_err(|_| EnclaveError::DecryptFailed)
     }
 }
 
@@ -118,7 +113,9 @@ mod tests {
     use super::{EncryptionKey, SIGNING_PUBLIC_KEY_LEN, SigningKey};
 
     fn seal_to(key: &EncryptionKey, plaintext: &[u8]) -> Vec<u8> {
-        sealing::seal(&key.public_key_bytes(), plaintext).expect("sealing should succeed")
+        sealing::seal_request(&key.public_key_bytes(), plaintext)
+            .expect("sealing should succeed")
+            .0
     }
 
     #[test]
@@ -141,7 +138,7 @@ mod tests {
         let key = EncryptionKey::generate();
         let sealed = seal_to(&key, b"match inputs");
 
-        let plaintext = key.decrypt_request(&sealed).expect("payload should open");
+        let (plaintext, _) = key.decrypt_request(&sealed).expect("payload should open");
 
         assert_eq!(plaintext, b"match inputs");
     }
@@ -152,8 +149,8 @@ mod tests {
         let sealed = seal_to(&EncryptionKey::generate(), b"match inputs");
 
         assert_eq!(
-            recipient.decrypt_request(&sealed),
-            Err(EnclaveError::DecryptFailed)
+            recipient.decrypt_request(&sealed).err(),
+            Some(EnclaveError::DecryptFailed)
         );
     }
 
@@ -164,8 +161,8 @@ mod tests {
         *sealed.last_mut().expect("sealed payload is not empty") ^= 0x01;
 
         assert_eq!(
-            key.decrypt_request(&sealed),
-            Err(EnclaveError::DecryptFailed)
+            key.decrypt_request(&sealed).err(),
+            Some(EnclaveError::DecryptFailed)
         );
     }
 
@@ -173,10 +170,13 @@ mod tests {
     fn decrypt_request_rejects_a_misframed_payload() {
         let key = EncryptionKey::generate();
 
-        assert_eq!(key.decrypt_request(&[]), Err(EnclaveError::DecryptFailed));
         assert_eq!(
-            key.decrypt_request(&[0u8; sealing::ENCAPPED_KEY_LEN]),
-            Err(EnclaveError::DecryptFailed)
+            key.decrypt_request(&[]).err(),
+            Some(EnclaveError::DecryptFailed)
+        );
+        assert_eq!(
+            key.decrypt_request(&[0u8; sealing::ENCAPPED_KEY_LEN]).err(),
+            Some(EnclaveError::DecryptFailed)
         );
     }
 

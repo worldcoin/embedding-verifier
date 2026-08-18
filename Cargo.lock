@@ -999,10 +999,12 @@ dependencies = [
 name = "enclave-types"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "hpke",
  "pontifex",
  "serde",
  "serde_bytes",
+ "zeroize",
 ]
 
 [[package]]

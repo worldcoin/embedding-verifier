@@ -1,7 +1,7 @@
 use std::{env, fs, path::PathBuf};
 
 use anyhow::{Context, Result, anyhow, ensure};
-use enclave_types::{GetEnclaveKeysRequest, MatchRequest, sealing};
+use enclave_types::{GetEnclaveKeysRequest, MatchOutcome, MatchRequest, sealing};
 use pontifex::{SecureModule, client::ConnectionDetails};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -72,35 +72,42 @@ async fn main() -> Result<()> {
     ciborium::into_writer(&payload, &mut plaintext)
         .context("failed to encode the encrypted match payload")?;
 
-    let sealed_payload = sealing::seal(&encryption_key, &plaintext)
+    let (sealed_payload, response_key) = sealing::seal_request(&encryption_key, &plaintext)
         .map_err(|error| anyhow!("failed to seal the match payload: {error}"))?;
     let response = pontifex::client::send(connection, &MatchRequest { sealed_payload })
         .await
         .context("failed to call the enclave matches route")?
         .map_err(|error| anyhow!("enclave rejected the match request: {error:?}"))?;
 
+    // Proves the host relayed an outcome only this client can read.
+    let outcome = response_key
+        .open(&response.sealed_outcome)
+        .map_err(|error| anyhow!("failed to open the sealed match outcome: {error}"))?;
+    let outcome: MatchOutcome = ciborium::from_reader(outcome.as_slice())
+        .context("failed to decode the sealed match outcome")?;
+
     ensure!(
-        response.statement.match_coefficient >= match_threshold,
+        outcome.statement.match_coefficient >= match_threshold,
         "credential/live score {} did not meet threshold {}",
-        response.statement.match_coefficient,
+        outcome.statement.match_coefficient,
         match_threshold
     );
     ensure!(
-        response.statement.live_image_hash == Sha256::digest(&live_image).as_slice(),
+        outcome.statement.live_image_hash == Sha256::digest(&live_image).as_slice(),
         "statement did not commit to the live image"
     );
     ensure!(
-        response.statement.challenger_image_hash == Sha256::digest(&challenge_image).as_slice(),
+        outcome.statement.challenger_image_hash == Sha256::digest(&challenge_image).as_slice(),
         "statement did not commit to the challenge image"
     );
     ensure!(
-        response.statement.credential_claim == Sha256::digest(&hashes_json).as_slice(),
+        outcome.statement.credential_claim == Sha256::digest(&hashes_json).as_slice(),
         "statement did not commit to hashes.json"
     );
 
     println!(
         "match succeeded: credential/live similarity={:.6}, threshold={:.6}",
-        response.statement.match_coefficient, match_threshold
+        outcome.statement.match_coefficient, match_threshold
     );
     Ok(())
 }

@@ -26,4 +26,6 @@ pub enum EnclaveError {
     EmbeddingGenerationFailed,
     /// Face Engine could not compare the generated embeddings.
     EmbeddingComparisonFailed,
+    /// The match outcome could not be sealed for the requesting client.
+    EncryptFailed,
 }

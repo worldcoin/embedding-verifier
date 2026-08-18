@@ -1,7 +1,9 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use enclave_types::{EnclaveError, MatchRequest, MatchResponse, MatchStatement};
+use enclave_types::{
+    EnclaveError, MatchOutcome, MatchRequest, MatchResponse, MatchStatement, sealing::ResponseKey,
+};
 use pontifex::Request;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -49,7 +51,7 @@ pub async fn handler(
     state: Arc<EnclaveState>,
     request: MatchRequest,
 ) -> Result<MatchResponse, EnclaveError> {
-    let plaintext = state.unseal(&request.sealed_payload).inspect_err(|error| {
+    let (plaintext, response_key) = state.unseal(&request.sealed_payload).inspect_err(|error| {
         tracing::warn!(
             ?error,
             route = MatchRequest::ROUTE_ID,
@@ -108,17 +110,44 @@ pub async fn handler(
     };
 
     // DUMMY: statement signing is not yet implemented.
-    Ok(MatchResponse {
-        statement,
-        signature: DUMMY_SIGNATURE.to_vec(),
-    })
+    seal_outcome(
+        &response_key,
+        &MatchOutcome {
+            statement,
+            signature: DUMMY_SIGNATURE.to_vec(),
+        },
+    )
+}
+
+/// Seals the outcome for the client that sent the request.
+///
+/// The host relays the result unread: the statement commits to biometric-derived values,
+/// and the host is outside the trust boundary.
+fn seal_outcome(
+    response_key: &ResponseKey,
+    outcome: &MatchOutcome,
+) -> Result<MatchResponse, EnclaveError> {
+    let mut cbor = Vec::new();
+    ciborium::into_writer(outcome, &mut cbor).map_err(|error| {
+        tracing::error!(?error, "failed to encode the match outcome");
+        EnclaveError::MalformedMatchPayload
+    })?;
+
+    let sealed_outcome = response_key.seal(&cbor).map_err(|error| {
+        tracing::error!(?error, "failed to seal the match outcome");
+        EnclaveError::EncryptFailed
+    })?;
+
+    Ok(MatchResponse { sealed_outcome })
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use enclave_types::{EnclaveError, MatchRequest, sealing};
+    use enclave_types::{
+        EnclaveError, MatchOutcome, MatchRequest, MatchResponse, sealing, sealing::ResponseKey,
+    };
     use sha2::{Digest, Sha256};
 
     use super::{DUMMY_SIGNATURE, MatchInputs, handler};
@@ -193,8 +222,10 @@ mod tests {
         )
     }
 
-    fn seal_to(state: &EnclaveState, plaintext: &[u8]) -> Vec<u8> {
-        sealing::seal(&state.encryption_public_key(), plaintext).expect("sealing should succeed")
+    /// Returns the framed request and the key its response will be sealed under.
+    fn seal_to(state: &EnclaveState, plaintext: &[u8]) -> (Vec<u8>, ResponseKey) {
+        sealing::seal_request(&state.encryption_public_key(), plaintext)
+            .expect("sealing should succeed")
     }
 
     fn seal_match(
@@ -204,7 +235,7 @@ mod tests {
         hashes_json: &[u8],
         challenge: &[u8],
         match_threshold: f32,
-    ) -> Vec<u8> {
+    ) -> (Vec<u8>, ResponseKey) {
         let payload = MatchInputs {
             live_image: live.to_vec(),
             credential_image: credential.to_vec(),
@@ -216,6 +247,15 @@ mod tests {
         ciborium::into_writer(&payload, &mut cbor).expect("cbor encoding should succeed");
 
         seal_to(state, &cbor)
+    }
+
+    /// Opens an outcome the way the requesting client does.
+    fn open_outcome(response_key: &ResponseKey, response: &MatchResponse) -> MatchOutcome {
+        let cbor = response_key
+            .open(&response.sealed_outcome)
+            .expect("outcome should open under the request's response key");
+
+        ciborium::from_reader(cbor.as_slice()).expect("outcome should decode")
     }
 
     fn hashes_json_for(image: &[u8]) -> Vec<u8> {
@@ -236,13 +276,15 @@ mod tests {
             credential, live, challenge, 0.92, 0.87,
         ));
         let hashes_json = hashes_json_for(credential);
-        let sealed_payload = seal_match(&state, live, credential, &hashes_json, challenge, 0.5);
+        let (sealed_payload, response_key) =
+            seal_match(&state, live, credential, &hashes_json, challenge, 0.5);
 
         let response = handler(state, request(sealed_payload))
             .await
             .expect("match should produce a statement");
 
-        let statement = &response.statement;
+        let outcome = open_outcome(&response_key, &response);
+        let statement = &outcome.statement;
         assert_eq!(statement.version, 1);
         assert_eq!(statement.live_image_hash, Sha256::digest(live).as_slice());
         assert_eq!(
@@ -253,8 +295,36 @@ mod tests {
             statement.challenger_image_hash,
             Sha256::digest(challenge).as_slice()
         );
-        assert_eq!(response.signature, DUMMY_SIGNATURE.to_vec());
+        assert_eq!(outcome.signature, DUMMY_SIGNATURE.to_vec());
         assert_eq!(statement.match_coefficient.to_bits(), 0.92f32.to_bits());
+    }
+
+    #[tokio::test]
+    async fn outcome_is_sealed_to_the_requesting_client_only() {
+        let live = b"liveness-frame";
+        let credential = b"credential-thumbnail";
+        let challenge = b"challenge-frame";
+        let state = state_with(MockFaceEngine::matching(
+            credential, live, challenge, 0.92, 0.87,
+        ));
+        let hashes_json = hashes_json_for(credential);
+        let (sealed_payload, _) =
+            seal_match(&state, live, credential, &hashes_json, challenge, 0.5);
+        // A second request derives an unrelated response key.
+        let (_, other_key) = seal_match(&state, live, credential, &hashes_json, challenge, 0.5);
+
+        let response = handler(state, request(sealed_payload))
+            .await
+            .expect("match should produce a statement");
+
+        assert!(other_key.open(&response.sealed_outcome).is_err());
+        // The plaintext statement never appears in the relayed bytes.
+        assert!(
+            !response
+                .sealed_outcome
+                .windows(32)
+                .any(|window| window == Sha256::digest(live).as_slice())
+        );
     }
 
     #[tokio::test]
@@ -269,7 +339,7 @@ mod tests {
     #[tokio::test]
     async fn handler_rejects_non_cbor_plaintext() {
         let state = state_with(MockFaceEngine::unused());
-        let sealed_payload = seal_to(&state, b"not cbor framing");
+        let (sealed_payload, _) = seal_to(&state, b"not cbor framing");
 
         let result = handler(state, request(sealed_payload)).await;
 
@@ -280,7 +350,7 @@ mod tests {
     async fn handler_rejects_pcp_binding_mismatch() {
         let state = state_with(MockFaceEngine::unused());
         let hashes_json = hashes_json_for(b"the-enrolled-image");
-        let sealed_payload = seal_match(
+        let (sealed_payload, _) = seal_match(
             &state,
             b"liveness",
             b"a-different-image",
@@ -303,7 +373,8 @@ mod tests {
             credential, live, challenge, 0.95, 0.85,
         ));
         let hashes_json = hashes_json_for(credential);
-        let sealed_payload = seal_match(&state, live, credential, &hashes_json, challenge, 0.9);
+        let (sealed_payload, _) =
+            seal_match(&state, live, credential, &hashes_json, challenge, 0.9);
 
         let result = handler(state, request(sealed_payload)).await;
 

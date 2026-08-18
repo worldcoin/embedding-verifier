@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use enclave_types::{EnclaveError, sealing};
+use enclave_types::{EnclaveError, sealing, sealing::ResponseKey};
 
 use crate::{
     attestation::Attestor,
@@ -85,11 +85,13 @@ impl EnclaveState {
 
     /// Opens an HPKE payload sealed to this boot's encryption key.
     ///
+    /// Returns the plaintext and the key its response must be sealed under.
+    ///
     /// # Errors
     ///
-    /// Returns [`EnclaveError::DecryptFailed`]; see
+    /// Returns [`EnclaveError::DecryptFailed`]. See
     /// [`EncryptionKey::decrypt_request`] for why the error is uniform and opaque.
-    pub fn unseal(&self, sealed_payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+    pub fn unseal(&self, sealed_payload: &[u8]) -> Result<(Vec<u8>, ResponseKey), EnclaveError> {
         self.encryption_key.decrypt_request(sealed_payload)
     }
 }

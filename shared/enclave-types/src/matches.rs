@@ -20,9 +20,23 @@ impl Request for MatchRequest {
     type Response = Result<MatchResponse, EnclaveError>;
 }
 
-/// The match statement and its enclave signature.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The sealed match outcome.
+///
+/// Opaque to the host, which relays it unread: the statement commits to biometric-derived
+/// values, and the host is outside the trust boundary. Sealed under the response key both
+/// sides derive from the request's HPKE context, so it needs no client-held keypair.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchResponse {
+    /// AES-128-GCM ciphertext wrapping the CBOR-framed [`MatchOutcome`].
+    #[serde(with = "serde_bytes")]
+    pub sealed_outcome: Vec<u8>,
+}
+
+/// The plaintext the enclave seals into a [`MatchResponse`].
+///
+/// Enclave-and-client only. The host never holds the key that opens it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MatchOutcome {
     /// The claims the enclave attests to.
     pub statement: MatchStatement,
     /// Signature over `statement`. **Placeholder** until output signing lands.
