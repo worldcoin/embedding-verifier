@@ -17,8 +17,7 @@ pub enum EnclaveError {
     /// committed thumbnail hash was malformed.
     InvalidHashesJson,
     /// The credential image did not hash to the `thumbnail.png` value committed in
-    /// hashes.json. A commitment-binding failure, not a signature failure — the enclave
-    /// verifies no orb-attestation signatures.
+    /// hashes.json.
     ThumbnailHashMismatch,
     /// A comparison scored below the RP-supplied `match_threshold`.
     MatchBelowThreshold,
