@@ -27,7 +27,7 @@ RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
     git config --global --unset-all \
       url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf
 
-FROM debian:bookworm-slim AS runtime-base
+FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -35,17 +35,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /src/target/release/secure-enclave /usr/local/bin/secure-enclave
 
+# TODO: Remove this build-time switch once models are injected into the enclave
+# at runtime. CI sets it to true because private model artifacts are unavailable.
+ARG SKIP_MODEL_DOWNLOAD=false
+RUN --mount=from=builder,source=/src,target=/build,ro \
+    if [ "$SKIP_MODEL_DOWNLOAD" = "true" ]; then \
+      echo "Skipping model packaging"; \
+    else \
+      mkdir -p /models; \
+      cp /build/models/face_embedding_generator.onnx /models/face_embedding_generator.onnx; \
+      cp /build/models/rgbnet.onnx /models/rgbnet.onnx; \
+    fi
+
 ENV RUST_LOG=info
 
 ENTRYPOINT ["/usr/local/bin/secure-enclave"]
-
-# CI validates compilation and EIF packaging without requiring private model
-# artifacts. This target is not runnable for face matching.
-FROM runtime-base AS ci
-
-# Runnable enclave images include the reviewed model artifacts downloaded by
-# scripts/download-face-models.py before the build.
-FROM runtime-base AS runtime
-
-COPY --from=builder /src/models/face_embedding_generator.onnx /models/face_embedding_generator.onnx
-COPY --from=builder /src/models/rgbnet.onnx /models/rgbnet.onnx

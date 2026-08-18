@@ -8,7 +8,7 @@ set -euo pipefail
 # Usage: scripts/build-eif.sh [output-dir]   (default: target/eif)
 # Outputs: embedding-verifier-enclave.eif, pcrs.json
 # Env: NITRO_CLI_VERSION (default v1.4.2), ENCLAVE_IMAGE_TAG,
-#      ENCLAVE_DOCKER_TARGET (default runtime),
+#      SKIP_MODEL_DOWNLOAD (default false),
 #      GIT_HUB_TOKEN (read access to private GitHub dependencies)
 
 if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
@@ -18,7 +18,7 @@ fi
 
 NITRO_CLI_VERSION="${NITRO_CLI_VERSION:-v1.4.2}"
 ENCLAVE_IMAGE_TAG="${ENCLAVE_IMAGE_TAG:-embedding-verifier-enclave:local}"
-ENCLAVE_DOCKER_TARGET="${ENCLAVE_DOCKER_TARGET:-runtime}"
+SKIP_MODEL_DOWNLOAD="${SKIP_MODEL_DOWNLOAD:-false}"
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
@@ -27,14 +27,14 @@ out_dir="${1:-target/eif}"
 mkdir -p "$out_dir"
 out_dir="$(cd "$out_dir" && pwd)"
 
-echo "[1/3] Building enclave container image ($ENCLAVE_IMAGE_TAG, target $ENCLAVE_DOCKER_TARGET)..."
+echo "[1/3] Building enclave container image ($ENCLAVE_IMAGE_TAG)..."
 if [[ -z "${GIT_HUB_TOKEN:-}" ]]; then
   echo "[ERROR] GIT_HUB_TOKEN is required to fetch private GitHub dependencies." >&2
   exit 1
 fi
 docker build \
   --secret id=GITHUB_TOKEN,env=GIT_HUB_TOKEN \
-  --target "$ENCLAVE_DOCKER_TARGET" \
+  --build-arg "SKIP_MODEL_DOWNLOAD=$SKIP_MODEL_DOWNLOAD" \
   -t "$ENCLAVE_IMAGE_TAG" \
   -f secure-enclave/Dockerfile \
   .
