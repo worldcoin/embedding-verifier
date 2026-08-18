@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use enclave_types::{
-    EnclaveError, GetTransitKeyRequest, GetTransitKeyResponse, HealthRequest, MatchRequest,
+    EnclaveError, GetEnclaveKeysRequest, GetEnclaveKeysResponse, HealthRequest, MatchRequest,
     MatchResponse,
 };
 use pontifex::client::ConnectionDetails;
@@ -31,8 +31,8 @@ pub trait EnclaveClient: Send + Sync {
     /// Checks whether the enclave process is reachable and ready.
     async fn health(&self) -> Result<(), EnclaveClientError>;
 
-    /// Fetches an attestation document containing the enclave's transit public key.
-    async fn get_transit_key(&self) -> Result<GetTransitKeyResponse, EnclaveClientError>;
+    /// Fetches one attestation document per boot-scoped enclave public key.
+    async fn get_enclave_keys(&self) -> Result<GetEnclaveKeysResponse, EnclaveClientError>;
 
     /// Runs a match inside the enclave.
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError>;
@@ -68,10 +68,10 @@ impl EnclaveClient for PontifexEnclaveClient {
         response.map_err(EnclaveClientError::Operation)
     }
 
-    async fn get_transit_key(&self) -> Result<GetTransitKeyResponse, EnclaveClientError> {
+    async fn get_enclave_keys(&self) -> Result<GetEnclaveKeysResponse, EnclaveClientError> {
         let response = timeout(
             CONTROL_REQUEST_TIMEOUT,
-            pontifex::client::send(self.connection, &GetTransitKeyRequest),
+            pontifex::client::send(self.connection, &GetEnclaveKeysRequest),
         )
         .await
         .map_err(|_| EnclaveClientError::Timeout)?

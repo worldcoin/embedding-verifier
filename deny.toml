@@ -24,6 +24,9 @@ confidence-threshold = 1.0
 private = { ignore = true, ignore-sources = ["https://github.com/worldcoin/biometric-engines"] }
 allow = [
     "Apache-2.0",
+    # Reached via blake3, which taceo-eddsa-babyjubjub uses to expand signing keys.
+    # Permissive, OSI-approved, and no more restrictive than BSD-3-Clause below.
+    "BSD-2-Clause",
     "BSD-3-Clause",
     "MIT",
     "Unicode-3.0",

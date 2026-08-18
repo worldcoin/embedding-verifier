@@ -2,34 +2,50 @@
 
 use std::sync::Arc;
 
-use crypto_box::{SecretKey, aead::OsRng};
+use crypto_box::PublicKey;
+use eddsa_babyjubjub::EdDSAPublicKey;
 use enclave_types::EnclaveError;
 
-use crate::face_engine::FaceComparator;
+use crate::{
+    attestation::Attestor,
+    face_engine::FaceComparator,
+    keys::{EncryptionKey, SigningKey},
+};
 
 /// Immutable state generated once during enclave boot.
 pub struct EnclaveState {
-    transit_secret_key: SecretKey,
+    encryption_key: EncryptionKey,
+    signing_key: SigningKey,
+    attestor: Arc<dyn Attestor>,
     face_engine: Arc<dyn FaceComparator>,
 }
 
 impl EnclaveState {
-    /// Generates fresh boot-scoped enclave state with the provided Face Engine.
+    /// Generates fresh boot-scoped keys, with the provided attestor and Face Engine.
     #[must_use]
-    pub fn generate(face_engine: Arc<dyn FaceComparator>) -> Self {
-        let transit_secret_key = SecretKey::generate(&mut OsRng);
-        tracing::info!("generated boot-scoped transit key");
+    pub fn generate(attestor: Arc<dyn Attestor>, face_engine: Arc<dyn FaceComparator>) -> Self {
+        let encryption_key = EncryptionKey::generate();
+        let signing_key = SigningKey::generate();
+        tracing::info!("generated boot-scoped encryption and signing keys");
 
         Self {
-            transit_secret_key,
+            encryption_key,
+            signing_key,
+            attestor,
             face_engine,
         }
     }
 
-    /// Returns the X25519 public key used to encrypt requests for this enclave boot.
+    /// Returns the X25519 public key attested for this enclave boot.
     #[must_use]
-    pub fn transit_public_key(&self) -> [u8; 32] {
-        self.transit_secret_key.public_key().to_bytes()
+    pub fn encryption_public_key(&self) -> PublicKey {
+        self.encryption_key.public_key()
+    }
+
+    /// Returns the `BabyJubJub` public key that verifies this boot's statements.
+    #[must_use]
+    pub const fn signing_public_key(&self) -> &EdDSAPublicKey {
+        self.signing_key.public_key()
     }
 
     /// Returns the Face Engine used for enclave match operations.
@@ -38,22 +54,30 @@ impl EnclaveState {
         self.face_engine.as_ref()
     }
 
-    /// Unseals a libsodium sealed box addressed to this boot's transit public key.
-    ///
-    /// The client encrypts to the enclave public key with an ephemeral sender key
-    /// (anonymous sealed box), so this provides confidentiality and integrity of the
-    /// ciphertext but no sender authentication — by design, as callers are not
-    /// pre-registered and provenance is enforced downstream, not here.
+    /// Attests the encryption public key.
     ///
     /// # Errors
     ///
-    /// Returns [`EnclaveError::DecryptFailed`] when the ciphertext is malformed or is
-    /// not addressed to this key. The error is deliberately opaque: no plaintext,
-    /// ciphertext, or key material is surfaced or logged.
-    pub fn unseal(&self, ciphertext: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        self.transit_secret_key
-            .unseal(ciphertext)
-            .map_err(|_| EnclaveError::DecryptFailed)
+    /// Propagates the [`Attestor`] failure.
+    pub fn attest_encryption_key(&self) -> Result<Vec<u8>, EnclaveError> {
+        let public_key = self.encryption_public_key().to_bytes();
+        self.attestor.attest_public_key(&public_key)
+    }
+
+    /// Attests the signing public key.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the [`Attestor`] failure.
+    pub fn attest_signing_key(&self) -> Result<Vec<u8>, EnclaveError> {
+        let public_key = self
+            .signing_public_key()
+            .to_compressed_bytes()
+            .map_err(|error| {
+                tracing::error!(%error, "failed to serialize the signing public key");
+                EnclaveError::AttestationFailed
+            })?;
+        self.attestor.attest_public_key(&public_key)
     }
 }
 
@@ -61,40 +85,48 @@ impl EnclaveState {
 mod tests {
     use std::sync::Arc;
 
-    use enclave_types::EnclaveError;
-
     use super::EnclaveState;
-    use crate::face_engine::{ComparisonScores, FaceComparator};
+    use crate::test_support::{EchoAttestor, state_with};
 
-    struct NoopFaceEngine;
-
-    impl FaceComparator for NoopFaceEngine {
-        fn compare_reference_to_probes(
-            &self,
-            _: &[u8],
-            _: &[u8],
-            _: &[u8],
-        ) -> Result<ComparisonScores, EnclaveError> {
-            Err(EnclaveError::NotReady)
-        }
-    }
-
-    fn state() -> EnclaveState {
-        EnclaveState::generate(Arc::new(NoopFaceEngine))
+    fn state() -> Arc<EnclaveState> {
+        state_with(Arc::new(EchoAttestor))
     }
 
     #[test]
-    fn transit_key_is_stable_for_one_state() {
+    fn keys_are_stable_for_one_state() {
         let state = state();
 
-        assert_eq!(state.transit_public_key(), state.transit_public_key());
+        assert_eq!(state.encryption_public_key(), state.encryption_public_key());
+        assert_eq!(state.signing_public_key(), state.signing_public_key());
     }
 
     #[test]
-    fn separate_states_receive_separate_transit_keys() {
+    fn separate_states_receive_separate_keys() {
         let first = state();
         let second = state();
 
-        assert_ne!(first.transit_public_key(), second.transit_public_key());
+        assert_ne!(
+            first.encryption_public_key(),
+            second.encryption_public_key()
+        );
+        assert_ne!(first.signing_public_key(), second.signing_public_key());
+    }
+
+    #[test]
+    fn each_key_is_attested_in_its_own_document() {
+        let state = state();
+
+        assert_eq!(
+            state.attest_encryption_key(),
+            Ok(state.encryption_public_key().to_bytes().to_vec())
+        );
+        assert_eq!(
+            state.attest_signing_key(),
+            Ok(state
+                .signing_public_key()
+                .to_compressed_bytes()
+                .expect("generated BabyJubJub public key serializes")
+                .to_vec())
+        );
     }
 }

@@ -9,7 +9,7 @@ pub enum EnclaveError {
     SecureModuleNotInitialized,
     /// The Nitro Secure Module could not produce an attestation document.
     AttestationFailed,
-    /// The sealed request could not be decrypted with the enclave transit key.
+    /// The sealed request could not be opened with the enclave encryption key.
     DecryptFailed,
     /// The decrypted match payload was not valid CBOR framing.
     MalformedMatchPayload,

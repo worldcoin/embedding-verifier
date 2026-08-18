@@ -14,8 +14,8 @@ const STATEMENT_VERSION: u8 = 1;
 /// Placeholder statement signature until signing lands.
 const DUMMY_SIGNATURE: [u8; 64] = [0u8; 64];
 
-/// The decrypted, CBOR-framed plaintext of a [`MatchRequest`]'s sealed box.
-/// Enclave-internal: the host only forwards the opaque ciphertext.
+/// CBOR-framed match inputs carried by [`MatchRequest`].
+/// Enclave-internal: the host only forwards the opaque payload.
 #[derive(Serialize, Deserialize)]
 pub(super) struct MatchInputs {
     /// Raw liveness image bytes.
@@ -49,15 +49,7 @@ pub async fn handler(
     state: Arc<EnclaveState>,
     request: MatchRequest,
 ) -> Result<MatchResponse, EnclaveError> {
-    let plaintext = state.unseal(&request.sealed_payload).inspect_err(|error| {
-        tracing::warn!(
-            ?error,
-            route = MatchRequest::ROUTE_ID,
-            "failed to unseal request"
-        );
-    })?;
-
-    let payload = MatchInputs::from_cbor(&plaintext).inspect_err(|error| {
+    let payload = MatchInputs::from_cbor(&request.sealed_payload).inspect_err(|error| {
         tracing::warn!(
             ?error,
             route = MatchRequest::ROUTE_ID,
@@ -118,7 +110,6 @@ pub async fn handler(
 mod tests {
     use std::sync::Arc;
 
-    use crypto_box::{PublicKey, aead::OsRng};
     use enclave_types::{EnclaveError, MatchRequest};
     use sha2::{Digest, Sha256};
 
@@ -126,6 +117,7 @@ mod tests {
     use crate::{
         face_engine::{ComparisonScores, FaceComparator},
         state::EnclaveState,
+        test_support::FailingAttestor,
     };
 
     struct ExpectedImages {
@@ -187,18 +179,13 @@ mod tests {
     }
 
     fn state_with(face_engine: MockFaceEngine) -> Arc<EnclaveState> {
-        Arc::new(EnclaveState::generate(Arc::new(face_engine)))
+        Arc::new(EnclaveState::generate(
+            Arc::new(FailingAttestor),
+            Arc::new(face_engine),
+        ))
     }
 
-    fn seal_to(state: &EnclaveState, plaintext: &[u8]) -> Vec<u8> {
-        let public_key = PublicKey::from(state.transit_public_key());
-        public_key
-            .seal(&mut OsRng, plaintext)
-            .expect("sealing should succeed")
-    }
-
-    fn seal_match(
-        state: &EnclaveState,
+    fn encode_match(
         live: &[u8],
         credential: &[u8],
         hashes_json: &[u8],
@@ -214,7 +201,7 @@ mod tests {
         };
         let mut cbor = Vec::new();
         ciborium::into_writer(&payload, &mut cbor).expect("cbor encoding should succeed");
-        seal_to(state, &cbor)
+        cbor
     }
 
     fn hashes_json_for(image: &[u8]) -> Vec<u8> {
@@ -235,7 +222,7 @@ mod tests {
             credential, live, challenge, 0.92, 0.87,
         ));
         let hashes_json = hashes_json_for(credential);
-        let sealed_payload = seal_match(&state, live, credential, &hashes_json, challenge, 0.5);
+        let sealed_payload = encode_match(live, credential, &hashes_json, challenge, 0.5);
 
         let response = handler(state, request(sealed_payload))
             .await
@@ -257,20 +244,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handler_rejects_undecryptable_payload() {
-        let state = state_with(MockFaceEngine::unused());
-
-        let result = handler(state, request(vec![0u8; 64])).await;
-
-        assert_eq!(result, Err(EnclaveError::DecryptFailed));
-    }
-
-    #[tokio::test]
     async fn handler_rejects_non_cbor_plaintext() {
         let state = state_with(MockFaceEngine::unused());
-        let sealed_payload = seal_to(&state, b"not cbor framing");
 
-        let result = handler(state, request(sealed_payload)).await;
+        let result = handler(state, request(b"not cbor framing".to_vec())).await;
 
         assert_eq!(result, Err(EnclaveError::MalformedMatchPayload));
     }
@@ -279,8 +256,7 @@ mod tests {
     async fn handler_rejects_pcp_binding_mismatch() {
         let state = state_with(MockFaceEngine::unused());
         let hashes_json = hashes_json_for(b"the-enrolled-image");
-        let sealed_payload = seal_match(
-            &state,
+        let sealed_payload = encode_match(
             b"liveness",
             b"a-different-image",
             &hashes_json,
@@ -302,7 +278,7 @@ mod tests {
             credential, live, challenge, 0.95, 0.85,
         ));
         let hashes_json = hashes_json_for(credential);
-        let sealed_payload = seal_match(&state, live, credential, &hashes_json, challenge, 0.9);
+        let sealed_payload = encode_match(live, credential, &hashes_json, challenge, 0.9);
 
         let result = handler(state, request(sealed_payload)).await;
 

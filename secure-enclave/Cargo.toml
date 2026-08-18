@@ -12,13 +12,16 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+ark-babyjubjub.workspace = true
 ciborium.workspace = true
-crypto_box = { workspace = true, features = ["seal", "salsa20"] }
+crypto_box.workspace = true
+eddsa-babyjubjub.workspace = true
 enclave-types.workspace = true
 face-engine.workspace = true
 hex.workspace = true
 image.workspace = true
 pontifex = { workspace = true, features = ["nsm", "server"] }
+rand.workspace = true
 serde = { workspace = true }
 serde_bytes.workspace = true
 serde_json.workspace = true
