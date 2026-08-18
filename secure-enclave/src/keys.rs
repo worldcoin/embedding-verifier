@@ -34,41 +34,25 @@ impl EncryptionKey {
 pub struct SigningKey {
     private_key: EdDSAPrivateKey,
     public_key: EdDSAPublicKey,
-    /// Compressed encoding for NSM attestation, checked once at boot.
-    compressed: [u8; 32],
 }
 
 impl SigningKey {
     /// Generates a fresh `BabyJubJub` `EdDSA` keypair.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the generated public key cannot be compressed. Compressing
-    /// once here keeps the fallible step at boot, so no request path can fail on it.
-    pub fn generate() -> anyhow::Result<Self> {
+    #[must_use]
+    pub fn generate() -> Self {
         let private_key = EdDSAPrivateKey::random(&mut rand::rngs::OsRng);
         let public_key = private_key.public();
-        let compressed = public_key.to_compressed_bytes().map_err(|error| {
-            anyhow::anyhow!("failed to compress the signing public key: {error}")
-        })?;
 
-        Ok(Self {
+        Self {
             private_key,
             public_key,
-            compressed,
-        })
+        }
     }
 
     /// Returns the public key that verifies this boot's statements.
     #[must_use]
     pub const fn public_key(&self) -> &EdDSAPublicKey {
         &self.public_key
-    }
-
-    /// Compressed public key, as placed in the attestation document's `public_key` field.
-    #[must_use]
-    pub const fn compressed_public_key(&self) -> &[u8; 32] {
-        &self.compressed
     }
 
     /// Signs one field element.
@@ -97,15 +81,15 @@ mod tests {
 
     #[test]
     fn separate_signing_keys_are_distinct() {
-        let first = SigningKey::generate().expect("signing key should generate");
-        let second = SigningKey::generate().expect("signing key should generate");
+        let first = SigningKey::generate();
+        let second = SigningKey::generate();
 
         assert_ne!(first.public_key(), second.public_key());
     }
 
     #[test]
     fn signatures_verify_under_the_attested_public_key() {
-        let key = SigningKey::generate().expect("signing key should generate");
+        let key = SigningKey::generate();
         let message = Fq::from(42u64);
 
         let signature = key.sign(message);

@@ -29,10 +29,7 @@ async fn main() -> anyhow::Result<()> {
 
     let face_engine = Arc::new(FaceEngine::default());
     info!("initialized Face Engine");
-    let state = Arc::new(
-        EnclaveState::generate(Arc::new(NsmAttestor), face_engine)
-            .context("failed to generate boot-scoped enclave keys")?,
-    );
+    let state = Arc::new(EnclaveState::generate(Arc::new(NsmAttestor), face_engine));
 
     let attestation = state
         .attest_encryption_key()

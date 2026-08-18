@@ -179,10 +179,10 @@ mod tests {
     }
 
     fn state_with(face_engine: MockFaceEngine) -> Arc<EnclaveState> {
-        Arc::new(
-            EnclaveState::generate(Arc::new(FailingAttestor), Arc::new(face_engine))
-                .expect("state should generate"),
-        )
+        Arc::new(EnclaveState::generate(
+            Arc::new(FailingAttestor),
+            Arc::new(face_engine),
+        ))
     }
 
     fn encode_match(

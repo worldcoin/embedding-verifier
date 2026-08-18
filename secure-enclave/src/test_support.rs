@@ -43,8 +43,5 @@ impl FaceComparator for UnusedFaceEngine {
 
 /// Builds state whose Face Engine must not be called.
 pub fn state_with(attestor: Arc<dyn Attestor>) -> Arc<EnclaveState> {
-    Arc::new(
-        EnclaveState::generate(attestor, Arc::new(UnusedFaceEngine))
-            .expect("state should generate"),
-    )
+    Arc::new(EnclaveState::generate(attestor, Arc::new(UnusedFaceEngine)))
 }

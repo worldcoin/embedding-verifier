@@ -22,24 +22,18 @@ pub struct EnclaveState {
 
 impl EnclaveState {
     /// Generates fresh boot-scoped keys, with the provided attestor and Face Engine.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when a key cannot be generated.
-    pub fn generate(
-        attestor: Arc<dyn Attestor>,
-        face_engine: Arc<dyn FaceComparator>,
-    ) -> anyhow::Result<Self> {
+    #[must_use]
+    pub fn generate(attestor: Arc<dyn Attestor>, face_engine: Arc<dyn FaceComparator>) -> Self {
         let encryption_key = EncryptionKey::generate();
-        let signing_key = SigningKey::generate()?;
+        let signing_key = SigningKey::generate();
         tracing::info!("generated boot-scoped encryption and signing keys");
 
-        Ok(Self {
+        Self {
             encryption_key,
             signing_key,
             attestor,
             face_engine,
-        })
+        }
     }
 
     /// Returns the X25519 public key attested for this enclave boot.
@@ -52,12 +46,6 @@ impl EnclaveState {
     #[must_use]
     pub const fn signing_public_key(&self) -> &EdDSAPublicKey {
         self.signing_key.public_key()
-    }
-
-    /// Returns the signing key used for match statements.
-    #[must_use]
-    pub const fn signing_key(&self) -> &SigningKey {
-        &self.signing_key
     }
 
     /// Returns the Face Engine used for enclave match operations.
@@ -82,8 +70,14 @@ impl EnclaveState {
     ///
     /// Propagates the [`Attestor`] failure.
     pub fn attest_signing_key(&self) -> Result<Vec<u8>, EnclaveError> {
-        self.attestor
-            .attest_public_key(self.signing_key.compressed_public_key())
+        let public_key = self
+            .signing_public_key()
+            .to_compressed_bytes()
+            .map_err(|error| {
+                tracing::error!(%error, "failed to serialize the signing public key");
+                EnclaveError::AttestationFailed
+            })?;
+        self.attestor.attest_public_key(&public_key)
     }
 }
 
@@ -128,7 +122,11 @@ mod tests {
         );
         assert_eq!(
             state.attest_signing_key(),
-            Ok(state.signing_key().compressed_public_key().to_vec())
+            Ok(state
+                .signing_public_key()
+                .to_compressed_bytes()
+                .expect("generated BabyJubJub public key serializes")
+                .to_vec())
         );
     }
 }
