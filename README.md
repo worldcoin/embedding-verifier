@@ -43,19 +43,18 @@ else:
 The enclave's identity (`module_id`) and expiry (the leaf certificate's `notAfter`) are read
 from the document *after* verifying it, never from fields the untrusted host could set.
 
-`verifier-client` fetches an assignment and verifies it — the COSE signature, the certificate
-chain up to the pinned AWS Nitro root, and the expected measurements. It refuses to run
-without at least `EXPECTED_PCR0`, since a verifier with nothing pinned only proves a document
-came from *some* enclave:
+`verifier-client` verifies the document — the COSE signature, the certificate chain up to the
+pinned AWS Nitro root, and the expected measurements. `enclave-match-e2e` uses it, and reads
+its policy from the environment:
 
 ```bash
-VERIFIER_BASE_URL=http://localhost:8000 \
-EXPECTED_PCR0=$(jq -r .PCR0 target/eif/pcrs.json) \
-  cargo run --bin verifier-client
+EXPECTED_PCR0=$(jq -r .PCR0 target/eif/pcrs.json)
 ```
 
-For a `--debug-mode` enclave every PCR is zero. Such an enclave's memory is readable from the
-parent instance, so it is rejected unless you also set `ALLOW_DEBUG_MEASUREMENTS=true`.
+At least `EXPECTED_PCR0` is required: with nothing pinned, verification only proves a document
+came from *some* enclave. For a `--debug-mode` enclave every PCR is zero, and its memory is
+readable from the parent instance, so it is rejected unless you also set
+`ALLOW_DEBUG_MEASUREMENTS=true`.
 
 ## Nitro-enabled development host
 
