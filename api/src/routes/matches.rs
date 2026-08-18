@@ -108,47 +108,16 @@ const fn status_for(error: &EnclaveClientError) -> StatusCode {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use async_trait::async_trait;
     use axum::{body::Bytes, extract::State, http::StatusCode};
-    use enclave_types::{self as enclave, EnclaveError, GetEnclaveKeysResponse};
+    use enclave_types::{self as enclave, EnclaveError};
 
     use super::{handler, status_for};
-    use crate::enclave::{EnclaveClient, EnclaveClientError};
-    use crate::types::{AppState, Environment};
-
-    struct StubEnclaveClient {
-        result: Result<enclave::MatchResponse, EnclaveClientError>,
-    }
-
-    #[async_trait]
-    impl EnclaveClient for StubEnclaveClient {
-        async fn health(&self) -> Result<(), EnclaveClientError> {
-            Ok(())
-        }
-
-        async fn get_enclave_keys(&self) -> Result<GetEnclaveKeysResponse, EnclaveClientError> {
-            Ok(GetEnclaveKeysResponse {
-                encryption_key_attestation: Vec::new(),
-                signing_key_attestation: Vec::new(),
-            })
-        }
-
-        async fn run_match(
-            &self,
-            request: enclave::MatchRequest,
-        ) -> Result<enclave::MatchResponse, EnclaveClientError> {
-            assert_eq!(request.sealed_payload, b"sealed");
-            self.result.clone()
-        }
-    }
+    use crate::enclave::EnclaveClientError;
+    use crate::test_support::{StubEnclaveClient, state_with};
+    use crate::types::AppState;
 
     fn state_returning(result: Result<enclave::MatchResponse, EnclaveClientError>) -> AppState {
-        AppState::new(
-            Environment::Development,
-            Arc::new(StubEnclaveClient { result }),
-        )
+        state_with(StubEnclaveClient::returning_match(result).expecting_sealed_payload(b"sealed"))
     }
 
     fn sample_response() -> enclave::MatchResponse {
