@@ -16,7 +16,8 @@ pub enum EnclaveError {
     /// hashes.json was absent, not valid JSON, missing the `thumbnail.png` entry, or the
     /// committed thumbnail hash was malformed.
     InvalidHashesJson,
-    /// The credential image did not match the committed `thumbnail.png` hash.
+    /// The credential image did not hash to the `thumbnail.png` value committed in
+    /// hashes.json.
     ThumbnailHashMismatch,
     /// A comparison scored below the RP-supplied `match_threshold`.
     MatchBelowThreshold,
