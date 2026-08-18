@@ -4533,9 +4533,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aws-nitro-enclaves-nsm-api",
+ "axum",
  "base64",
  "ciborium",
  "coset",
+ "hex",
  "hex-literal",
  "p384",
  "reqwest",
