@@ -6,8 +6,9 @@ Rust workspace for the embedding verifier API and secure enclave.
 
 ```text
 embedding-verifier/
-├── api/              # Axum HTTP API
-└── secure-enclave/   # Secure enclave process
+├── api/                       # Axum HTTP API (the untrusted host)
+├── client/verifier-client/    # Attestation-verifying client
+└── secure-enclave/            # Secure enclave process
 ```
 
 ## Development
@@ -22,12 +23,39 @@ cargo build
 cargo test --all
 
 # Run the API on http://localhost:8000
-RUST_LOG=info cargo run --bin api
+# ENCLAVE_CID and ENCLAVE_PORT are required; the process panics without them.
+RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin api
 curl http://localhost:8000/health
 
 # Run the secure enclave placeholder
 RUST_LOG=info cargo run --bin secure-enclave
 ```
+
+## Enclave assignment
+
+`POST /v1/enclave-assignment` returns the enclave's encryption-key attestation and nothing
+else:
+
+```json
+{ "attestation": "<base64 COSE_Sign1>" }
+```
+
+The enclave's identity (`module_id`) and expiry (the leaf certificate's `notAfter`) are read
+from the document *after* verifying it, never from fields the untrusted host could set.
+
+`verifier-client` fetches an assignment and verifies it — the COSE signature, the certificate
+chain up to the pinned AWS Nitro root, and the expected measurements. It refuses to run
+without at least `EXPECTED_PCR0`, since a verifier with nothing pinned only proves a document
+came from *some* enclave:
+
+```bash
+VERIFIER_BASE_URL=http://localhost:8000 \
+EXPECTED_PCR0=$(jq -r .PCR0 target/eif/pcrs.json) \
+  cargo run --bin verifier-client
+```
+
+For a `--debug-mode` enclave every PCR is zero. Such an enclave's memory is readable from the
+parent instance, so it is rejected unless you also set `ALLOW_DEBUG_MEASUREMENTS=true`.
 
 ## Nitro-enabled development host
 

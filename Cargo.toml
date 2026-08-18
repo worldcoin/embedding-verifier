@@ -47,5 +47,6 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+verifier-client = { path = "client/verifier-client" }
 webpki = "0.22"
 x509-cert = "0.2.5"

@@ -1,10 +1,12 @@
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, path::PathBuf, time::SystemTime};
 
 use anyhow::{Context, Result, anyhow, ensure};
 use enclave_types::{GetEnclaveKeysRequest, MatchRequest};
-use pontifex::{SecureModule, client::ConnectionDetails};
+use pontifex::client::ConnectionDetails;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use verifier_client::nitro::EnclaveAttestationVerifier;
+use verifier_client::policy::verifier_from_env;
 
 const DEFAULT_ENCLAVE_PORT: u32 = 1000;
 const DEFAULT_MATCH_THRESHOLD: f32 = 0.9;
@@ -38,17 +40,26 @@ async fn main() -> Result<()> {
     let match_threshold = optional_f32("MATCH_THRESHOLD", DEFAULT_MATCH_THRESHOLD)?;
     let connection = ConnectionDetails::new(enclave_cid, enclave_port);
 
+    let verifier = verifier_from_env().context(
+        "failed to read the verification policy; on a debug-mode dev enclave set \
+         ALLOW_DEBUG_MEASUREMENTS=true alongside the expected PCRs",
+    )?;
+
     let keys_response = pontifex::client::send(connection, &GetEnclaveKeysRequest)
         .await
         .context("failed to call the enclave keys route")?
         .map_err(|error| anyhow!("enclave rejected the enclave-keys request: {error:?}"))?;
-    let encryption_key =
-        attested_public_key(&keys_response.encryption_key_attestation, "encryption")?;
+    let encryption_key = attested_public_key(
+        &verifier,
+        &keys_response.encryption_key_attestation,
+        "encryption",
+    )?;
     ensure!(
         encryption_key.len() == 32,
         "attested encryption public key was not 32 bytes"
     );
-    let signing_key = attested_public_key(&keys_response.signing_key_attestation, "signing")?;
+    let signing_key =
+        attested_public_key(&verifier, &keys_response.signing_key_attestation, "signing")?;
     ensure!(
         signing_key.len() == 32,
         "attested signing public key was not 32 bytes"
@@ -97,19 +108,23 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Extracts the `public_key` an attestation document commits to.
+/// Fully verifies an attestation document and returns the `public_key` it commits to.
 ///
-/// Parsing only: the COSE signature, the chain to the AWS Nitro root, and the expected
-/// PCRs are a real client's job, and this harness is not one.
-fn attested_public_key(document: &[u8], label: &str) -> Result<Vec<u8>> {
-    let attestation = SecureModule::parse_raw_attestation_doc(document).map_err(|error| {
-        anyhow!("failed to parse the {label}-key attestation document: {error:?}")
-    })?;
-    let public_key = attestation
-        .public_key
-        .with_context(|| format!("{label}-key attestation did not contain a public key"))?;
+/// This checks the COSE signature, the certificate chain up to the pinned AWS Nitro root,
+/// and the expected PCRs. It previously used `pontifex::SecureModule::parse_raw_attestation_doc`,
+/// which extracts the payload with the verification key set to `None` — so the harness was
+/// sealing to whatever key the document claimed, with nothing establishing it came from an
+/// enclave at all.
+fn attested_public_key(
+    verifier: &EnclaveAttestationVerifier,
+    document: &[u8],
+    label: &str,
+) -> Result<Vec<u8>> {
+    let verified = verifier
+        .verify(document, SystemTime::now())
+        .with_context(|| format!("the {label}-key attestation document did not verify"))?;
 
-    Ok(public_key.into_vec())
+    Ok(verified.enclave_public_key)
 }
 
 struct ImagePaths {
