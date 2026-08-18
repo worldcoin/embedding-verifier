@@ -1,24 +1,11 @@
 //! Nitro Secure Module attestation.
 //!
-//! Attestation is the only thing that makes an enclave's public keys trustworthy, so a
-//! module that cannot attest is treated as a failed boot rather than a per-request error.
-//! Verification is deliberately absent: the COSE signature, the certificate chain to the
-//! AWS Nitro root, and the expected PCRs are all checked client-side.
-
 use enclave_types::EnclaveError;
 use pontifex::{AttestationDoc, SecureModule};
 
 /// Produces attestation documents binding a public key to this enclave.
-///
-/// A trait so handlers never reach for the NSM global, and so tests can exercise the
-/// attestation paths without a `/dev/nsm` device.
 pub trait Attestor: Send + Sync {
     /// Attests `public_key` in the document's `public_key` field.
-    ///
-    /// No `nonce` and no `user_data`: the document asserts that a key was generated
-    /// inside an enclave running a given image, which is time-invariant, and certificate
-    /// validity already bounds how long a document can be replayed.
-    ///
     /// # Errors
     ///
     /// Returns [`EnclaveError::AttestationFailed`] when the module rejects the request.
@@ -43,12 +30,7 @@ impl Attestor for NsmAttestor {
     }
 }
 
-/// Connects to the Nitro Secure Module.
-///
-/// Called before serving so a missing or broken device fails the boot. Pontifex
-/// otherwise initialises the module inside its accept loop, which would leave the whole
-/// pre-serve window unable to attest and surface the failure only once traffic arrives.
-/// The initialisation is idempotent, so Pontifex's own call becomes a no-op.
+/// Connects to the Nitro Secure Module. Called before serving so a missing or broken device fails the boot.
 ///
 /// # Errors
 ///

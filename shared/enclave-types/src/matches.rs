@@ -5,11 +5,11 @@ use crate::EnclaveError;
 
 /// Requests a 3-way face match.
 ///
-/// `sealed_payload` is an anonymous X25519 sealed box, encrypted to the enclave's
-/// encryption public key, wrapping the CBOR-framed match inputs.
+/// `sealed_payload` is the CBOR-framed match inputs. Request encryption is not
+/// applied in this change; the field name is unchanged to keep the wire type stable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchRequest {
-    /// Sealed-box ciphertext addressed to the enclave encryption public key.
+    /// CBOR-framed match inputs.
     #[serde(with = "serde_bytes")]
     pub sealed_payload: Vec<u8>,
 }

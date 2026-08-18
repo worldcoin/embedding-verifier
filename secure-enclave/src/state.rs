@@ -42,7 +42,7 @@ impl EnclaveState {
         })
     }
 
-    /// Returns the X25519 public key clients seal requests to for this enclave boot.
+    /// Returns the X25519 public key attested for this enclave boot.
     #[must_use]
     pub fn encryption_public_key(&self) -> PublicKey {
         self.encryption_key.public_key()
@@ -84,16 +84,6 @@ impl EnclaveState {
     pub fn attest_signing_key(&self) -> Result<Vec<u8>, EnclaveError> {
         self.attestor
             .attest_public_key(self.signing_key.compressed_public_key())
-    }
-
-    /// Unseals a libsodium sealed box addressed to this boot's encryption public key.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EnclaveError::DecryptFailed`]. See [`EncryptionKey::unseal`] for why
-    /// the error is uniform and opaque.
-    pub fn unseal(&self, ciphertext: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        self.encryption_key.unseal(ciphertext)
     }
 }
 

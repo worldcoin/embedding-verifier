@@ -478,15 +478,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6099cdc01846bc367c4e7dd630dc5966dccf36b652fae7a74e17b640411a91b2"
 
 [[package]]
-name = "blake2"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
-dependencies = [
- "digest",
-]
-
-[[package]]
 name = "blake3"
 version = "1.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -641,7 +632,6 @@ checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
 dependencies = [
  "crypto-common",
  "inout",
- "zeroize",
 ]
 
 [[package]]
@@ -750,10 +740,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16182b4f39a82ec8a6851155cc4c0cda3065bb1db33651726a29e1951de0f009"
 dependencies = [
  "aead",
- "blake2",
  "crypto_secretbox",
  "curve25519-dalek",
- "salsa20",
  "subtle",
  "zeroize",
 ]
@@ -768,7 +756,6 @@ dependencies = [
  "cipher",
  "generic-array",
  "poly1305",
- "salsa20",
  "subtle",
  "zeroize",
 ]
@@ -884,7 +871,6 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
- "subtle",
 ]
 
 [[package]]
@@ -944,7 +930,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ciborium",
- "crypto_box",
  "enclave-types",
  "hex",
  "pontifex",
@@ -2822,15 +2807,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
 dependencies = [
  "bytemuck",
-]
-
-[[package]]
-name = "salsa20"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97a22f5af31f73a954c10289c93e8a50cc23d971e80ee446f1f6f7137a088213"
-dependencies = [
- "cipher",
 ]
 
 [[package]]

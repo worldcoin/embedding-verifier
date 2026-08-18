@@ -2,15 +2,14 @@
 //!
 //! Both keypairs are generated in memory at boot and never persisted, sealed, or
 //! shared across enclaves. There is deliberately no KMS-, disk-, or leader-derived key path.
-//!
+
 use crypto_box::{PublicKey, SecretKey, aead::OsRng};
 use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSAPublicKey, EdDSASignature};
-use enclave_types::EnclaveError;
 
 /// The field element a `BabyJubJub` `EdDSA` signature commits to.
 pub type SigningMessage = ark_babyjubjub::Fq;
 
-/// The X25519 keypair clients seal match requests to, as a libsodium sealed box.
+/// The X25519 keypair whose public key is attested for this enclave boot.
 pub struct EncryptionKey {
     secret_key: SecretKey,
 }
@@ -24,22 +23,10 @@ impl EncryptionKey {
         }
     }
 
-    /// Returns the public key clients seal to.
+    /// Returns the public key placed in the encryption-key attestation document.
     #[must_use]
     pub fn public_key(&self) -> PublicKey {
         self.secret_key.public_key()
-    }
-
-    /// Opens a sealed box addressed to this key.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EnclaveError::DecryptFailed`] when the ciphertext is malformed or is
-    /// not addressed to this key.
-    pub fn unseal(&self, ciphertext: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        self.secret_key
-            .unseal(ciphertext)
-            .map_err(|_| EnclaveError::DecryptFailed)
     }
 }
 
@@ -97,23 +84,8 @@ impl SigningKey {
 #[cfg(test)]
 mod tests {
     use ark_babyjubjub::Fq;
-    use crypto_box::aead::OsRng;
-    use enclave_types::EnclaveError;
 
     use super::{EncryptionKey, SigningKey};
-
-    fn seal_to(key: &EncryptionKey, plaintext: &[u8]) -> Vec<u8> {
-        key.public_key()
-            .seal(&mut OsRng, plaintext)
-            .expect("sealing should succeed")
-    }
-
-    #[test]
-    fn encryption_key_is_stable_for_one_key() {
-        let key = EncryptionKey::generate();
-
-        assert_eq!(key.public_key(), key.public_key());
-    }
 
     #[test]
     fn separate_encryption_keys_are_distinct() {
@@ -121,41 +93,6 @@ mod tests {
             EncryptionKey::generate().public_key(),
             EncryptionKey::generate().public_key()
         );
-    }
-
-    #[test]
-    fn unseal_opens_a_payload_sealed_to_the_attested_key() {
-        let key = EncryptionKey::generate();
-        let sealed = seal_to(&key, b"match inputs");
-
-        let plaintext = key.unseal(&sealed).expect("payload should open");
-
-        assert_eq!(plaintext, b"match inputs");
-    }
-
-    #[test]
-    fn unseal_rejects_a_payload_sealed_to_another_key() {
-        let recipient = EncryptionKey::generate();
-        let sealed = seal_to(&EncryptionKey::generate(), b"match inputs");
-
-        assert_eq!(recipient.unseal(&sealed), Err(EnclaveError::DecryptFailed));
-    }
-
-    #[test]
-    fn unseal_rejects_a_tampered_ciphertext() {
-        let key = EncryptionKey::generate();
-        let mut sealed = seal_to(&key, b"match inputs");
-        *sealed.last_mut().expect("sealed payload is not empty") ^= 0x01;
-
-        assert_eq!(key.unseal(&sealed), Err(EnclaveError::DecryptFailed));
-    }
-
-    #[test]
-    fn unseal_rejects_a_misframed_payload() {
-        let key = EncryptionKey::generate();
-
-        assert_eq!(key.unseal(&[]), Err(EnclaveError::DecryptFailed));
-        assert_eq!(key.unseal(&[0u8; 64]), Err(EnclaveError::DecryptFailed));
     }
 
     #[test]

@@ -1,7 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
 use anyhow::{Context, Result, anyhow, ensure};
-use crypto_box::{PublicKey, aead::OsRng};
 use enclave_types::{GetEnclaveKeysRequest, MatchRequest};
 use pontifex::{SecureModule, client::ConnectionDetails};
 use serde::Serialize;
@@ -10,10 +9,10 @@ use sha2::{Digest, Sha256};
 const DEFAULT_ENCLAVE_PORT: u32 = 1000;
 const DEFAULT_MATCH_THRESHOLD: f32 = 0.9;
 
-/// Plaintext schema wrapped by the sealed [`MatchRequest`] payload.
+/// Plaintext schema wrapped by [`MatchRequest`].
 ///
 /// This is intentionally not part of `enclave-types`: Pontifex only transports
-/// the opaque ciphertext, while this schema is the private encrypted protocol.
+/// the opaque payload, while this schema is the private match protocol.
 #[derive(Serialize)]
 struct MatchInputs<'a> {
     #[serde(with = "serde_bytes")]
@@ -45,9 +44,15 @@ async fn main() -> Result<()> {
         .map_err(|error| anyhow!("enclave rejected the enclave-keys request: {error:?}"))?;
     let encryption_key =
         attested_public_key(&keys_response.encryption_key_attestation, "encryption")?;
-    let encryption_key: [u8; 32] = encryption_key
-        .try_into()
-        .map_err(|_| anyhow!("attested encryption public key was not 32 bytes"))?;
+    ensure!(
+        encryption_key.len() == 32,
+        "attested encryption public key was not 32 bytes"
+    );
+    let signing_key = attested_public_key(&keys_response.signing_key_attestation, "signing")?;
+    ensure!(
+        signing_key.len() == 32,
+        "attested signing public key was not 32 bytes"
+    );
 
     let hashes_json = hashes_json_for(&credential_image);
     let payload = MatchInputs {
@@ -57,13 +62,10 @@ async fn main() -> Result<()> {
         challenge_image: &challenge_image,
         match_threshold,
     };
-    let mut plaintext = Vec::new();
-    ciborium::into_writer(&payload, &mut plaintext)
-        .context("failed to encode the encrypted match payload")?;
+    let mut sealed_payload = Vec::new();
+    ciborium::into_writer(&payload, &mut sealed_payload)
+        .context("failed to encode the match payload")?;
 
-    let sealed_payload = PublicKey::from(encryption_key)
-        .seal(&mut OsRng, &plaintext)
-        .map_err(|error| anyhow!("failed to seal the match payload: {error}"))?;
     let response = pontifex::client::send(connection, &MatchRequest { sealed_payload })
         .await
         .context("failed to call the enclave matches route")?
