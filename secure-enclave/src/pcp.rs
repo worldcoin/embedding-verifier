@@ -12,11 +12,7 @@
 //!
 //! The binding is nonetheless load-bearing and must not be dropped alongside the
 //! signature chain. The credential commits `H(hashes.json)`, and the circuit only
-//! checks `claims == credential_claim` — so this check is the sole link between the
-//! image the enclave actually compared and the credential presented. Without it a
-//! prover could pair a genuine `hashes.json` with an arbitrary credential image, and
-//! the credential would prove registry membership rather than identity. It becomes
-//! removable only once credential claims commit the image/embedding hash directly.
+//! checks `claims == credential_claim`. 
 
 use enclave_types::EnclaveError;
 use serde::Deserialize;
