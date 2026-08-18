@@ -65,7 +65,7 @@ pub async fn handler(
         );
     })?;
 
-    // Bind the credential image to its PCP commitment. 
+    // Bind the credential image to its PCP commitment.
     let binding = pcp::bind_credential_claim(&payload.credential_image, &payload.hashes_json);
     let credential_claim = binding.inspect_err(|error| {
         tracing::warn!(

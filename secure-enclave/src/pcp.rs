@@ -12,7 +12,7 @@
 //!
 //! The binding is nonetheless load-bearing and must not be dropped alongside the
 //! signature chain. The credential commits `H(hashes.json)`, and the circuit only
-//! checks `claims == credential_claim`. 
+//! checks `claims == credential_claim`.
 
 use enclave_types::EnclaveError;
 use serde::Deserialize;
