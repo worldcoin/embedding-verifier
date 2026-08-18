@@ -1,13 +1,8 @@
 //! Boot-scoped key material.
 //!
 //! Both keypairs are generated in memory at boot and never persisted, sealed, or
-//! shared across enclaves: a client's security must not rest on trusting an operator,
-//! so there is deliberately no KMS-, disk-, or leader-derived key path.
+//! shared across enclaves. There is deliberately no KMS-, disk-, or leader-derived key path.
 //!
-//! Entropy comes from the operating-system CSPRNG, which
-//! [`crate::rng::verify_nsm_hwrng_current`] has already proven is fed by the Nitro
-//! Secure Module's hardware RNG before any key here is generated.
-
 use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSASignature};
 use enclave_types::{
     EnclaveError,
@@ -16,9 +11,6 @@ use enclave_types::{
 use hpke::{Deserializable, Kem as _, OpModeR, Serializable, single_shot_open};
 
 /// The field element a `BabyJubJub` `EdDSA` signature commits to.
-///
-/// `BabyJubJub`'s base field is BN254's scalar field, which is what makes a signature
-/// over it cheap to verify inside the `DeepFace` circuit.
 pub type SigningMessage = ark_babyjubjub::Fq;
 
 /// Length of a compressed `BabyJubJub` `EdDSA` public key.
@@ -31,7 +23,7 @@ pub struct EncryptionKey {
 }
 
 impl EncryptionKey {
-    /// Generates a fresh boot-scoped HPKE keypair.
+    /// Generates a fresh HPKE keypair.
     #[must_use]
     pub fn generate() -> Self {
         let (private_key, public_key) = Kem::gen_keypair();
@@ -43,26 +35,18 @@ impl EncryptionKey {
         }
     }
 
-    /// Returns the public key clients seal to, as attested in `public_key`.
+    /// Returns the public key clients seal to.
     #[must_use]
     pub const fn public_key_bytes(&self) -> [u8; sealing::ENCAPPED_KEY_LEN] {
         self.public_key_bytes
     }
 
-    /// Opens a payload sealed to this boot's encryption key.
-    ///
-    /// Anonymous by design — HPKE `mode_base` authenticates the ciphertext but not the
-    /// sender, as callers are not pre-registered and provenance is enforced downstream.
-    ///
-    /// Single-shot for now, which discards the receiver context. Encrypting the response
-    /// needs that context's `export()` secret (RFC 9180 §9.8), so the matches work will
-    /// split this into `setup_receiver` plus `open`.
+    /// Opens a payload sealed to this key.
     ///
     /// # Errors
     ///
-    /// Returns [`EnclaveError::DecryptFailed`] when the payload is misframed, was sealed
-    /// to another key, or fails AEAD authentication. One opaque error for all three: no
-    /// plaintext, ciphertext, or key material is surfaced or logged.
+    /// Returns [`EnclaveError::DecryptFailed`] when the payload is misframed or was sealed
+    /// to another key.
     pub fn decrypt_request(&self, sealed_payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         let (encapped_key, ciphertext) =
             sealing::split(sealed_payload).ok_or(EnclaveError::DecryptFailed)?;
@@ -82,16 +66,13 @@ impl EncryptionKey {
 }
 
 /// The `BabyJubJub` `EdDSA` keypair that signs match statements.
-///
-/// ZK-friendly by requirement: the public key becomes a public input to the `DeepFace`
-/// circuit, so the relying party verifies statements against it via the key registry.
 pub struct SigningKey {
     private_key: EdDSAPrivateKey,
     public_key_bytes: [u8; SIGNING_PUBLIC_KEY_LEN],
 }
 
 impl SigningKey {
-    /// Generates a fresh boot-scoped `BabyJubJub` `EdDSA` keypair.
+    /// Generates a fresh `BabyJubJub` `EdDSA` keypair.
     ///
     /// # Errors
     ///
