@@ -1,14 +1,15 @@
 use std::{env, fs, path::PathBuf};
 
 use anyhow::{Context, Result, anyhow, ensure};
-use crypto_box::{PublicKey, aead::OsRng};
-use enclave_types::{GetTransitKeyRequest, MatchRequest};
+use enclave_types::{GetEnclaveKeysRequest, MatchRequest, sealing};
 use pontifex::{SecureModule, client::ConnectionDetails};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 const DEFAULT_ENCLAVE_PORT: u32 = 1000;
 const DEFAULT_MATCH_THRESHOLD: f32 = 0.9;
+/// Length of a compressed `BabyJubJub` `EdDSA` public key.
+const SIGNING_PUBLIC_KEY_LEN: usize = 32;
 
 /// Plaintext schema wrapped by the sealed [`MatchRequest`] payload.
 ///
@@ -39,19 +40,25 @@ async fn main() -> Result<()> {
     let match_threshold = optional_f32("MATCH_THRESHOLD", DEFAULT_MATCH_THRESHOLD)?;
     let connection = ConnectionDetails::new(enclave_cid, enclave_port);
 
-    let transit_response = pontifex::client::send(connection, &GetTransitKeyRequest)
+    let keys_response = pontifex::client::send(connection, &GetEnclaveKeysRequest)
         .await
-        .context("failed to call the enclave transit-key route")?
-        .map_err(|error| anyhow!("enclave rejected the transit-key request: {error:?}"))?;
-    let attestation = SecureModule::parse_raw_attestation_doc(&transit_response.attestation)
-        .map_err(|error| anyhow!("failed to parse the enclave attestation document: {error:?}"))?;
-    let transit_key = attestation
-        .public_key
-        .context("attestation did not contain a transit public key")?;
-    let transit_key: [u8; 32] = transit_key
-        .as_ref()
+        .context("failed to call the enclave keys route")?
+        .map_err(|error| anyhow!("enclave rejected the enclave-keys request: {error:?}"))?;
+    let encryption_key = attested_public_key(
+        &keys_response.encryption_key_attestation,
+        "encryption",
+        sealing::ENCAPPED_KEY_LEN,
+    )?;
+    // Only checked for shape here: this harness exercises the enclave, and the signing key
+    // is verified by the relying party against the key registry, not by a match client.
+    attested_public_key(
+        &keys_response.signing_key_attestation,
+        "signing",
+        SIGNING_PUBLIC_KEY_LEN,
+    )?;
+    let encryption_key: [u8; sealing::ENCAPPED_KEY_LEN] = encryption_key
         .try_into()
-        .map_err(|_| anyhow!("attested transit public key was not 32 bytes"))?;
+        .map_err(|_| anyhow!("attested encryption public key had an unexpected length"))?;
 
     let hashes_json = hashes_json_for(&credential_image);
     let payload = MatchInputs {
@@ -65,8 +72,7 @@ async fn main() -> Result<()> {
     ciborium::into_writer(&payload, &mut plaintext)
         .context("failed to encode the encrypted match payload")?;
 
-    let sealed_payload = PublicKey::from(transit_key)
-        .seal(&mut OsRng, &plaintext)
+    let sealed_payload = sealing::seal(&encryption_key, &plaintext)
         .map_err(|error| anyhow!("failed to seal the match payload: {error}"))?;
     let response = pontifex::client::send(connection, &MatchRequest { sealed_payload })
         .await
@@ -97,6 +103,26 @@ async fn main() -> Result<()> {
         response.statement.match_coefficient, match_threshold
     );
     Ok(())
+}
+
+/// Extracts and length-checks the `public_key` an attestation document commits to.
+///
+/// Parsing only: the COSE signature, the chain to the AWS Nitro root, and the expected
+/// PCRs are a real client's job, and this harness is not one.
+fn attested_public_key(document: &[u8], label: &str, expected_len: usize) -> Result<Vec<u8>> {
+    let attestation = SecureModule::parse_raw_attestation_doc(document).map_err(|error| {
+        anyhow!("failed to parse the {label}-key attestation document: {error:?}")
+    })?;
+    let public_key = attestation
+        .public_key
+        .with_context(|| format!("{label}-key attestation did not contain a public key"))?;
+    ensure!(
+        public_key.len() == expected_len,
+        "attested {label} public key was {} bytes, expected {expected_len}",
+        public_key.len()
+    );
+
+    Ok(public_key.into_vec())
 }
 
 struct ImagePaths {

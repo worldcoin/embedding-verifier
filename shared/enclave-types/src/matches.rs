@@ -5,11 +5,12 @@ use crate::EnclaveError;
 
 /// Requests a 3-way face match.
 ///
-/// `sealed_payload` is an anonymous X25519 sealed box, encrypted to the enclave's
-/// transit public key, wrapping the CBOR-framed match inputs.
+/// `sealed_payload` wraps the CBOR-framed match inputs under HPKE (RFC 9180)
+/// `mode_base`, sealed to the enclave's boot-scoped encryption public key. See
+/// the `sealing` module for the ciphersuite and the `enc || ciphertext` framing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchRequest {
-    /// Sealed-box ciphertext addressed to the enclave transit public key.
+    /// HPKE-sealed payload addressed to the enclave encryption public key.
     #[serde(with = "serde_bytes")]
     pub sealed_payload: Vec<u8>,
 }
@@ -40,7 +41,7 @@ pub struct MatchStatement {
     pub credential_claim: [u8; 32],
     /// SHA256 of the challenge image.
     pub challenger_image_hash: [u8; 32],
-    /// Credential-vs-live similarity score. **Dummy** until the face engine lands.
+    /// Credential-vs-live similarity score.
     pub match_coefficient: f32,
 }
 

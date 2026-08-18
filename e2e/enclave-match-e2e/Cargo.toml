@@ -9,8 +9,7 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 ciborium.workspace = true
-crypto_box = { workspace = true, features = ["seal", "salsa20"] }
-enclave-types.workspace = true
+enclave-types = { workspace = true, features = ["sealing"] }
 hex.workspace = true
 pontifex = { workspace = true, features = ["client", "nsm"] }
 serde.workspace = true

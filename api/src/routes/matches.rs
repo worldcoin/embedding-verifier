@@ -112,7 +112,7 @@ mod tests {
 
     use async_trait::async_trait;
     use axum::{body::Bytes, extract::State, http::StatusCode};
-    use enclave_types::{self as enclave, EnclaveError, GetTransitKeyResponse};
+    use enclave_types::{self as enclave, EnclaveError, GetEnclaveKeysResponse};
 
     use super::{handler, status_for};
     use crate::enclave::{EnclaveClient, EnclaveClientError};
@@ -128,9 +128,10 @@ mod tests {
             Ok(())
         }
 
-        async fn get_transit_key(&self) -> Result<GetTransitKeyResponse, EnclaveClientError> {
-            Ok(GetTransitKeyResponse {
-                attestation: Vec::new(),
+        async fn get_enclave_keys(&self) -> Result<GetEnclaveKeysResponse, EnclaveClientError> {
+            Ok(GetEnclaveKeysResponse {
+                encryption_key_attestation: Vec::new(),
+                signing_key_attestation: Vec::new(),
             })
         }
 

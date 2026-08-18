@@ -1,0 +1,223 @@
+//! Boot-scoped key material.
+//!
+//! Both keypairs are generated in memory at boot and never persisted, sealed, or
+//! shared across enclaves: a client's security must not rest on trusting an operator,
+//! so there is deliberately no KMS-, disk-, or leader-derived key path.
+//!
+//! Entropy comes from the operating-system CSPRNG, which
+//! [`crate::rng::verify_nsm_hwrng_current`] has already proven is fed by the Nitro
+//! Secure Module's hardware RNG before any key here is generated.
+
+use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSASignature};
+use enclave_types::{
+    EnclaveError,
+    sealing::{self, Aead, Kdf, Kem},
+};
+use hpke::{Deserializable, Kem as _, OpModeR, Serializable, single_shot_open};
+
+/// The field element a `BabyJubJub` `EdDSA` signature commits to.
+///
+/// `BabyJubJub`'s base field is BN254's scalar field, which is what makes a signature
+/// over it cheap to verify inside the `DeepFace` circuit.
+pub type SigningMessage = ark_babyjubjub::Fq;
+
+/// Length of a compressed `BabyJubJub` `EdDSA` public key.
+pub const SIGNING_PUBLIC_KEY_LEN: usize = 32;
+
+/// The X25519 keypair clients seal match requests to, under HPKE `mode_base`.
+pub struct EncryptionKey {
+    private_key: <Kem as hpke::Kem>::PrivateKey,
+    public_key_bytes: [u8; sealing::ENCAPPED_KEY_LEN],
+}
+
+impl EncryptionKey {
+    /// Generates a fresh boot-scoped HPKE keypair.
+    #[must_use]
+    pub fn generate() -> Self {
+        let (private_key, public_key) = Kem::gen_keypair();
+        let public_key_bytes = public_key.to_bytes().into();
+
+        Self {
+            private_key,
+            public_key_bytes,
+        }
+    }
+
+    /// Returns the public key clients seal to, as attested in `public_key`.
+    #[must_use]
+    pub const fn public_key_bytes(&self) -> [u8; sealing::ENCAPPED_KEY_LEN] {
+        self.public_key_bytes
+    }
+
+    /// Opens a payload sealed to this boot's encryption key.
+    ///
+    /// Anonymous by design — HPKE `mode_base` authenticates the ciphertext but not the
+    /// sender, as callers are not pre-registered and provenance is enforced downstream.
+    ///
+    /// Single-shot for now, which discards the receiver context. Encrypting the response
+    /// needs that context's `export()` secret (RFC 9180 §9.8), so the matches work will
+    /// split this into `setup_receiver` plus `open`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EnclaveError::DecryptFailed`] when the payload is misframed, was sealed
+    /// to another key, or fails AEAD authentication. One opaque error for all three: no
+    /// plaintext, ciphertext, or key material is surfaced or logged.
+    pub fn decrypt_request(&self, sealed_payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+        let (encapped_key, ciphertext) =
+            sealing::split(sealed_payload).ok_or(EnclaveError::DecryptFailed)?;
+        let encapped_key = <Kem as hpke::Kem>::EncappedKey::from_bytes(encapped_key)
+            .map_err(|_| EnclaveError::DecryptFailed)?;
+
+        single_shot_open::<Aead, Kdf, Kem>(
+            &OpModeR::Base,
+            &self.private_key,
+            &encapped_key,
+            sealing::INFO,
+            ciphertext,
+            &[],
+        )
+        .map_err(|_| EnclaveError::DecryptFailed)
+    }
+}
+
+/// The `BabyJubJub` `EdDSA` keypair that signs match statements.
+///
+/// ZK-friendly by requirement: the public key becomes a public input to the `DeepFace`
+/// circuit, so the relying party verifies statements against it via the key registry.
+pub struct SigningKey {
+    private_key: EdDSAPrivateKey,
+    public_key_bytes: [u8; SIGNING_PUBLIC_KEY_LEN],
+}
+
+impl SigningKey {
+    /// Generates a fresh boot-scoped `BabyJubJub` `EdDSA` keypair.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the generated public key cannot be compressed. Compressing
+    /// once here keeps the fallible step at boot, so no request path can fail on it.
+    pub fn generate() -> anyhow::Result<Self> {
+        let private_key = EdDSAPrivateKey::random(&mut rand::rngs::OsRng);
+        let public_key_bytes = private_key
+            .public()
+            .to_compressed_bytes()
+            .map_err(|error| {
+                anyhow::anyhow!("failed to compress the signing public key: {error}")
+            })?;
+
+        Ok(Self {
+            private_key,
+            public_key_bytes,
+        })
+    }
+
+    /// Returns the compressed public key, as attested in `public_key`.
+    #[must_use]
+    pub const fn public_key_bytes(&self) -> [u8; SIGNING_PUBLIC_KEY_LEN] {
+        self.public_key_bytes
+    }
+
+    /// Signs one field element.
+    ///
+    /// Encoding a match statement into that element is deliberately not decided here —
+    /// it is part of the statement format, which lands with the matches work.
+    #[must_use]
+    pub fn sign(&self, message: SigningMessage) -> EdDSASignature {
+        self.private_key.sign(message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ark_babyjubjub::Fq;
+    use eddsa_babyjubjub::EdDSAPublicKey;
+    use enclave_types::{EnclaveError, sealing};
+
+    use super::{EncryptionKey, SIGNING_PUBLIC_KEY_LEN, SigningKey};
+
+    fn seal_to(key: &EncryptionKey, plaintext: &[u8]) -> Vec<u8> {
+        sealing::seal(&key.public_key_bytes(), plaintext).expect("sealing should succeed")
+    }
+
+    #[test]
+    fn encryption_key_is_stable_for_one_key() {
+        let key = EncryptionKey::generate();
+
+        assert_eq!(key.public_key_bytes(), key.public_key_bytes());
+    }
+
+    #[test]
+    fn separate_encryption_keys_are_distinct() {
+        assert_ne!(
+            EncryptionKey::generate().public_key_bytes(),
+            EncryptionKey::generate().public_key_bytes()
+        );
+    }
+
+    #[test]
+    fn decrypt_request_opens_a_payload_sealed_to_the_attested_key() {
+        let key = EncryptionKey::generate();
+        let sealed = seal_to(&key, b"match inputs");
+
+        let plaintext = key.decrypt_request(&sealed).expect("payload should open");
+
+        assert_eq!(plaintext, b"match inputs");
+    }
+
+    #[test]
+    fn decrypt_request_rejects_a_payload_sealed_to_another_key() {
+        let recipient = EncryptionKey::generate();
+        let sealed = seal_to(&EncryptionKey::generate(), b"match inputs");
+
+        assert_eq!(
+            recipient.decrypt_request(&sealed),
+            Err(EnclaveError::DecryptFailed)
+        );
+    }
+
+    #[test]
+    fn decrypt_request_rejects_a_tampered_ciphertext() {
+        let key = EncryptionKey::generate();
+        let mut sealed = seal_to(&key, b"match inputs");
+        *sealed.last_mut().expect("sealed payload is not empty") ^= 0x01;
+
+        assert_eq!(
+            key.decrypt_request(&sealed),
+            Err(EnclaveError::DecryptFailed)
+        );
+    }
+
+    #[test]
+    fn decrypt_request_rejects_a_misframed_payload() {
+        let key = EncryptionKey::generate();
+
+        assert_eq!(key.decrypt_request(&[]), Err(EnclaveError::DecryptFailed));
+        assert_eq!(
+            key.decrypt_request(&[0u8; sealing::ENCAPPED_KEY_LEN]),
+            Err(EnclaveError::DecryptFailed)
+        );
+    }
+
+    #[test]
+    fn separate_signing_keys_are_distinct() {
+        let first = SigningKey::generate().expect("signing key should generate");
+        let second = SigningKey::generate().expect("signing key should generate");
+
+        assert_ne!(first.public_key_bytes(), second.public_key_bytes());
+    }
+
+    #[test]
+    fn signatures_verify_under_the_attested_public_key() {
+        let key = SigningKey::generate().expect("signing key should generate");
+        let message = Fq::from(42u64);
+
+        let signature = key.sign(message);
+
+        let public_key = EdDSAPublicKey::from_compressed_bytes(key.public_key_bytes())
+            .expect("attested key should decompress");
+        assert!(public_key.verify(message, &signature));
+        assert!(!public_key.verify(Fq::from(43u64), &signature));
+        assert_eq!(key.public_key_bytes().len(), SIGNING_PUBLIC_KEY_LEN);
+    }
+}

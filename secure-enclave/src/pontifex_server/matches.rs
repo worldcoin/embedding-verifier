@@ -14,7 +14,7 @@ const STATEMENT_VERSION: u8 = 1;
 /// Placeholder statement signature until signing lands.
 const DUMMY_SIGNATURE: [u8; 64] = [0u8; 64];
 
-/// The decrypted, CBOR-framed plaintext of a [`MatchRequest`]'s sealed box.
+/// The decrypted, CBOR-framed plaintext of a [`MatchRequest`]'s sealed payload.
 /// Enclave-internal: the host only forwards the opaque ciphertext.
 #[derive(Serialize, Deserialize)]
 pub(super) struct MatchInputs {
@@ -118,14 +118,14 @@ pub async fn handler(
 mod tests {
     use std::sync::Arc;
 
-    use crypto_box::{PublicKey, aead::OsRng};
-    use enclave_types::{EnclaveError, MatchRequest};
+    use enclave_types::{EnclaveError, MatchRequest, sealing};
     use sha2::{Digest, Sha256};
 
     use super::{DUMMY_SIGNATURE, MatchInputs, handler};
     use crate::{
         face_engine::{ComparisonScores, FaceComparator},
         state::EnclaveState,
+        test_support::FailingAttestor,
     };
 
     struct ExpectedImages {
@@ -187,14 +187,14 @@ mod tests {
     }
 
     fn state_with(face_engine: MockFaceEngine) -> Arc<EnclaveState> {
-        Arc::new(EnclaveState::generate(Arc::new(face_engine)))
+        Arc::new(
+            EnclaveState::generate(Arc::new(FailingAttestor), Arc::new(face_engine))
+                .expect("state should generate"),
+        )
     }
 
     fn seal_to(state: &EnclaveState, plaintext: &[u8]) -> Vec<u8> {
-        let public_key = PublicKey::from(state.transit_public_key());
-        public_key
-            .seal(&mut OsRng, plaintext)
-            .expect("sealing should succeed")
+        sealing::seal(&state.encryption_public_key(), plaintext).expect("sealing should succeed")
     }
 
     fn seal_match(
@@ -214,6 +214,7 @@ mod tests {
         };
         let mut cbor = Vec::new();
         ciborium::into_writer(&payload, &mut cbor).expect("cbor encoding should succeed");
+
         seal_to(state, &cbor)
     }
 

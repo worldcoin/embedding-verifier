@@ -8,12 +8,15 @@
     dead_code
 )]
 
+mod enclave_keys;
 mod error;
 mod health;
 mod matches;
-mod transit_key;
+/// The HPKE contract for payloads sealed to the enclave.
+#[cfg(feature = "sealing")]
+pub mod sealing;
 
+pub use enclave_keys::{GetEnclaveKeysRequest, GetEnclaveKeysResponse};
 pub use error::EnclaveError;
 pub use health::HealthRequest;
 pub use matches::{MatchRequest, MatchResponse, MatchStatement};
-pub use transit_key::{GetTransitKeyRequest, GetTransitKeyResponse};
