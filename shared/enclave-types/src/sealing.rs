@@ -12,6 +12,12 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// DHKEM(X25519, HKDF-SHA256) — RFC 9180 §7.1.
 pub type Kem = hpke::kem::X25519HkdfSha256;
 
+/// Recipient public key for [`Kem`].
+pub type PublicKey = <Kem as hpke::Kem>::PublicKey;
+
+/// Recipient private key for [`Kem`].
+pub type PrivateKey = <Kem as hpke::Kem>::PrivateKey;
+
 /// HKDF-SHA256 — RFC 9180 §7.2.
 pub type Kdf = hpke::kdf::HkdfSha256;
 
@@ -33,8 +39,7 @@ const RESPONSE_KEY_LABEL: &[u8] = b"embedding-verifier/v1/match-response/key";
 /// Exporter label for the response nonce.
 const RESPONSE_NONCE_LABEL: &[u8] = b"embedding-verifier/v1/match-response/nonce";
 
-/// Length of a serialized DHKEM(X25519) encapsulated key, and of the encryption public
-/// key the enclave attests.
+/// Length of a serialized DHKEM(X25519) encapsulated key (`enc` on the wire).
 pub const ENCAPPED_KEY_LEN: usize = 32;
 
 const RESPONSE_KEY_LEN: usize = 16;
@@ -81,16 +86,13 @@ impl ResponseKey {
 ///
 /// # Errors
 ///
-/// Returns an error when `encryption_public_key` is not a valid X25519 public key, or
-/// when encapsulation or encryption fails.
+/// Returns an error when encapsulation or encryption fails.
 pub fn seal_request(
-    encryption_public_key: &[u8; ENCAPPED_KEY_LEN],
+    encryption_public_key: &PublicKey,
     plaintext: &[u8],
 ) -> Result<(Vec<u8>, ResponseKey), hpke::HpkeError> {
-    let public_key =
-        <<Kem as hpke::Kem>::PublicKey as Deserializable>::from_bytes(encryption_public_key)?;
     let (encapped_key, mut context) =
-        setup_sender::<Aead128, Kdf, Kem>(&OpModeS::Base, &public_key, INFO)?;
+        setup_sender::<Aead128, Kdf, Kem>(&OpModeS::Base, encryption_public_key, INFO)?;
     let ciphertext = context.seal(plaintext, &[])?;
     let response_key = export_response_key(|label, out| context.export(label, out))?;
 
@@ -109,7 +111,7 @@ pub fn seal_request(
 /// Returns an error when the payload is misframed, was sealed to another key, or fails
 /// AEAD authentication.
 pub fn open_request(
-    private_key: &<Kem as hpke::Kem>::PrivateKey,
+    private_key: &PrivateKey,
     sealed_payload: &[u8],
 ) -> Result<(Vec<u8>, ResponseKey), hpke::HpkeError> {
     let (encapped_key, ciphertext) = split(sealed_payload).ok_or(hpke::HpkeError::OpenError)?;
@@ -168,13 +170,10 @@ fn frame(encapped_key: &[u8; ENCAPPED_KEY_LEN], ciphertext: &[u8]) -> Vec<u8> {
 mod tests {
     use hpke::Kem as _;
 
-    use super::{ENCAPPED_KEY_LEN, Kem, open_request, seal_request, split};
+    use super::{ENCAPPED_KEY_LEN, Kem, PrivateKey, PublicKey, open_request, seal_request, split};
 
-    fn keypair() -> (<Kem as hpke::Kem>::PrivateKey, [u8; ENCAPPED_KEY_LEN]) {
-        use hpke::Serializable;
-        let (private_key, public_key) = Kem::gen_keypair();
-
-        (private_key, public_key.to_bytes().into())
+    fn keypair() -> (PrivateKey, PublicKey) {
+        Kem::gen_keypair()
     }
 
     #[test]

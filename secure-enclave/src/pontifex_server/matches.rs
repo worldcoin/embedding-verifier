@@ -224,7 +224,7 @@ mod tests {
 
     /// Returns the framed request and the key its response will be sealed under.
     fn seal_to(state: &EnclaveState, plaintext: &[u8]) -> (Vec<u8>, ResponseKey) {
-        sealing::seal_request(&state.encryption_public_key(), plaintext)
+        sealing::seal_request(state.encryption_public_key(), plaintext)
             .expect("sealing should succeed")
     }
 

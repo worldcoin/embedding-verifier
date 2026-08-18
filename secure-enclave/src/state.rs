@@ -2,12 +2,17 @@
 
 use std::sync::Arc;
 
-use enclave_types::{EnclaveError, sealing, sealing::ResponseKey};
+use eddsa_babyjubjub::EdDSAPublicKey;
+use enclave_types::{
+    EnclaveError,
+    sealing::{PublicKey, ResponseKey},
+};
+use hpke::Serializable;
 
 use crate::{
     attestation::Attestor,
     face_engine::FaceComparator,
-    keys::{EncryptionKey, SIGNING_PUBLIC_KEY_LEN, SigningKey},
+    keys::{EncryptionKey, SigningKey},
 };
 
 /// Immutable state generated once during enclave boot.
@@ -42,14 +47,14 @@ impl EnclaveState {
 
     /// Returns the HPKE public key clients seal requests to for this enclave boot.
     #[must_use]
-    pub const fn encryption_public_key(&self) -> [u8; sealing::ENCAPPED_KEY_LEN] {
-        self.encryption_key.public_key_bytes()
+    pub const fn encryption_public_key(&self) -> &PublicKey {
+        self.encryption_key.public_key()
     }
 
-    /// Returns the compressed `BabyJubJub` public key that verifies this boot's statements.
+    /// Returns the `BabyJubJub` public key that verifies this boot's statements.
     #[must_use]
-    pub const fn signing_public_key(&self) -> [u8; SIGNING_PUBLIC_KEY_LEN] {
-        self.signing_key.public_key_bytes()
+    pub const fn signing_public_key(&self) -> &EdDSAPublicKey {
+        self.signing_key.public_key()
     }
 
     /// Returns the signing key used for match statements.
@@ -71,7 +76,7 @@ impl EnclaveState {
     /// Propagates the [`Attestor`] failure.
     pub fn attest_encryption_key(&self) -> Result<Vec<u8>, EnclaveError> {
         self.attestor
-            .attest_public_key(&self.encryption_public_key())
+            .attest_public_key(self.encryption_public_key().to_bytes().as_slice())
     }
 
     /// Attests the signing public key.
@@ -80,7 +85,8 @@ impl EnclaveState {
     ///
     /// Propagates the [`Attestor`] failure.
     pub fn attest_signing_key(&self) -> Result<Vec<u8>, EnclaveError> {
-        self.attestor.attest_public_key(&self.signing_public_key())
+        self.attestor
+            .attest_public_key(self.signing_key.compressed_public_key())
     }
 
     /// Opens an HPKE payload sealed to this boot's encryption key.
@@ -99,6 +105,8 @@ impl EnclaveState {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+
+    use hpke::Serializable;
 
     use super::EnclaveState;
     use crate::test_support::{EchoAttestor, state_with};
@@ -133,11 +141,11 @@ mod tests {
 
         assert_eq!(
             state.attest_encryption_key(),
-            Ok(state.encryption_public_key().to_vec())
+            Ok(state.encryption_public_key().to_bytes().to_vec())
         );
         assert_eq!(
             state.attest_signing_key(),
-            Ok(state.signing_public_key().to_vec())
+            Ok(state.signing_key().compressed_public_key().to_vec())
         );
     }
 }

@@ -3,42 +3,38 @@
 //! Both keypairs are generated in memory at boot and never persisted, sealed, or
 //! shared across enclaves. There is deliberately no KMS-, disk-, or leader-derived key path.
 //!
-use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSASignature};
+use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSAPublicKey, EdDSASignature};
 use enclave_types::{
     EnclaveError,
-    sealing::{self, Kem, ResponseKey},
+    sealing::{self, PrivateKey, PublicKey, ResponseKey},
 };
-use hpke::{Kem as _, Serializable};
+use hpke::Kem as _;
 
 /// The field element a `BabyJubJub` `EdDSA` signature commits to.
 pub type SigningMessage = ark_babyjubjub::Fq;
 
-/// Length of a compressed `BabyJubJub` `EdDSA` public key.
-pub const SIGNING_PUBLIC_KEY_LEN: usize = 32;
-
 /// The X25519 keypair clients seal match requests to, under HPKE `mode_base`.
 pub struct EncryptionKey {
-    private_key: <Kem as hpke::Kem>::PrivateKey,
-    public_key_bytes: [u8; sealing::ENCAPPED_KEY_LEN],
+    private_key: PrivateKey,
+    public_key: PublicKey,
 }
 
 impl EncryptionKey {
     /// Generates a fresh HPKE keypair.
     #[must_use]
     pub fn generate() -> Self {
-        let (private_key, public_key) = Kem::gen_keypair();
-        let public_key_bytes = public_key.to_bytes().into();
+        let (private_key, public_key) = sealing::Kem::gen_keypair();
 
         Self {
             private_key,
-            public_key_bytes,
+            public_key,
         }
     }
 
     /// Returns the public key clients seal to.
     #[must_use]
-    pub const fn public_key_bytes(&self) -> [u8; sealing::ENCAPPED_KEY_LEN] {
-        self.public_key_bytes
+    pub const fn public_key(&self) -> &PublicKey {
+        &self.public_key
     }
 
     /// Opens a payload sealed to this key.
@@ -63,7 +59,9 @@ impl EncryptionKey {
 /// The `BabyJubJub` `EdDSA` keypair that signs match statements.
 pub struct SigningKey {
     private_key: EdDSAPrivateKey,
-    public_key_bytes: [u8; SIGNING_PUBLIC_KEY_LEN],
+    public_key: EdDSAPublicKey,
+    /// Compressed encoding for NSM attestation, checked once at boot.
+    compressed: [u8; 32],
 }
 
 impl SigningKey {
@@ -75,23 +73,28 @@ impl SigningKey {
     /// once here keeps the fallible step at boot, so no request path can fail on it.
     pub fn generate() -> anyhow::Result<Self> {
         let private_key = EdDSAPrivateKey::random(&mut rand::rngs::OsRng);
-        let public_key_bytes = private_key
-            .public()
-            .to_compressed_bytes()
-            .map_err(|error| {
-                anyhow::anyhow!("failed to compress the signing public key: {error}")
-            })?;
+        let public_key = private_key.public();
+        let compressed = public_key.to_compressed_bytes().map_err(|error| {
+            anyhow::anyhow!("failed to compress the signing public key: {error}")
+        })?;
 
         Ok(Self {
             private_key,
-            public_key_bytes,
+            public_key,
+            compressed,
         })
     }
 
-    /// Returns the compressed public key, as attested in `public_key`.
+    /// Returns the public key that verifies this boot's statements.
     #[must_use]
-    pub const fn public_key_bytes(&self) -> [u8; SIGNING_PUBLIC_KEY_LEN] {
-        self.public_key_bytes
+    pub const fn public_key(&self) -> &EdDSAPublicKey {
+        &self.public_key
+    }
+
+    /// Compressed public key, as placed in the attestation document's `public_key` field.
+    #[must_use]
+    pub const fn compressed_public_key(&self) -> &[u8; 32] {
+        &self.compressed
     }
 
     /// Signs one field element.
@@ -107,13 +110,12 @@ impl SigningKey {
 #[cfg(test)]
 mod tests {
     use ark_babyjubjub::Fq;
-    use eddsa_babyjubjub::EdDSAPublicKey;
     use enclave_types::{EnclaveError, sealing};
 
-    use super::{EncryptionKey, SIGNING_PUBLIC_KEY_LEN, SigningKey};
+    use super::{EncryptionKey, SigningKey};
 
     fn seal_to(key: &EncryptionKey, plaintext: &[u8]) -> Vec<u8> {
-        sealing::seal_request(&key.public_key_bytes(), plaintext)
+        sealing::seal_request(key.public_key(), plaintext)
             .expect("sealing should succeed")
             .0
     }
@@ -122,14 +124,14 @@ mod tests {
     fn encryption_key_is_stable_for_one_key() {
         let key = EncryptionKey::generate();
 
-        assert_eq!(key.public_key_bytes(), key.public_key_bytes());
+        assert_eq!(key.public_key(), key.public_key());
     }
 
     #[test]
     fn separate_encryption_keys_are_distinct() {
         assert_ne!(
-            EncryptionKey::generate().public_key_bytes(),
-            EncryptionKey::generate().public_key_bytes()
+            EncryptionKey::generate().public_key(),
+            EncryptionKey::generate().public_key()
         );
     }
 
@@ -185,7 +187,7 @@ mod tests {
         let first = SigningKey::generate().expect("signing key should generate");
         let second = SigningKey::generate().expect("signing key should generate");
 
-        assert_ne!(first.public_key_bytes(), second.public_key_bytes());
+        assert_ne!(first.public_key(), second.public_key());
     }
 
     #[test]
@@ -195,10 +197,7 @@ mod tests {
 
         let signature = key.sign(message);
 
-        let public_key = EdDSAPublicKey::from_compressed_bytes(key.public_key_bytes())
-            .expect("attested key should decompress");
-        assert!(public_key.verify(message, &signature));
-        assert!(!public_key.verify(Fq::from(43u64), &signature));
-        assert_eq!(key.public_key_bytes().len(), SIGNING_PUBLIC_KEY_LEN);
+        assert!(key.public_key().verify(message, &signature));
+        assert!(!key.public_key().verify(Fq::from(43u64), &signature));
     }
 }
