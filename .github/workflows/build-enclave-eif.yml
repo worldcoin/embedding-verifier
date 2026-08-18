@@ -85,6 +85,9 @@ jobs:
       - name: Build EIF and PCRs
         env:
           GIT_HUB_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
+          # PRs validate compilation and EIF packaging without private models.
+          # Published images still use the runnable target and require models.
+          ENCLAVE_DOCKER_TARGET: ${{ github.event_name == 'pull_request' && 'ci' || 'runtime' }}
         run: scripts/build-eif.sh target/eif
 
       - name: Publish PCR measurements
