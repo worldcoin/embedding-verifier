@@ -10,7 +10,7 @@
 
 /// Face embedding generation and comparison.
 pub mod face_engine;
-/// PCP binding verification (transport-free).
+/// PCP hash binding — no orb-attestation signature verification.
 pub mod pcp;
 /// Pontifex operations exposed to the API host.
 pub mod pontifex_server;
