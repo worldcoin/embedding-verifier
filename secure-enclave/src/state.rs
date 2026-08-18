@@ -2,12 +2,9 @@
 
 use std::sync::Arc;
 
+use crypto_box::PublicKey;
 use eddsa_babyjubjub::EdDSAPublicKey;
-use enclave_types::{
-    EnclaveError,
-    sealing::{PublicKey, ResponseKey},
-};
-use hpke::Serializable;
+use enclave_types::EnclaveError;
 
 use crate::{
     attestation::Attestor,
@@ -45,9 +42,9 @@ impl EnclaveState {
         })
     }
 
-    /// Returns the HPKE public key clients seal requests to for this enclave boot.
+    /// Returns the X25519 public key clients seal requests to for this enclave boot.
     #[must_use]
-    pub const fn encryption_public_key(&self) -> &PublicKey {
+    pub fn encryption_public_key(&self) -> PublicKey {
         self.encryption_key.public_key()
     }
 
@@ -75,8 +72,8 @@ impl EnclaveState {
     ///
     /// Propagates the [`Attestor`] failure.
     pub fn attest_encryption_key(&self) -> Result<Vec<u8>, EnclaveError> {
-        self.attestor
-            .attest_public_key(self.encryption_public_key().to_bytes().as_slice())
+        let public_key = self.encryption_public_key().to_bytes();
+        self.attestor.attest_public_key(&public_key)
     }
 
     /// Attests the signing public key.
@@ -89,24 +86,20 @@ impl EnclaveState {
             .attest_public_key(self.signing_key.compressed_public_key())
     }
 
-    /// Opens an HPKE payload sealed to this boot's encryption key.
-    ///
-    /// Returns the plaintext and the key its response must be sealed under.
+    /// Unseals a libsodium sealed box addressed to this boot's encryption public key.
     ///
     /// # Errors
     ///
-    /// Returns [`EnclaveError::DecryptFailed`]. See
-    /// [`EncryptionKey::decrypt_request`] for why the error is uniform and opaque.
-    pub fn unseal(&self, sealed_payload: &[u8]) -> Result<(Vec<u8>, ResponseKey), EnclaveError> {
-        self.encryption_key.decrypt_request(sealed_payload)
+    /// Returns [`EnclaveError::DecryptFailed`]. See [`EncryptionKey::unseal`] for why
+    /// the error is uniform and opaque.
+    pub fn unseal(&self, ciphertext: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+        self.encryption_key.unseal(ciphertext)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-
-    use hpke::Serializable;
 
     use super::EnclaveState;
     use crate::test_support::{EchoAttestor, state_with};

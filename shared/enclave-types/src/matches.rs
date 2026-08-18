@@ -5,12 +5,11 @@ use crate::EnclaveError;
 
 /// Requests a 3-way face match.
 ///
-/// `sealed_payload` wraps the CBOR-framed match inputs under HPKE (RFC 9180)
-/// `mode_base`, sealed to the enclave's boot-scoped encryption public key. See
-/// the `sealing` module for the ciphersuite and the `enc || ciphertext` framing.
+/// `sealed_payload` is an anonymous X25519 sealed box, encrypted to the enclave's
+/// encryption public key, wrapping the CBOR-framed match inputs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchRequest {
-    /// HPKE-sealed payload addressed to the enclave encryption public key.
+    /// Sealed-box ciphertext addressed to the enclave encryption public key.
     #[serde(with = "serde_bytes")]
     pub sealed_payload: Vec<u8>,
 }
@@ -20,23 +19,9 @@ impl Request for MatchRequest {
     type Response = Result<MatchResponse, EnclaveError>;
 }
 
-/// The sealed match outcome.
-///
-/// Opaque to the host, which relays it unread: the statement commits to biometric-derived
-/// values, and the host is outside the trust boundary. Sealed under the response key both
-/// sides derive from the request's HPKE context, so it needs no client-held keypair.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MatchResponse {
-    /// AES-128-GCM ciphertext wrapping the CBOR-framed [`MatchOutcome`].
-    #[serde(with = "serde_bytes")]
-    pub sealed_outcome: Vec<u8>,
-}
-
-/// The plaintext the enclave seals into a [`MatchResponse`].
-///
-/// Enclave-and-client only. The host never holds the key that opens it.
+/// The match statement and its enclave signature.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MatchOutcome {
+pub struct MatchResponse {
     /// The claims the enclave attests to.
     pub statement: MatchStatement,
     /// Signature over `statement`. **Placeholder** until output signing lands.

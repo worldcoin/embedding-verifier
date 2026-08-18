@@ -1,15 +1,65 @@
-use axum::{body::Bytes, extract::State, http::StatusCode};
+use axum::{Json, body::Bytes, extract::State, http::StatusCode};
 use enclave_types::{self as enclave, EnclaveError};
+use serde::Serialize;
 
 use crate::enclave::EnclaveClientError;
 use crate::types::AppState;
 
-/// Forwards a sealed match request to the enclave and relays the sealed outcome.
+/// A match statement rendered for HTTP clients.
 ///
-/// Both directions are `application/octet-stream` and both are opaque here. The response
-/// is sealed to a key derived from the client's own request context, so the host cannot
-/// read the statement it carries.
-pub async fn handler(State(state): State<AppState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
+/// Binary fields keep their fixed-size type and serialize as hex strings.
+#[derive(Debug, Serialize)]
+pub struct MatchStatement {
+    version: u8,
+    #[serde(with = "hex::serde")]
+    live_image_hash: [u8; 32],
+    #[serde(with = "hex::serde")]
+    credential_claim: [u8; 32],
+    #[serde(with = "hex::serde")]
+    challenger_image_hash: [u8; 32],
+    match_coefficient: f32,
+}
+
+/// A successful match response.
+#[derive(Debug, Serialize)]
+pub struct MatchResponse {
+    statement: MatchStatement,
+    /// Serialized as hex. Length is not yet pinned — signing is still a placeholder.
+    #[serde(with = "hex::serde")]
+    signature: Vec<u8>,
+}
+
+impl From<enclave::MatchResponse> for MatchResponse {
+    fn from(response: enclave::MatchResponse) -> Self {
+        let enclave::MatchStatement {
+            version,
+            live_image_hash,
+            credential_claim,
+            challenger_image_hash,
+            match_coefficient,
+        } = response.statement;
+
+        Self {
+            statement: MatchStatement {
+                version,
+                live_image_hash,
+                credential_claim,
+                challenger_image_hash,
+                match_coefficient,
+            },
+            signature: response.signature,
+        }
+    }
+}
+
+/// Forwards a sealed match request to the enclave.
+///
+/// The request body is the raw sealed-box ciphertext (`application/octet-stream`); the host
+/// relays it opaquely and never inspects it.
+pub async fn handler(
+    State(state): State<AppState>,
+    body: Bytes,
+) -> Result<Json<MatchResponse>, StatusCode> {
     if body.is_empty() {
         tracing::warn!("match request had an empty body");
         return Err(StatusCode::BAD_REQUEST);
@@ -31,7 +81,7 @@ pub async fn handler(State(state): State<AppState>, body: Bytes) -> Result<Vec<u
             status
         })?;
 
-    Ok(response.sealed_outcome)
+    Ok(Json(response.into()))
 }
 
 /// Maps an enclave-client failure to an HTTP status.
@@ -46,9 +96,7 @@ const fn status_for(error: &EnclaveClientError) -> StatusCode {
             EnclaveError::ThumbnailHashMismatch
             | EnclaveError::MatchBelowThreshold
             | EnclaveError::EmbeddingGenerationFailed => StatusCode::UNPROCESSABLE_ENTITY,
-            EnclaveError::EmbeddingComparisonFailed | EnclaveError::EncryptFailed => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
+            EnclaveError::EmbeddingComparisonFailed => StatusCode::INTERNAL_SERVER_ERROR,
             EnclaveError::NotReady
             | EnclaveError::SecureModuleNotInitialized
             | EnclaveError::AttestationFailed => StatusCode::SERVICE_UNAVAILABLE,
@@ -105,19 +153,46 @@ mod tests {
 
     fn sample_response() -> enclave::MatchResponse {
         enclave::MatchResponse {
-            sealed_outcome: b"sealed-outcome".to_vec(),
+            statement: enclave::MatchStatement {
+                version: 1,
+                live_image_hash: [1u8; 32],
+                credential_claim: [2u8; 32],
+                challenger_image_hash: [3u8; 32],
+                match_coefficient: 1.0,
+            },
+            signature: vec![7u8; 64],
         }
     }
 
     #[tokio::test]
-    async fn relays_the_sealed_outcome_without_reading_it() {
+    async fn forwards_sealed_payload_and_serializes_statement_as_hex() {
         let state = state_returning(Ok(sample_response()));
 
-        let body = handler(State(state), Bytes::from_static(b"sealed"))
+        let response = handler(State(state), Bytes::from_static(b"sealed"))
             .await
-            .expect("valid match should return a sealed outcome");
+            .expect("valid match should return a statement")
+            .0;
 
-        assert_eq!(body, b"sealed-outcome");
+        assert_eq!(response.statement.version, 1);
+        assert_eq!(
+            response.statement.match_coefficient.to_bits(),
+            1.0f32.to_bits()
+        );
+
+        let json = serde_json::to_value(&response).expect("response should serialize");
+        assert_eq!(
+            json["statement"]["live_image_hash"],
+            hex::encode([1u8; 32]).as_str()
+        );
+        assert_eq!(
+            json["statement"]["credential_claim"],
+            hex::encode([2u8; 32]).as_str()
+        );
+        assert_eq!(
+            json["statement"]["challenger_image_hash"],
+            hex::encode([3u8; 32]).as_str()
+        );
+        assert_eq!(json["signature"], hex::encode([7u8; 64]).as_str());
     }
 
     #[tokio::test]
@@ -154,10 +229,6 @@ mod tests {
                 EnclaveError::MatchBelowThreshold
             )),
             StatusCode::UNPROCESSABLE_ENTITY
-        );
-        assert_eq!(
-            status_for(&EnclaveClientError::Operation(EnclaveError::EncryptFailed)),
-            StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
             status_for(&EnclaveClientError::Operation(EnclaveError::NotReady)),
