@@ -28,19 +28,16 @@ allow = [
     # Permissive, OSI-approved, and no more restrictive than BSD-3-Clause below.
     "BSD-2-Clause",
     "BSD-3-Clause",
-    # Reached via webpki-roots, the Mozilla CA bundle rustls uses for ordinary TLS in the
-    # verifier client. A permissive data licence, not a code licence.
+    # Reached via webpki-roots, the Mozilla CA bundle rustls uses in the verifier client.
     "CDLA-Permissive-2.0",
-    # Reached via webpki, which validates the Nitro attestation certificate chain in the
-    # verifier client. Permissive and OSI-approved. Matches worldcoin/bedrock, whose Nitro
-    # verifier this port is derived from.
+    # Reached via webpki, which validates the Nitro attestation chain. Matches
+    # worldcoin/bedrock, whose verifier this port is derived from.
     "ISC",
     "MIT",
     "Unicode-3.0",
 ]
 
-# webpki carries a valid ISC license that cargo-deny cannot infer from the text.
-# Clarification copied from worldcoin/bedrock's deny.toml.
+# cargo-deny cannot infer webpki's ISC license from its text. Copied from bedrock's deny.toml.
 [[licenses.clarify]]
 name = "webpki"
 version = "0.22.4"

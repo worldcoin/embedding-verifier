@@ -8,10 +8,9 @@ use enclave_types::{GetEnclaveKeysResponse, MatchRequest, MatchResponse};
 use crate::enclave::{EnclaveClient, EnclaveClientError};
 use crate::types::{AppState, Environment};
 
-/// An [`EnclaveClient`] that answers from fixed results instead of a live enclave.
+/// An [`EnclaveClient`] answering from fixed results.
 ///
-/// Operations a test does not configure panic instead of returning a plausible default, so a
-/// route that calls the wrong enclave operation fails loudly rather than passing on a stub.
+/// Unconfigured operations panic, so a route calling the wrong one fails loudly.
 pub struct StubEnclaveClient {
     keys: Option<Result<GetEnclaveKeysResponse, EnclaveClientError>>,
     match_result: Option<Result<MatchResponse, EnclaveClientError>>,
@@ -19,7 +18,7 @@ pub struct StubEnclaveClient {
 }
 
 impl StubEnclaveClient {
-    /// Answers key requests with `keys`; any other operation panics.
+    /// Answers key requests with `keys`.
     #[must_use]
     pub const fn returning_keys(keys: GetEnclaveKeysResponse) -> Self {
         Self {
@@ -29,7 +28,7 @@ impl StubEnclaveClient {
         }
     }
 
-    /// Answers match requests with `result`; any other operation panics.
+    /// Answers match requests with `result`.
     #[must_use]
     pub const fn returning_match(result: Result<MatchResponse, EnclaveClientError>) -> Self {
         Self {
@@ -49,7 +48,7 @@ impl StubEnclaveClient {
         }
     }
 
-    /// Asserts that the route forwards exactly `payload` to the enclave.
+    /// Asserts the route forwards exactly `payload` to the enclave.
     #[must_use]
     pub fn expecting_sealed_payload(mut self, payload: &[u8]) -> Self {
         self.expected_sealed_payload = Some(payload.to_vec());

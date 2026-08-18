@@ -1,23 +1,15 @@
 //! AWS Nitro Enclave attestation verification.
 //!
 //! Ported from `worldcoin/bedrock` (`bedrock/src/nitro_enclave/mod.rs`), MIT © Tools for
-//! Humanity, which is the implementation shipping in World App — the authenticator that
-//! calls `POST /v1/enclave-assignment`. Porting rather than reimplementing means the enclave
-//! is checked by the same logic on both sides of the protocol, not by two independent
-//! readings of the AWS specification.
+//! Humanity, which ships in World App — the authenticator that calls
+//! `POST /v1/enclave-assignment`. Both sides therefore run the same logic rather than two
+//! readings of the AWS spec.
 //!
-//! Deliberate divergences from bedrock:
+//! Divergences from bedrock: no uniffi surface or global config, policy is passed in; `now`
+//! is a parameter rather than a `cfg(test)` bypass; PCRs come from the caller, since ours are
+//! unknown until the image is built; zeroed measurements need an opt-in; no sealing.
 //!
-//! - the uniffi surface and the global `get_config()` coupling are gone; policy is passed in
-//! - `now` is a parameter rather than a `cfg(test)`-only bypass flag, so tests exercise the
-//!   same code path as production
-//! - expected PCRs are supplied by the caller instead of being compile-time constants,
-//!   because our PCR0 is not known until the enclave image is built
-//! - all-zero measurements are rejected unless the caller opts in
-//! - sealing is not done here; the caller seals to the verified key
-//!
-//! Verification follows the AWS validation process:
-//! <https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html#validation-process>
+//! Follows <https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html#validation-process>
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -39,29 +31,22 @@ pub use types::{
     EnclaveAttestationError, EnclaveAttestationResult, PcrMeasurement, VerifiedAttestation,
 };
 
-/// The AWS Nitro Attestation PKI root, for the commercial partitions.
+/// The AWS Nitro Attestation PKI root, from
+/// <https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip>.
 ///
-/// Source: <https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip>
-///
-/// SHA-256 of this DER is
-/// `641a0321a3e244efe456463195d606317ed7cdcc3c1756e09893f3c68f79bb5b`, which is the
-/// fingerprint AWS publishes on the validation-process page and matches the copy vendored in
-/// `worldcoin/bedrock`. Note that AWS publishes the fingerprint of the *certificate*, not of
-/// the zip, so the certificate is what we pin. Self-signed P-384, `ecdsa-with-SHA384`,
-/// `CN=aws.nitro-enclaves, C=US, O=Amazon, OU=AWS`, valid 2019-10-28 to 2049-10-28.
+/// SHA-256 `641a0321a3e244efe456463195d606317ed7cdcc3c1756e09893f3c68f79bb5b` — the
+/// fingerprint AWS publishes, asserted by a test. AWS publishes the fingerprint of the
+/// certificate, not of the zip, so the certificate is what we pin. Valid until 2049-10-28.
 pub const AWS_NITRO_ROOT_CERT: &[u8] = include_bytes!("../../certs/aws_nitro_root_g1.der");
 
 /// Nitro COSE signatures are ECDSA over P-384, so raw `r || s` is always 96 bytes.
 const P384_SIGNATURE_LENGTH: usize = 96;
 
 /// Verifies AWS Nitro Enclave attestation documents.
-///
-/// Checks the COSE Sign1 signature, the certificate chain up to the pinned AWS Nitro root,
-/// the PCR measurements, and the document's freshness, then yields the attested public key.
 #[derive(Debug, Clone)]
 pub struct EnclaveAttestationVerifier {
-    /// Allowed PCR configurations. A document is trusted if it matches *any* one of them in
-    /// full, which is what lets several enclave versions be trusted at once during a rollout.
+    /// A document is trusted if it matches any one configuration in full, which lets several
+    /// enclave versions be trusted at once during a rollout.
     allowed_pcr_configs: Vec<Vec<PcrMeasurement>>,
     root_certificate: Vec<u8>,
     max_age_millis: u64,
@@ -69,11 +54,9 @@ pub struct EnclaveAttestationVerifier {
 }
 
 impl EnclaveAttestationVerifier {
-    /// Creates a verifier that trusts any enclave matching one of `allowed_pcr_configs`.
+    /// Creates a verifier trusting any enclave that matches one of `allowed_pcr_configs`.
     ///
-    /// `max_age_millis` bounds how old a document's own timestamp may be. Debug-mode
-    /// enclaves are rejected; use [`Self::allowing_debug_measurements`] to opt out, which
-    /// must never be done outside development.
+    /// `max_age_millis` bounds how old a document's own timestamp may be.
     #[must_use]
     pub fn new(allowed_pcr_configs: Vec<Vec<PcrMeasurement>>, max_age_millis: u64) -> Self {
         Self {
@@ -86,8 +69,7 @@ impl EnclaveAttestationVerifier {
 
     /// Accepts enclaves whose measurements are all zero, i.e. run with `--debug-mode`.
     ///
-    /// Such an enclave's memory is readable from the parent instance, so this destroys the
-    /// confidentiality guarantee the whole design rests on. Development only.
+    /// Their memory is readable from the parent instance. Development only.
     #[must_use]
     pub const fn allowing_debug_measurements(mut self) -> Self {
         self.allow_debug_measurements = true;
@@ -124,8 +106,8 @@ impl EnclaveAttestationVerifier {
 
     /// Verifies a raw COSE-encoded attestation document.
     ///
-    /// Fails closed: every rejection is a distinct error variant and nothing is returned
-    /// until the signature, the chain, the measurements, and the freshness all check out.
+    /// Fails closed: nothing is returned until the signature, the chain, the measurements and
+    /// the freshness all check out.
     ///
     /// # Errors
     ///
@@ -208,12 +190,9 @@ impl EnclaveAttestationVerifier {
 
     /// Validates the chain from the leaf up to the pinned root and returns the leaf.
     ///
-    /// The `cabundle` is root-first, so element 0 is the root we already pin and only the
-    /// remainder are intermediates.
-    ///
-    /// This uses webpki's TLS-server entry point because it is the only chain-validation
-    /// entry point webpki 0.22 exposes; it additionally requires the `serverAuth` EKU, which
-    /// Nitro leaf certificates carry. No DNS name is checked — there is no host to match.
+    /// `cabundle` is root-first, so element 0 is the root we already pin. The TLS-server
+    /// entry point is webpki 0.22's only chain validator; it also requires the `serverAuth`
+    /// EKU, which Nitro leaf certificates carry. No DNS name is checked.
     fn verify_certificate_chain(
         &self,
         attestation: &AttestationDoc,

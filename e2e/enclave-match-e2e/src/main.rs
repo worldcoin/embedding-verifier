@@ -108,13 +108,10 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Fully verifies an attestation document and returns the `public_key` it commits to.
+/// Verifies an attestation document and returns the `public_key` it commits to.
 ///
-/// This checks the COSE signature, the certificate chain up to the pinned AWS Nitro root,
-/// and the expected PCRs. It previously used `pontifex::SecureModule::parse_raw_attestation_doc`,
-/// which extracts the payload with the verification key set to `None` — so the harness was
-/// sealing to whatever key the document claimed, with nothing establishing it came from an
-/// enclave at all.
+/// Checks the COSE signature, the chain up to the pinned AWS Nitro root, and the expected
+/// PCRs.
 fn attested_public_key(
     verifier: &EnclaveAttestationVerifier,
     document: &[u8],

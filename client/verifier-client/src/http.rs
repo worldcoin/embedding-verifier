@@ -15,10 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long establishing the connection may take.
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Largest assignment body we will read.
-///
-/// An attestation document is a few kB; anything approaching this is a malfunctioning or
-/// hostile host, and reading it would be the start of a memory-exhaustion problem.
+/// Largest assignment body we will read. A document is a few kB.
 const MAX_RESPONSE_BYTES: u64 = 64 * 1024;
 
 /// Failures while obtaining an enclave assignment.
@@ -60,9 +57,6 @@ pub enum ClientError {
 }
 
 /// The host's assignment response.
-///
-/// The document is the whole payload: the enclave's identity and expiry are read from it
-/// after verification, never from fields the untrusted host could set.
 #[derive(Debug, Deserialize)]
 struct EnclaveAssignmentResponse {
     attestation: String,
@@ -103,9 +97,8 @@ impl Client {
 
     /// Requests an assignment and returns it only if its attestation verifies.
     ///
-    /// There is no retry here on purpose. The caller decides whether to retry, and the spec
-    /// already has the authenticator re-assigning when a match fails, so retrying inside this
-    /// call would multiply requests onto an endpoint that costs an NSM attestation each time.
+    /// No retry: the endpoint costs an NSM attestation per call, and the spec already has the
+    /// authenticator re-assigning when a match fails.
     ///
     /// # Errors
     ///
@@ -129,8 +122,7 @@ impl Client {
             });
         }
 
-        // Reject an oversized body before reading it. A host that omits Content-Length is
-        // still bounded, by the total request timeout above.
+        // A host that omits Content-Length is still bounded by the request timeout.
         if let Some(length) = response.content_length()
             && length > MAX_RESPONSE_BYTES
         {

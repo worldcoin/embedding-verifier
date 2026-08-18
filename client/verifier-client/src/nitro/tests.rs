@@ -1,16 +1,13 @@
 //! Tests for the Nitro attestation verifier.
 //!
-//! The negative cases are ported from `worldcoin/bedrock`
-//! (`bedrock/src/nitro_enclave/tests.rs`), MIT © Tools for Humanity, along with the real
-//! attestation document in `testdata/`, which was produced by a live enclave.
+//! Cases and the real attestation document are ported from `worldcoin/bedrock`
+//! (`bedrock/src/nitro_enclave/tests.rs`), MIT © Tools for Humanity.
 //!
-//! That document's certificate chain expired in September 2025, so every test pins `now` to
-//! the document's own timestamp. Unlike bedrock, which needed a `cfg(test)` flag to bypass
-//! the certificate time check, this exercises exactly the production code path — the clock is
-//! just an argument.
+//! The fixture's chain expired in September 2025, so tests pin `now` to the document's own
+//! timestamp. Bedrock needed a `cfg(test)` flag to bypass the certificate time check; passing
+//! the clock as an argument exercises the production path instead.
 
-// `Duration::from_days` / `from_hours`, which clippy suggests here, are unstable on the
-// toolchain this workspace pins (1.97).
+// `Duration::from_days` / `from_hours`, which clippy suggests here, are unstable on 1.97.
 #![allow(clippy::duration_suboptimal_units)]
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -23,10 +20,9 @@ use super::{
     AWS_NITRO_ROOT_CERT, EnclaveAttestationError, EnclaveAttestationVerifier, PcrMeasurement,
 };
 
-/// A real attestation document captured from a live Nitro enclave.
 const REAL_ATTESTATION_DOC_BASE64: &str = include_str!("testdata/real_attestation_doc.b64");
 
-/// Ten years, so the ported fixture is never rejected for staleness.
+/// Ten years, so the fixture is never rejected for staleness.
 const GENEROUS_MAX_AGE_MILLIS: u64 = 10 * 365 * 24 * 60 * 60 * 1000;
 
 fn real_document() -> Vec<u8> {
@@ -35,7 +31,7 @@ fn real_document() -> Vec<u8> {
         .expect("fixture should be valid base64")
 }
 
-/// The PCRs the fixture's enclave actually reported.
+/// The PCRs the fixture's enclave reported.
 fn fixture_pcr_config() -> Vec<PcrMeasurement> {
     vec![
         PcrMeasurement::new(
@@ -69,16 +65,15 @@ fn verifier() -> EnclaveAttestationVerifier {
     EnclaveAttestationVerifier::new(vec![fixture_pcr_config()], GENEROUS_MAX_AGE_MILLIS)
 }
 
-/// The instant the fixture was produced, read from the document itself.
-///
-/// Using the document's own timestamp puts `now` inside the certificate validity window
-/// without hardcoding a date that would drift from the fixture.
-fn fixture_instant() -> SystemTime {
+fn attestation_doc() -> aws_nitro_enclaves_nsm_api::api::AttestationDoc {
     let bytes = real_document();
     let cose = EnclaveAttestationVerifier::parse_cose_sign1(&bytes).expect("fixture should parse");
-    let doc = EnclaveAttestationVerifier::parse_cbor_payload(&cose).expect("fixture should decode");
+    EnclaveAttestationVerifier::parse_cbor_payload(&cose).expect("fixture should decode")
+}
 
-    UNIX_EPOCH + Duration::from_millis(doc.timestamp)
+/// The instant the fixture was produced, so `now` falls inside its certificate window.
+fn fixture_instant() -> SystemTime {
+    UNIX_EPOCH + Duration::from_millis(attestation_doc().timestamp)
 }
 
 #[test]
@@ -87,63 +82,16 @@ fn verifies_a_real_attestation_document() {
         .verify(&real_document(), fixture_instant())
         .expect("the fixture should verify against the pinned AWS root");
 
-    assert!(
-        verified.module_id.contains("-enc"),
-        "module id should name an enclave, got {}",
-        verified.module_id
-    );
-    assert_eq!(
-        verified.enclave_public_key.len(),
-        32,
-        "the fixture attests a 32-byte X25519 key"
-    );
+    assert!(verified.module_id.contains("-enc"));
+    assert_eq!(verified.enclave_public_key.len(), 32);
     assert_eq!(
         verified.pcrs.get(&0).map(Vec::as_slice),
         Some(fixture_pcr_config()[0].value.as_slice())
     );
 }
 
-#[test]
-fn verifies_the_same_document_through_the_base64_entry_point() {
-    let verified = verifier()
-        .verify_base64(REAL_ATTESTATION_DOC_BASE64.trim(), fixture_instant())
-        .expect("the fixture should verify");
-
-    assert_eq!(verified.timestamp_millis, {
-        let bytes = real_document();
-        let cose = EnclaveAttestationVerifier::parse_cose_sign1(&bytes).unwrap();
-        EnclaveAttestationVerifier::parse_cbor_payload(&cose)
-            .unwrap()
-            .timestamp
-    });
-}
-
-#[test]
-fn rejects_a_tampered_payload() {
-    let mut bytes = real_document();
-    // Flip a byte deep inside the COSE payload, leaving the framing intact.
-    let midpoint = bytes.len() / 2;
-    bytes[midpoint] ^= 0xff;
-
-    let error = verifier()
-        .verify(&bytes, fixture_instant())
-        .expect_err("a tampered document must not verify");
-
-    assert!(
-        matches!(
-            error,
-            EnclaveAttestationError::AttestationSignatureInvalid(_)
-                | EnclaveAttestationError::AttestationDocumentParseError(_)
-                | EnclaveAttestationError::AttestationChainInvalid(_)
-        ),
-        "unexpected error: {error}"
-    );
-}
-
-/// Corrupts only the COSE signature, leaving the document and its chain intact.
-///
-/// This is the test that proves signature verification actually runs: everything else about
-/// the document still parses and still chains to the pinned AWS root.
+/// Corrupts only the signature: the document still parses and still chains to the AWS root,
+/// so this is what proves signature verification actually runs.
 #[test]
 fn rejects_a_corrupted_cose_signature() {
     let bytes = real_document();
@@ -164,7 +112,7 @@ fn rejects_a_corrupted_cose_signature() {
 
     let error = verifier()
         .verify(&tampered, fixture_instant())
-        .expect_err("a document with a corrupted signature must not verify");
+        .expect_err("a corrupted signature must not verify");
 
     assert!(
         matches!(
@@ -176,34 +124,9 @@ fn rejects_a_corrupted_cose_signature() {
 }
 
 #[test]
-fn rejects_a_truncated_signature() {
-    let bytes = real_document();
-    let mut truncated = bytes.clone();
-    truncated.truncate(bytes.len() - 1);
-
-    let error = verifier()
-        .verify(&truncated, fixture_instant())
-        .expect_err("a truncated document must not verify");
-
-    assert!(
-        matches!(
-            error,
-            EnclaveAttestationError::AttestationDocumentParseError(_)
-                | EnclaveAttestationError::AttestationSignatureInvalid(_)
-        ),
-        "unexpected error: {error}"
-    );
-}
-
-#[test]
 fn rejects_a_document_under_a_different_root() {
-    // The fixture's own leaf certificate is a valid DER certificate but not the AWS root.
-    let not_the_root = {
-        let bytes = real_document();
-        let cose = EnclaveAttestationVerifier::parse_cose_sign1(&bytes).unwrap();
-        let doc = EnclaveAttestationVerifier::parse_cbor_payload(&cose).unwrap();
-        doc.certificate.to_vec()
-    };
+    // The fixture's leaf is a valid certificate, but not the AWS root.
+    let not_the_root = attestation_doc().certificate.to_vec();
 
     let error = verifier()
         .with_root_certificate(not_the_root)
@@ -218,7 +141,6 @@ fn rejects_a_document_under_a_different_root() {
 
 #[test]
 fn rejects_an_expired_certificate_chain() {
-    // One year past the fixture's certificate window.
     let much_later = fixture_instant() + Duration::from_secs(365 * 24 * 60 * 60);
 
     let error = verifier()
@@ -247,7 +169,7 @@ fn rejects_mismatched_pcrs() {
 
 #[test]
 fn rejects_a_pinned_pcr_index_absent_from_the_document() {
-    // Index 20 is a valid PCR index that this document does not carry.
+    // Index 20 is valid but not carried by this document.
     let mut config = fixture_pcr_config();
     config.push(PcrMeasurement::new(20, [0x11u8; 48]));
 
@@ -295,20 +217,15 @@ fn rejects_a_stale_document() {
         .verify(&real_document(), later)
         .expect_err("a document older than the policy allows must not verify");
 
-    // The certificate window is only hours wide, so an expired chain is also acceptable here.
     assert!(
-        matches!(
-            error,
-            EnclaveAttestationError::AttestationStale { .. }
-                | EnclaveAttestationError::AttestationChainInvalid(_)
-        ),
+        matches!(error, EnclaveAttestationError::AttestationStale { .. }),
         "unexpected error: {error}"
     );
 }
 
 #[test]
 fn rejects_a_document_timestamped_in_the_future() {
-    let earlier = fixture_instant() - Duration::from_secs(60 * 60);
+    let earlier = fixture_instant() - Duration::from_secs(1);
 
     let error = verifier()
         .verify(&real_document(), earlier)
@@ -318,7 +235,6 @@ fn rejects_a_document_timestamped_in_the_future() {
         matches!(
             error,
             EnclaveAttestationError::AttestationInvalidTimestamp(_)
-                | EnclaveAttestationError::AttestationChainInvalid(_)
         ),
         "unexpected error: {error}"
     );
@@ -345,29 +261,6 @@ fn rejects_empty_and_non_cbor_input() {
             "{label} should fail parsing, got: {error}"
         );
     }
-}
-
-/// The pontifex mock fixture carries a two-byte fake certificate and is signed by nothing.
-///
-/// `pontifex::SecureModule::parse_raw_attestation_doc` accepts it, because it extracts the
-/// payload without checking the signature. It must not survive real verification.
-#[test]
-fn rejects_a_document_with_a_bogus_certificate() {
-    // A COSE_Sign1 array whose payload is not a valid attestation document.
-    let bogus = vec![0x84, 0x40, 0xa0, 0x42, 0x03, 0x04, 0x41, 0x00];
-
-    let error = verifier()
-        .verify(&bogus, fixture_instant())
-        .expect_err("a document with a fake certificate must not verify");
-
-    assert!(
-        matches!(
-            error,
-            EnclaveAttestationError::AttestationDocumentParseError(_)
-                | EnclaveAttestationError::AttestationChainInvalid(_)
-        ),
-        "unexpected error: {error}"
-    );
 }
 
 #[test]

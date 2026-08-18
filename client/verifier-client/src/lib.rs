@@ -1,9 +1,8 @@
 //! Client for the embedding verifier's enclave-assignment flow.
 //!
-//! Fetches an enclave assignment from the host, verifies the AWS Nitro attestation document
-//! it carries, and yields the enclave's encryption public key. The host is untrusted and
-//! relays the document opaquely, so everything the caller relies on — the enclave's identity,
-//! its measurements, its public key — is read out of the signed document here.
+//! Fetches an assignment, verifies the AWS Nitro attestation document it carries, and yields
+//! the enclave's encryption public key. The host is untrusted, so the enclave's identity,
+//! measurements and public key are all read from the signed document.
 
 #![deny(
     clippy::all,

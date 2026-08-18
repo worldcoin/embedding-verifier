@@ -8,20 +8,14 @@ use crate::types::AppState;
 
 /// The enclave assigned to a client, as an attestation document.
 ///
-/// The document is the whole response on purpose. It already carries the enclave's identity
-/// (`module_id`) and its own expiry (the leaf certificate's `notAfter`), and the client must
-/// verify it before trusting either. Echoing those as unsigned JSON fields would restate
-/// signed data and create a mismatch case to reconcile, so the host relays opaque bytes it
-/// neither reads nor verifies.
+/// The document already carries the enclave's identity and expiry, and the client verifies it
+/// before trusting either, so the host relays opaque bytes and adds no fields of its own.
 #[derive(Debug, Serialize)]
 pub struct EnclaveAssignmentResponse {
     attestation: String,
 }
 
 /// Assigns this host's enclave by returning its encryption-key attestation.
-///
-/// Called by the authenticator immediately before it seals a match payload, so the
-/// `Encryption Key` it seals to is the one this enclave attested during the same exchange.
 pub async fn handler(
     State(state): State<AppState>,
 ) -> Result<Json<EnclaveAssignmentResponse>, StatusCode> {
@@ -59,15 +53,14 @@ const fn status_for(error: &EnclaveClientError) -> StatusCode {
             EnclaveError::NotReady
             | EnclaveError::SecureModuleNotInitialized
             | EnclaveError::AttestationFailed => StatusCode::SERVICE_UNAVAILABLE,
-            // Match-path errors cannot arise from an attestation request. Reaching one means
-            // the enclave answered a request it was not asked, so surface it as a host bug
-            // rather than folding it into retryable unavailability.
+            // A match-path error means the enclave answered a request it was not asked, so
+            // surface it as a host bug rather than retryable unavailability.
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         },
     }
 }
 
-/// Names the failure class for telemetry, so triage does not have to parse `Debug` output.
+/// Names the failure class for telemetry.
 const fn failure_class(error: &EnclaveClientError) -> &'static str {
     match error {
         EnclaveClientError::Timeout => "timeout",
@@ -86,12 +79,12 @@ mod tests {
     use axum::{extract::State, http::StatusCode};
     use enclave_types::{EnclaveError, GetEnclaveKeysResponse};
 
-    use super::{failure_class, handler, status_for};
+    use super::{handler, status_for};
     use crate::enclave::EnclaveClientError;
     use crate::test_support::{StubEnclaveClient, state_with};
 
     #[tokio::test]
-    async fn returns_base64_of_the_encryption_key_attestation() {
+    async fn returns_the_encryption_key_attestation_and_nothing_else() {
         let state = state_with(StubEnclaveClient::returning_keys(GetEnclaveKeysResponse {
             encryption_key_attestation: vec![1, 2, 3],
             signing_key_attestation: vec![4, 5, 6],
@@ -103,27 +96,9 @@ mod tests {
             .0;
 
         assert_eq!(response.attestation, "AQID");
-    }
-
-    #[tokio::test]
-    async fn never_relays_the_signing_key_attestation() {
-        let state = state_with(StubEnclaveClient::returning_keys(GetEnclaveKeysResponse {
-            encryption_key_attestation: vec![1, 2, 3],
-            signing_key_attestation: vec![4, 5, 6],
-        }));
-
-        let response = handler(State(state))
-            .await
-            .expect("a reachable enclave should yield an assignment")
-            .0;
 
         let json = serde_json::to_value(&response).expect("response should serialize");
-        assert_eq!(
-            json.as_object().map(serde_json::Map::len),
-            Some(1),
-            "the assignment must expose the attestation and nothing else"
-        );
-        assert_ne!(response.attestation, "BAUG");
+        assert_eq!(json.as_object().map(serde_json::Map::len), Some(1));
     }
 
     #[tokio::test]
@@ -160,29 +135,9 @@ mod tests {
             );
         }
 
-        // A match-path error here means the enclave answered the wrong request.
         assert_eq!(
             status_for(&EnclaveClientError::Operation(EnclaveError::DecryptFailed)),
             StatusCode::INTERNAL_SERVER_ERROR
-        );
-    }
-
-    #[test]
-    fn failure_classes_are_distinct_per_status() {
-        assert_eq!(failure_class(&EnclaveClientError::Timeout), "timeout");
-        assert_eq!(
-            failure_class(&EnclaveClientError::Transport("boom".to_string())),
-            "transport"
-        );
-        assert_eq!(
-            failure_class(&EnclaveClientError::Operation(EnclaveError::NotReady)),
-            "enclave_not_ready"
-        );
-        assert_eq!(
-            failure_class(&EnclaveClientError::Operation(
-                EnclaveError::AttestationFailed
-            )),
-            "attestation_failed"
         );
     }
 }

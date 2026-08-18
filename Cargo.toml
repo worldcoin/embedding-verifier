@@ -19,8 +19,7 @@ publish = false
 anyhow = "1.0"
 ark-babyjubjub = { package = "taceo-ark-babyjubjub", version = "0.5" }
 async-trait = "0.1"
-# Pinned to the versions worldcoin/bedrock uses, so the two Nitro verifiers cannot drift on
-# crate behaviour. See client/verifier-client/src/nitro/mod.rs.
+# Attestation crates are pinned to bedrock's versions so the two verifiers cannot drift.
 aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
 axum = "0.8"
 base64 = "0.22"

@@ -1,8 +1,7 @@
 //! Types for AWS Nitro Enclave attestation verification.
 //!
 //! Ported from `worldcoin/bedrock` (`bedrock/src/nitro_enclave/types.rs`), MIT © Tools for
-//! Humanity. The uniffi surface and the `bedrock_error` macro are dropped; error variants
-//! keep their bedrock names so the two can be diffed.
+//! Humanity. Variant names are kept so the two can be diffed.
 
 use std::collections::BTreeMap;
 
@@ -30,10 +29,8 @@ pub enum EnclaveAttestationError {
         actual: String,
     },
 
-    /// Every PCR was zero, which means a `--debug-mode` enclave.
-    ///
-    /// Debug enclaves offer no confidentiality — their memory is inspectable from the parent
-    /// instance — so this is a hard failure unless a caller opts in explicitly.
+    /// Every PCR was zero, which means a `--debug-mode` enclave whose memory the parent
+    /// instance can read.
     #[error("attestation reports zeroed measurements, which means a debug-mode enclave")]
     DebugMeasurements,
 
@@ -78,13 +75,12 @@ impl PcrMeasurement {
     }
 }
 
-/// An attestation document whose signature, chain, and measurements have all been verified.
+/// An attestation document whose signature, chain and measurements have all been verified.
 ///
-/// Every field is read out of the signed document, so nothing here depends on the untrusted
-/// host that relayed it.
+/// Every field is read from the signed document, so nothing depends on the untrusted host.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedAttestation {
-    /// The attested public key, as carried in the document's `public_key` field.
+    /// The attested public key.
     pub enclave_public_key: Vec<u8>,
     /// NSM module id, e.g. `i-0abc…-enc0123…`. Identifies the enclave for one boot.
     pub module_id: String,

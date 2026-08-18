@@ -1,12 +1,12 @@
 //! Fetches an enclave assignment from a host and verifies its attestation document.
 //!
+//! Exits non-zero if verification fails, so it works as a deployment smoke test.
+//!
 //! ```bash
 //! VERIFIER_BASE_URL=http://localhost:8000 \
 //! EXPECTED_PCR0=<hex published by scripts/build-eif.sh> \
 //!   cargo run --bin verifier-client
 //! ```
-//!
-//! Exits non-zero if verification fails, so it works as a deployment smoke test.
 
 use std::time::SystemTime;
 
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
         verified.timestamp_millis
     );
     for (index, value) in &verified.pcrs {
-        // Skip the unused registers, which are all zero and only add noise.
+        // Skip unused registers, which are all zero.
         if value.iter().any(|byte| *byte != 0) {
             println!("  PCR{index:<11}: {}", hex::encode(value));
         }

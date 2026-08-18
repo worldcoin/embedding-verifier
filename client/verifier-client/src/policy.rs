@@ -1,23 +1,18 @@
 //! Builds a verification policy from the environment.
 //!
-//! Expected measurements cannot be compile-time constants here the way they are in
-//! `worldcoin/bedrock`: our enclave image is built per branch, so PCR0 is only known once
-//! `scripts/build-eif.sh` has run and published it.
+//! Unlike `worldcoin/bedrock`, expected measurements cannot be compile-time constants: our
+//! image is built per branch, so PCR0 is only known once `scripts/build-eif.sh` publishes it.
 
 use std::time::Duration;
 
 use crate::nitro::{EnclaveAttestationVerifier, PcrMeasurement};
 
-/// PCR indices the enclave image measurement is spread across.
-///
-/// PCR0 is the image, PCR1 the kernel and bootstrap, PCR2 the application, PCR8 the signing
+/// PCR indices the image measurement is spread across: image, kernel, application, signing
 /// certificate. Every index that is configured must match.
 pub const PINNABLE_PCR_INDICES: [u32; 4] = [0, 1, 2, 8];
 
 /// Default freshness bound, matching the few-hour lifetime of a Nitro certificate.
-///
-/// `Duration::from_hours`, which clippy suggests here, is unstable on the toolchain this
-/// workspace pins (1.97).
+// `Duration::from_hours` is unstable on 1.97.
 #[allow(clippy::duration_suboptimal_units)]
 const DEFAULT_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
@@ -46,11 +41,11 @@ pub enum PolicyError {
     MalformedMaxAge(String),
 }
 
-/// Builds a verifier from `EXPECTED_PCR*`, `ALLOW_DEBUG_MEASUREMENTS`, and
+/// Builds a verifier from `EXPECTED_PCR*`, `ALLOW_DEBUG_MEASUREMENTS` and
 /// `MAX_ATTESTATION_AGE_SECS`.
 ///
-/// Fails when nothing is pinned rather than defaulting to an empty policy, because an empty
-/// policy would accept any genuine Nitro enclave, including somebody else's.
+/// Fails when nothing is pinned: an empty policy would accept any genuine Nitro enclave,
+/// including somebody else's.
 ///
 /// # Errors
 ///
@@ -78,8 +73,8 @@ pub fn verifier_from_env() -> Result<EnclaveAttestationVerifier, PolicyError> {
 
     if allows_debug_measurements() {
         tracing::warn!(
-            "accepting zeroed measurements: a debug-mode enclave offers no confidentiality, \
-             because its memory is readable from the parent instance"
+            "accepting zeroed measurements: a debug-mode enclave's memory is readable from \
+             the parent instance"
         );
         return Ok(verifier.allowing_debug_measurements());
     }
@@ -101,7 +96,6 @@ fn expected_pcrs_from_env() -> Result<Vec<PcrMeasurement>, PolicyError> {
             Some((index, value))
         })
         .map(|(index, value)| {
-            // The workspace pins hex without std, so FromHexError is not a std::error::Error.
             let bytes = hex::decode(value.trim()).map_err(|error| PolicyError::MalformedPcr {
                 index,
                 reason: format!("{error}"),
