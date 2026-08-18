@@ -4,11 +4,7 @@ use enclave_types::{EnclaveError, GetEnclaveKeysRequest, GetEnclaveKeysResponse}
 
 use crate::state::EnclaveState;
 
-/// Returns one attestation document per boot-scoped public key.
-///
-/// Attested per request rather than cached at boot: the documents are constant for a
-/// boot, but their certificate expires within hours, so a boot-time cache would rot in
-/// any longer-lived enclave.
+/// Returns one attestation document per public key.
 pub async fn handler(
     state: Arc<EnclaveState>,
     _: GetEnclaveKeysRequest,
