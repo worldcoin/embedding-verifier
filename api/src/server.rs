@@ -26,7 +26,9 @@ pub async fn start(state: AppState) -> anyhow::Result<()> {
 
     tracing::info!(%address, "API listening");
 
-    // Outermost first: mint a correlation id, open a span carrying it, echo it back.
+    // Each `.layer` wraps the previous, so this reads innermost-first: the id is minted
+    // outermost, the span below it sees it, and it is echoed onto the response on the way
+    // back out.
     let app = crate::routes::handler(state)
         .layer(http::propagate_request_id_layer())
         .layer(TraceLayer::new_for_http().make_span_with(http::make_span))
