@@ -6,14 +6,10 @@ use pontifex::Request;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::pcp;
-use crate::state::EnclaveState;
+use crate::{pcp, state::EnclaveState};
 
 /// Statement format version.
 const STATEMENT_VERSION: u8 = 1;
-
-/// Placeholder similarity score until the face engine lands; clears any sane threshold.
-const DUMMY_MATCH_COEFFICIENT: f32 = 1.0;
 
 /// Placeholder statement signature until signing lands.
 const DUMMY_SIGNATURE: [u8; 64] = [0u8; 64];
@@ -48,8 +44,7 @@ impl MatchInputs {
 /// Runs a 3-way face match: the credential image against both the live and challenge
 /// images.
 ///
-/// SKELETON: unseal, PCP binding, hashing, and the threshold gate are real; the face
-/// comparisons and the statement signature are dummies.
+/// The statement signature remains a placeholder.
 pub async fn handler(
     state: Arc<EnclaveState>,
     request: MatchRequest,
@@ -83,12 +78,20 @@ pub async fn handler(
     let live_image_hash: [u8; 32] = Sha256::digest(&payload.live_image).into();
     let challenger_image_hash: [u8; 32] = Sha256::digest(&payload.challenge_image).into();
 
-    // DUMMY comparisons: both must clear the threshold or no statement is issued.
-    let live_coefficient = DUMMY_MATCH_COEFFICIENT;
-    let challenge_coefficient = DUMMY_MATCH_COEFFICIENT;
+    let scores = state.face_engine().compare_reference_to_probes(
+        &payload.credential_image,
+        &payload.live_image,
+        &payload.challenge_image,
+    )?;
+    let live_coefficient = scores.live_similarity;
+    let challenge_coefficient = scores.challenge_similarity;
+
     if live_coefficient < payload.match_threshold || challenge_coefficient < payload.match_threshold
     {
         tracing::warn!(
+            live_coefficient,
+            challenge_coefficient,
+            threshold = payload.match_threshold,
             route = MatchRequest::ROUTE_ID,
             "match scored below threshold"
         );
@@ -120,7 +123,72 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     use super::{DUMMY_SIGNATURE, MatchInputs, handler};
-    use crate::state::EnclaveState;
+    use crate::{
+        face_engine::{ComparisonScores, FaceComparator},
+        state::EnclaveState,
+    };
+
+    struct ExpectedImages {
+        credential: Vec<u8>,
+        live: Vec<u8>,
+        challenge: Vec<u8>,
+    }
+
+    struct MockFaceEngine {
+        expected: Option<ExpectedImages>,
+        result: Result<ComparisonScores, EnclaveError>,
+    }
+
+    impl MockFaceEngine {
+        fn matching(
+            credential: &[u8],
+            live: &[u8],
+            challenge: &[u8],
+            live_similarity: f32,
+            challenge_similarity: f32,
+        ) -> Self {
+            Self {
+                expected: Some(ExpectedImages {
+                    credential: credential.to_vec(),
+                    live: live.to_vec(),
+                    challenge: challenge.to_vec(),
+                }),
+                result: Ok(ComparisonScores {
+                    live_similarity,
+                    challenge_similarity,
+                }),
+            }
+        }
+
+        fn unused() -> Self {
+            Self {
+                expected: None,
+                result: Err(EnclaveError::NotReady),
+            }
+        }
+    }
+
+    impl FaceComparator for MockFaceEngine {
+        fn compare_reference_to_probes(
+            &self,
+            credential_image: &[u8],
+            live_image: &[u8],
+            challenge_image: &[u8],
+        ) -> Result<ComparisonScores, EnclaveError> {
+            let expected = self
+                .expected
+                .as_ref()
+                .expect("mock Face Engine was called unexpectedly");
+            assert_eq!(credential_image, expected.credential);
+            assert_eq!(live_image, expected.live);
+            assert_eq!(challenge_image, expected.challenge);
+            self.result
+        }
+    }
+
+    fn state_with(face_engine: MockFaceEngine) -> Arc<EnclaveState> {
+        Arc::new(EnclaveState::generate(Arc::new(face_engine)))
+    }
 
     fn seal_to(state: &EnclaveState, plaintext: &[u8]) -> Vec<u8> {
         let public_key = PublicKey::from(state.transit_public_key());
@@ -160,10 +228,12 @@ mod tests {
 
     #[tokio::test]
     async fn handler_produces_statement_for_valid_payload() {
-        let state = Arc::new(EnclaveState::generate());
         let live = b"liveness-frame";
         let credential = b"credential-thumbnail";
         let challenge = b"challenge-frame";
+        let state = state_with(MockFaceEngine::matching(
+            credential, live, challenge, 0.92, 0.87,
+        ));
         let hashes_json = hashes_json_for(credential);
         let sealed_payload = seal_match(&state, live, credential, &hashes_json, challenge, 0.5);
 
@@ -182,14 +252,13 @@ mod tests {
             statement.challenger_image_hash,
             Sha256::digest(challenge).as_slice()
         );
-        // Skeleton dummies.
         assert_eq!(response.signature, DUMMY_SIGNATURE.to_vec());
-        assert_eq!(statement.match_coefficient.to_bits(), 1.0f32.to_bits());
+        assert_eq!(statement.match_coefficient.to_bits(), 0.92f32.to_bits());
     }
 
     #[tokio::test]
     async fn handler_rejects_undecryptable_payload() {
-        let state = Arc::new(EnclaveState::generate());
+        let state = state_with(MockFaceEngine::unused());
 
         let result = handler(state, request(vec![0u8; 64])).await;
 
@@ -198,7 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn handler_rejects_non_cbor_plaintext() {
-        let state = Arc::new(EnclaveState::generate());
+        let state = state_with(MockFaceEngine::unused());
         let sealed_payload = seal_to(&state, b"not cbor framing");
 
         let result = handler(state, request(sealed_payload)).await;
@@ -208,7 +277,7 @@ mod tests {
 
     #[tokio::test]
     async fn handler_rejects_pcp_binding_mismatch() {
-        let state = Arc::new(EnclaveState::generate());
+        let state = state_with(MockFaceEngine::unused());
         let hashes_json = hashes_json_for(b"the-enrolled-image");
         let sealed_payload = seal_match(
             &state,
@@ -226,18 +295,14 @@ mod tests {
 
     #[tokio::test]
     async fn handler_rejects_match_below_threshold() {
-        let state = Arc::new(EnclaveState::generate());
         let credential = b"credential-thumbnail";
+        let live = b"liveness";
+        let challenge = b"challenge";
+        let state = state_with(MockFaceEngine::matching(
+            credential, live, challenge, 0.95, 0.85,
+        ));
         let hashes_json = hashes_json_for(credential);
-        // A threshold above the dummy coefficient (1.0) forces the gate to reject.
-        let sealed_payload = seal_match(
-            &state,
-            b"liveness",
-            credential,
-            &hashes_json,
-            b"challenge",
-            1.5,
-        );
+        let sealed_payload = seal_match(&state, live, credential, &hashes_json, challenge, 0.9);
 
         let result = handler(state, request(sealed_payload)).await;
 

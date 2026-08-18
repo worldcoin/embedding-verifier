@@ -10,8 +10,7 @@ use enclave_types::{
 use pontifex::client::ConnectionDetails;
 use tokio::time::timeout;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
-
+const CONTROL_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 // Match requests can carry large payloads and require expensive computation.
 const MATCH_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -59,7 +58,7 @@ impl PontifexEnclaveClient {
 impl EnclaveClient for PontifexEnclaveClient {
     async fn health(&self) -> Result<(), EnclaveClientError> {
         let response = timeout(
-            REQUEST_TIMEOUT,
+            CONTROL_REQUEST_TIMEOUT,
             pontifex::client::send(self.connection, &HealthRequest),
         )
         .await
@@ -71,7 +70,7 @@ impl EnclaveClient for PontifexEnclaveClient {
 
     async fn get_transit_key(&self) -> Result<GetTransitKeyResponse, EnclaveClientError> {
         let response = timeout(
-            REQUEST_TIMEOUT,
+            CONTROL_REQUEST_TIMEOUT,
             pontifex::client::send(self.connection, &GetTransitKeyRequest),
         )
         .await

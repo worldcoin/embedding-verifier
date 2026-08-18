@@ -1,6 +1,5 @@
-# Builds the secure-enclave EIF and pushes the carrier image to GHCR.
-# Pull requests build without publishing.
-name: Build Enclave EIF Image
+# Builds the secure-enclave EIF and validates its PCR generation.
+name: Build Enclave EIF
 
 on:
   pull_request:
@@ -18,11 +17,6 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version tag to publish (including v prefix, e.g. v0.1.0)"
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -32,16 +26,20 @@ env:
 
 jobs:
   build-enclave-eif:
-    name: Build enclave EIF + carrier image
+    name: Build enclave EIF
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      packages: write
-      attestations: write
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Mint biometric-engines access token
+        id: biometric-engines-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
+          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
+          owner: worldcoin
+          repositories: biometric-engines
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -52,28 +50,14 @@ jobs:
           path: target/eif/aws-nitro-enclaves-cli-${{ env.NITRO_CLI_VERSION }}
           key: nitro-cli-${{ runner.os }}-${{ env.NITRO_CLI_VERSION }}
 
-      - name: Resolve version
-        id: version
-        if: github.ref_type == 'tag' || inputs.version != ''
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          if [[ -n "$INPUT_VERSION" ]]; then
-            VERSION="$INPUT_VERSION"
-          else
-            VERSION="$GITHUB_REF_NAME"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "is_stable=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_stable=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Prepare nitro-cli log directory
         run: sudo install -d -m 1777 /var/log/nitro_enclaves
 
       - name: Build EIF and PCRs
+        env:
+          GIT_HUB_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
+          # TODO: Remove when models are injected into the enclave at runtime.
+          SKIP_MODEL_DOWNLOAD: "true"
         run: scripts/build-eif.sh target/eif
 
       - name: Publish PCR measurements
@@ -91,44 +75,3 @@ jobs:
           name: enclave-pcrs
           path: target/eif/pcrs.json
           if-no-files-found: error
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
-        with:
-          images: ghcr.io/${{ github.repository }}-enclave-eif
-          tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || steps.version.outputs.is_stable == 'true' }}
-            type=sha
-            type=raw,value=${{ steps.version.outputs.version }},enable=${{ steps.version.outputs.version != '' }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push carrier image
-        id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          # Context is the EIF output dir so the .eif is always included.
-          context: target/eif
-          file: secure-enclave/Dockerfile.eif
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64
-
-      - name: Attest build provenance
-        if: github.event_name != 'pull_request'
-        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
-        with:
-          push-to-registry: true
-          subject-name: ghcr.io/${{ github.repository }}-enclave-eif
-          subject-digest: ${{ steps.build.outputs.digest }}

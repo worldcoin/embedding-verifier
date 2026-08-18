@@ -17,7 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 COPY . .
 
-RUN cargo build --release --locked --package secure-enclave --bin secure-enclave
+RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
+    GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)" && \
+    git config --global \
+      url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
+      "https://github.com/worldcoin/biometric-engines" && \
+    CARGO_NET_GIT_FETCH_WITH_CLI=true \
+      cargo build --release --locked --package secure-enclave --bin secure-enclave && \
+    git config --global --unset-all \
+      url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf
 
 FROM debian:bookworm-slim
 
@@ -26,6 +34,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/target/release/secure-enclave /usr/local/bin/secure-enclave
+
+# TODO: Remove this build-time switch once models are injected into the enclave
+# at runtime. CI sets it to true because private model artifacts are unavailable.
+ARG SKIP_MODEL_DOWNLOAD=false
+RUN --mount=from=builder,source=/src,target=/build,ro \
+    if [ "$SKIP_MODEL_DOWNLOAD" = "true" ]; then \
+      echo "Skipping model packaging"; \
+    else \
+      mkdir -p /models; \
+      cp /build/models/face_embedding_generator.onnx /models/face_embedding_generator.onnx; \
+      cp /build/models/rgbnet.onnx /models/rgbnet.onnx; \
+    fi
 
 ENV RUST_LOG=info
 

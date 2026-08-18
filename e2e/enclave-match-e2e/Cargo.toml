@@ -1,28 +1,19 @@
 [package]
-name = "secure-enclave"
+name = "enclave-match-e2e"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
-[[bin]]
-name = "secure-enclave"
-path = "src/main.rs"
-
 [dependencies]
 anyhow.workspace = true
 ciborium.workspace = true
 crypto_box = { workspace = true, features = ["seal", "salsa20"] }
 enclave-types.workspace = true
-face-engine.workspace = true
 hex.workspace = true
-image.workspace = true
-pontifex = { workspace = true, features = ["nsm", "server"] }
-serde = { workspace = true }
+pontifex = { workspace = true, features = ["client", "nsm"] }
+serde.workspace = true
 serde_bytes.workspace = true
-serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true

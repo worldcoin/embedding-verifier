@@ -1,8 +1,14 @@
 # Build artifacts and VCS metadata — never needed in the image build context.
 target/
 **/target/
+build/
 .git/
 .github/
+
+# The placeholder Face Engine graph only loads these two private model artifacts.
+models/*
+!models/face_embedding_generator.onnx
+!models/rgbnet.onnx
 
 # Local editor / OS cruft.
 .vscode/
