@@ -11,6 +11,7 @@ embedding-verifier/
 ├── host/              # Axum HTTP API — the untrusted side of the boundary
 ├── enclave/           # Nitro enclave workload — the trusted side
 ├── enclave-types/     # Wire contract carried over vsock between the two
+├── crypto/            # Client↔enclave crypto; the host links none of it
 ├── client/            # Attestation-verifying client
 └── e2e/               # End-to-end harness driving host and enclave together
 ```

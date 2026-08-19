@@ -1,0 +1,23 @@
+[package]
+name = "crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Named explicitly for the response half: RFC 9180 §9.8 exports a key and nonce from the request
+# context and hands them to a standalone AEAD, which `hpke` exposes no constructor for. Already
+# in the tree via `hpke`'s `aes` feature, so this is a manifest entry, not a new crate.
+aes-gcm.workspace = true
+hkdf.workspace = true
+hpke.workspace = true
+# The response nonce of RFC 9458 §4.4 step 2. Inside the enclave `OsRng` is the Nitro hardware
+# RNG, which the boot sequence verifies before any of this runs.
+rand.workspace = true
+# Deliberately not the workspace `sha2` (0.10, which the image-hashing users are on): this must
+# match the generation `hpke` already resolves for HKDF-SHA256, so the enclave links one SHA-256
+# rather than two. Verify with `cargo tree -p crypto`.
+sha2 = "0.11"
+zeroize.workspace = true
