@@ -12,8 +12,9 @@
     dead_code
 )]
 
-pub mod client;
-pub mod config;
+mod client;
+mod config;
+
 pub mod nitro;
 
 pub use client::{ClientError, FaceVerifierClient};

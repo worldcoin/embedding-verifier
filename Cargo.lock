@@ -638,6 +638,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "client"
+version = "0.1.0"
+dependencies = [
+ "aws-nitro-enclaves-nsm-api",
+ "axum",
+ "base64",
+ "ciborium",
+ "coset",
+ "hex",
+ "hex-literal",
+ "p384",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "url",
+ "webpki",
+ "x509-cert",
+]
+
+[[package]]
 name = "colorutils-rs"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -975,6 +998,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "15401da73a9ed8c80e3b2d4dc05fe10e7b72d7243b9f614e516a44fa99986e88"
 
 [[package]]
+name = "e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ciborium",
+ "client",
+ "enclave-types",
+ "hex",
+ "pontifex",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "ecdsa"
 version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1045,22 +1084,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "enclave-match-e2e"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ciborium",
- "enclave-types",
- "hex",
- "pontifex",
- "serde",
- "serde_bytes",
- "sha2",
- "tokio",
- "verifier-client",
 ]
 
 [[package]]
@@ -4529,29 +4552,6 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
-
-[[package]]
-name = "verifier-client"
-version = "0.1.0"
-dependencies = [
- "aws-nitro-enclaves-nsm-api",
- "axum",
- "base64",
- "ciborium",
- "coset",
- "hex",
- "hex-literal",
- "p384",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
- "tokio",
- "url",
- "webpki",
- "x509-cert",
-]
 
 [[package]]
 name = "version-compare"

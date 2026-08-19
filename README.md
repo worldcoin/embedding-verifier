@@ -4,11 +4,15 @@ Rust workspace for the embedding verifier host and secure enclave.
 
 ## Structure
 
+One directory per workspace member, named after the crate it holds.
+
 ```text
 embedding-verifier/
-├── host/                      # Axum HTTP API (the untrusted host)
-├── client/verifier-client/    # Attestation-verifying client
-└── enclave/                   # Secure enclave process
+├── host/              # Axum HTTP API — the untrusted side of the boundary
+├── enclave/           # Nitro enclave workload — the trusted side
+├── enclave-types/     # Wire contract carried over vsock between the two
+├── client/            # Attestation-verifying client
+└── e2e/               # End-to-end harness driving host and enclave together
 ```
 
 ## Development
@@ -43,7 +47,7 @@ else:
 The enclave's identity (`module_id`) and expiry (the leaf certificate's `notAfter`) are read
 from the document *after* verifying it, never from fields the untrusted host could set.
 
-`verifier-client` verifies the document — the COSE signature, the certificate chain up to the
+`client` verifies the document — the COSE signature, the certificate chain up to the
 pinned AWS Nitro root, and the expected measurements. It is configured by a JSON file, in the
 shape `world-id-protocol` uses for an authenticator:
 
@@ -64,11 +68,11 @@ proves a document came from *some* enclave. A `--debug-mode` enclave reports all
 its memory is readable from the parent instance, so it is rejected unless
 `allow_debug_measurements` is set.
 
-`enclave-match-e2e` reads that file from `VERIFIER_CONFIG` and fetches its encryption key
+`e2e` reads that file from `VERIFIER_CONFIG` and fetches its encryption key
 through the host, exercising the assignment route and the client together:
 
 ```bash
-VERIFIER_CONFIG=./client.json cargo run --bin enclave-match-e2e -- <credential> <live> <challenge>
+VERIFIER_CONFIG=./client.json cargo run --bin e2e -- <credential> <live> <challenge>
 ```
 
 ## Nitro-enabled development host

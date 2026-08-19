@@ -1,11 +1,11 @@
 use std::{env, fs, path::PathBuf, time::SystemTime};
 
 use anyhow::{Context, Result, anyhow, ensure};
+use client::{Config, FaceVerifierClient};
 use enclave_types::{GetEnclaveKeysRequest, MatchRequest};
 use pontifex::client::ConnectionDetails;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use verifier_client::{Config, FaceVerifierClient};
 
 const DEFAULT_ENCLAVE_PORT: u32 = 1000;
 const DEFAULT_MATCH_THRESHOLD: f32 = 0.9;
@@ -127,7 +127,7 @@ struct ImagePaths {
 
 fn image_paths() -> Result<ImagePaths> {
     let mut args = env::args_os().skip(1);
-    let usage = "usage: enclave-match-e2e <credential-image> <live-image> <challenge-image>";
+    let usage = "usage: e2e <credential-image> <live-image> <challenge-image>";
     let credential = args.next().map(PathBuf::from).context(usage)?;
     let live = args.next().map(PathBuf::from).context(usage)?;
     let challenge = args.next().map(PathBuf::from).context(usage)?;

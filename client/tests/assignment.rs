@@ -6,9 +6,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::Router;
 use axum::http::StatusCode;
 use axum::routing::post;
+use client::nitro::PcrMeasurement;
+use client::{ClientError, Config, FaceVerifierClient};
 use hex_literal::hex;
-use verifier_client::nitro::PcrMeasurement;
-use verifier_client::{ClientError, Config, FaceVerifierClient};
 
 const REAL_ATTESTATION_DOC_BASE64: &str =
     include_str!("../src/nitro/testdata/real_attestation_doc.b64");

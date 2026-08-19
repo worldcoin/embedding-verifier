@@ -6,7 +6,7 @@ on:
   pull_request:
     paths:
       - "host/**"
-      - "shared/**"
+      - "enclave-types/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
