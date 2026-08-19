@@ -304,6 +304,11 @@ impl EnclaveAttestationVerifier {
         let expected_pcr_length = expected_pcr_length(attestation.digest);
 
         for allowed_pcr_measurements in &self.allowed_pcr_configs {
+            // `all()` is vacuously true over an empty set, which would accept any enclave.
+            if allowed_pcr_measurements.is_empty() {
+                continue;
+            }
+
             let all_match = allowed_pcr_measurements.iter().all(|measurement| {
                 attestation
                     .pcrs

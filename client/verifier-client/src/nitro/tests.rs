@@ -265,3 +265,20 @@ fn pins_the_aws_nitro_root_certificate() {
         "the vendored trust anchor must be the certificate AWS publishes"
     );
 }
+
+#[test]
+fn rejects_an_empty_configuration_rather_than_matching_it_vacuously() {
+    // An empty set of measurements pins nothing, so `all()` over it is vacuously true.
+    // Sitting beside a real config it must not become a blanket accept.
+    // Paired with a config that does NOT match, so accepting can only come from the empty one.
+    let configs = vec![Vec::new(), vec![PcrMeasurement::new(0, [0xabu8; 48])]];
+
+    let error = EnclaveAttestationVerifier::new(configs, GENEROUS_MAX_AGE_MILLIS)
+        .verify(&real_document(), fixture_instant())
+        .expect_err("an empty configuration must never match");
+
+    assert!(
+        matches!(error, EnclaveAttestationError::CodeUntrusted(_)),
+        "unexpected error: {error}"
+    );
+}

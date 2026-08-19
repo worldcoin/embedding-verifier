@@ -123,10 +123,15 @@ impl Config {
 
     /// Rejects configurations that would verify nothing.
     fn validate(&self) -> Result<(), ConfigError> {
-        if self.allowed_pcr_configs.iter().all(Vec::is_empty) {
+        // An empty set pins nothing and would match every enclave, so reject it even when
+        // other configurations sit beside it.
+        if self.allowed_pcr_configs.is_empty() || self.allowed_pcr_configs.iter().any(Vec::is_empty)
+        {
             return Err(ConfigError::InvalidInput {
                 attribute: "allowed_pcr_configs".to_string(),
-                reason: "no measurements pinned, which would accept any Nitro enclave".to_string(),
+                reason: "every configuration must pin at least one measurement, otherwise it \
+                         would accept any Nitro enclave"
+                    .to_string(),
             });
         }
 
