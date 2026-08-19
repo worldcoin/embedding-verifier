@@ -4,7 +4,7 @@ use anyhow::{Context, anyhow};
 use enclave::{
     attestation::{self, NsmAttestor},
     face_engine::FaceEngine,
-    pontifex_server, rng,
+    rng, server,
     state::EnclaveState,
 };
 use pontifex::SecureModule;
@@ -40,10 +40,8 @@ async fn main() -> anyhow::Result<()> {
 
     info!(port = PONTIFEX_PORT, "starting enclave Pontifex server");
 
-    pontifex_server::start(state, PONTIFEX_PORT)
-        .await
-        .map_err(|error| {
-            error!(%error, "enclave Pontifex server stopped");
-            error
-        })
+    server::start(state, PONTIFEX_PORT).await.map_err(|error| {
+        error!(%error, "enclave Pontifex server stopped");
+        error
+    })
 }

@@ -16,10 +16,12 @@ pub mod face_engine;
 pub mod keys;
 /// PCP binding verification (transport-free).
 pub mod pcp;
-/// Pontifex operations exposed to the host.
-pub mod pontifex_server;
 /// Nitro hardware RNG verification.
 pub mod rng;
+/// Pontifex operations exposed to the host.
+pub mod routes;
+/// Pontifex server setup and lifecycle.
+pub mod server;
 /// Boot-scoped enclave state.
 pub mod state;
 #[cfg(test)]
