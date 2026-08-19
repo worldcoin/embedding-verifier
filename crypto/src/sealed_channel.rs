@@ -11,19 +11,7 @@
 //!
 //! # Relationship to RFC 9458 §4.4
 //!
-//! Followed as written — the exported secret length, the fresh `response_nonce`, the
-//! `enc || response_nonce` salt, the `Extract`/`Expand` labels, the empty `aad` of step 6, and the
-//! `response_nonce || ciphertext` wire layout.
-//!
-//! The empty `aad` is worth stating explicitly, because binding the cleartext outcome class as AAD
-//! is a tempting alternative. It would be a mistake: our untrusted host sits exactly where OHTTP's
-//! Oblivious Relay sits, so the RFC already chose this construction against this threat model. The
-//! authoritative outcome travels *inside* the ciphertext, so a host that rewrites the cleartext
-//! class is caught by comparing the two — whereas AAD binding would turn that same rewrite into an
-//! unopenable response, trading a detectable lie for denial of service against an adversary who can
-//! deny service anyway.
-//!
-//! The one substitution is [`RESPONSE_EXPORTER_LABEL`] in place of `"message/bhttp response"`.
+//! Followed as written. The one substitution is [`RESPONSE_EXPORTER_LABEL`] in place of `"message/bhttp response"`.
 //! §4.4 step 1 points at §4.6, *Repurposing the Encapsulation Format*, for alternative message
 //! formats, and §6.4, *Key Management*, adds that the label was chosen for symmetry only and that
 //! designers reusing the format should pick a different one for key diversity. We carry no BHTTP,
@@ -48,11 +36,6 @@ type Kem = hpke::kem::X25519HkdfSha256;
 /// HKDF-SHA256 — RFC 9180 §7.2.
 type Kdf = hpke::kdf::HkdfSha256;
 /// AES-256-GCM — RFC 9180 §7.3, AEAD id `0x0002`.
-///
-/// Chosen for uniformity, not strength: 128-bit would already be beyond brute force for a
-/// single-use per-request key, and the confidentiality ceiling here is X25519, which a larger
-/// AEAD key does nothing for. What it buys is one AEAD and one key length across the channel,
-/// the response half, and challenge images — whose format the RP fixes at AES-256-GCM.
 type ChannelAead = hpke::aead::AesGcm256;
 
 /// Version of the match channel's wire contract.
@@ -67,11 +50,7 @@ pub const ENCRYPTION_KEY_LEN: usize = 32;
 /// Domain-separation prefix for the channel's HPKE `info`.
 const CHANNEL_INFO_DOMAIN: &[u8] = b"embedding-verifier/match";
 
-/// Exporter context for the response secret — RFC 9458 §4.4 step 1.
-///
-/// Substituted for the RFC's `"message/bhttp response"` under §4.6 and §6.4, which direct anyone
-/// reusing the format to choose their own label for key diversity. Changing this value changes the
-/// response key, so it is part of the wire contract and moves only with [`CHANNEL_VERSION`].
+/// Exporter context for the response secret — RFC 9458 §4.4 step 1. Substituted for the RFC's `"message/bhttp response"` under §4.6 and §6.4
 const RESPONSE_EXPORTER_LABEL: &[u8] = b"embedding-verifier/match response";
 
 /// `Expand` info for the response AEAD key — RFC 9458 §4.4 step 4.
@@ -148,11 +127,6 @@ fn channel_info(version: u8, encryption_public_key: &[u8; ENCRYPTION_KEY_LEN]) -
 type ResponseSecret = Zeroizing<[u8; RESPONSE_NONCE_LEN]>;
 
 /// Derives the response AEAD from the exported secret — RFC 9458 §4.4 steps 3 to 5.
-///
-/// Step 3 extracts `prk` with `ikm = secret` and `salt = enc || response_nonce`; steps 4 and 5
-/// expand it under [`INFO_KEY`] and [`INFO_NONCE`]. Mixing a fresh `response_nonce` in is what
-/// gives every response a unique key and nonce — the property §6.5, *Replay Attacks*, relies on
-/// to stay sound even when a request is replayed.
 fn derive_response_aead(
     secret: &ResponseSecret,
     encapsulated_key: &[u8; ENCAPSULATED_KEY_LEN],
@@ -180,12 +154,12 @@ fn derive_response_aead(
 ///
 /// The public key is what travels in the `public_key` field of the enclave's attestation
 /// document, so a client only ever seals to a key it has verified.
-pub struct ChannelKeypair {
+pub struct EnclaveEndpoint {
     secret_key: <Kem as KemTrait>::PrivateKey,
     public_key: [u8; ENCRYPTION_KEY_LEN],
 }
 
-impl ChannelKeypair {
+impl EnclaveEndpoint {
     /// Generates a fresh keypair from the system RNG.
     ///
     /// Inside an enclave the system RNG is the Nitro hardware RNG, which the boot sequence
@@ -277,12 +251,12 @@ impl ChannelKeypair {
 }
 
 /// The client's side of one channel, held across the request so the response can be opened.
-pub struct RequestChannel {
+pub struct ClientEndpoint {
     context: AeadCtxS<ChannelAead, Kdf, Kem>,
     encapsulated_key: [u8; ENCAPSULATED_KEY_LEN],
 }
 
-impl RequestChannel {
+impl ClientEndpoint {
     /// Runs `SetupBaseS` against an enclave's attested encryption key and seals `plaintext`.
     ///
     /// Returns the channel plus the wire body, which is `enc || ciphertext`.
@@ -414,13 +388,13 @@ impl ResponseSealer {
 #[cfg(test)]
 mod tests {
     use super::{
-        AEAD_TAG_LEN, CHANNEL_INFO_DOMAIN, CHANNEL_VERSION, ChannelError, ChannelKeypair,
-        ENCAPSULATED_KEY_LEN, RESPONSE_NONCE_LEN, RequestChannel, channel_info,
+        AEAD_TAG_LEN, CHANNEL_INFO_DOMAIN, CHANNEL_VERSION, ChannelError, ClientEndpoint,
+        ENCAPSULATED_KEY_LEN, EnclaveEndpoint, RESPONSE_NONCE_LEN, channel_info,
     };
 
     /// Seals `plaintext` to `keypair` and returns the client channel plus the wire body.
-    fn sealed_to(keypair: &ChannelKeypair, plaintext: &[u8]) -> (RequestChannel, Vec<u8>) {
-        RequestChannel::seal(&keypair.public_key(), plaintext).expect("sealing should succeed")
+    fn sealed_to(keypair: &EnclaveEndpoint, plaintext: &[u8]) -> (ClientEndpoint, Vec<u8>) {
+        ClientEndpoint::seal(&keypair.public_key(), plaintext).expect("sealing should succeed")
     }
 
     #[test]
@@ -445,21 +419,21 @@ mod tests {
     #[test]
     fn separate_keypairs_receive_separate_public_keys() {
         assert_ne!(
-            ChannelKeypair::generate().public_key(),
-            ChannelKeypair::generate().public_key()
+            EnclaveEndpoint::generate().public_key(),
+            EnclaveEndpoint::generate().public_key()
         );
     }
 
     #[test]
     fn public_key_is_stable_for_one_keypair() {
-        let keypair = ChannelKeypair::generate();
+        let keypair = EnclaveEndpoint::generate();
 
         assert_eq!(keypair.public_key(), keypair.public_key());
     }
 
     #[test]
     fn round_trips_a_request_and_its_sealed_response() {
-        let keypair = ChannelKeypair::generate();
+        let keypair = EnclaveEndpoint::generate();
         let (client, body) = sealed_to(&keypair, b"match inputs");
 
         let (plaintext, sealer) = keypair
@@ -479,7 +453,7 @@ mod tests {
     fn each_response_draws_a_fresh_nonce() {
         // The property §4.4 relies on: two responses derived from the *same* context still get
         // distinct AEAD keys and nonces, so a replayed request cannot force nonce reuse.
-        let keypair = ChannelKeypair::generate();
+        let keypair = EnclaveEndpoint::generate();
         let (client, body) = sealed_to(&keypair, b"match inputs");
 
         let (_, first_sealer) = keypair.open_request(&body).expect("should open");
@@ -506,8 +480,8 @@ mod tests {
 
     #[test]
     fn rejects_a_request_sealed_to_another_boot() {
-        let keypair = ChannelKeypair::generate();
-        let other = ChannelKeypair::generate();
+        let keypair = EnclaveEndpoint::generate();
+        let other = EnclaveEndpoint::generate();
         let (_, body) = sealed_to(&other, b"match inputs");
 
         assert_eq!(
@@ -518,10 +492,10 @@ mod tests {
 
     #[test]
     fn rejects_a_request_bound_to_another_channel_version() {
-        let keypair = ChannelKeypair::generate();
+        let keypair = EnclaveEndpoint::generate();
         let public_key = keypair.public_key();
         let (_, body) =
-            RequestChannel::seal_with_version(&public_key, CHANNEL_VERSION + 1, b"match inputs")
+            ClientEndpoint::seal_with_version(&public_key, CHANNEL_VERSION + 1, b"match inputs")
                 .expect("sealing should succeed");
 
         assert_eq!(
@@ -533,7 +507,7 @@ mod tests {
     #[test]
     fn rejects_a_low_order_encapsulated_key() {
         // RFC 9180 §7.1.4: an all-zero X25519 shared secret must abort.
-        let keypair = ChannelKeypair::generate();
+        let keypair = EnclaveEndpoint::generate();
         let (_, mut body) = sealed_to(&keypair, b"match inputs");
         body[..ENCAPSULATED_KEY_LEN].fill(0);
 
@@ -545,7 +519,7 @@ mod tests {
 
     #[test]
     fn rejects_a_truncated_request_body() {
-        let keypair = ChannelKeypair::generate();
+        let keypair = EnclaveEndpoint::generate();
 
         for length in [0, ENCAPSULATED_KEY_LEN, ENCAPSULATED_KEY_LEN + AEAD_TAG_LEN] {
             assert_eq!(
@@ -558,7 +532,7 @@ mod tests {
 
     #[test]
     fn rejects_a_tampered_request_ciphertext() {
-        let keypair = ChannelKeypair::generate();
+        let keypair = EnclaveEndpoint::generate();
         let (_, mut body) = sealed_to(&keypair, b"match inputs");
         body[ENCAPSULATED_KEY_LEN] ^= 0x01;
 
@@ -570,7 +544,7 @@ mod tests {
 
     #[test]
     fn rejects_a_truncated_response() {
-        let keypair = ChannelKeypair::generate();
+        let keypair = EnclaveEndpoint::generate();
         let (client, _) = sealed_to(&keypair, b"match inputs");
 
         for length in [0, RESPONSE_NONCE_LEN, RESPONSE_NONCE_LEN + AEAD_TAG_LEN] {
@@ -584,7 +558,7 @@ mod tests {
 
     #[test]
     fn a_second_channel_to_the_same_key_cannot_open_the_response() {
-        let keypair = ChannelKeypair::generate();
+        let keypair = EnclaveEndpoint::generate();
         let (_, body) = sealed_to(&keypair, b"match inputs");
         // A second setup against the same key: a different ephemeral, so a different exporter
         // secret.
@@ -601,7 +575,7 @@ mod tests {
 
     #[test]
     fn rejects_a_tampered_response_ciphertext() {
-        let keypair = ChannelKeypair::generate();
+        let keypair = EnclaveEndpoint::generate();
         let (client, body) = sealed_to(&keypair, b"match inputs");
         let (_, sealer) = keypair.open_request(&body).expect("should open");
 
@@ -618,7 +592,7 @@ mod tests {
     fn rejects_a_tampered_response_nonce() {
         // The nonce is cleartext on the wire, but it is folded into the salt, so flipping it
         // changes the derived key and the open fails.
-        let keypair = ChannelKeypair::generate();
+        let keypair = EnclaveEndpoint::generate();
         let (client, body) = sealed_to(&keypair, b"match inputs");
         let (_, sealer) = keypair.open_request(&body).expect("should open");
 
@@ -634,7 +608,7 @@ mod tests {
     #[test]
     fn rejects_an_invalid_encryption_key() {
         // An all-zero X25519 public key has no valid shared secret.
-        let result = RequestChannel::seal(&[0u8; 32], b"match inputs");
+        let result = ClientEndpoint::seal(&[0u8; 32], b"match inputs");
 
         assert_eq!(result.err(), Some(ChannelError::InvalidEncryptionKey));
     }

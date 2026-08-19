@@ -9,7 +9,7 @@
 //! Anything added here inherits that boundary. If the host ever needs it, it belongs in
 //! `enclave-types` instead.
 //!
-//! - [`channel`] — the HPKE sealed channel carrying match inputs and outcomes.
+//! - [`sealed_channel`] — the HPKE sealed channel carrying match inputs and outcomes.
 //!
 //! Match statement signing lands beside it next.
 
@@ -21,4 +21,4 @@
     dead_code
 )]
 
-pub mod channel;
+pub mod sealed_channel;
