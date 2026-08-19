@@ -29,26 +29,14 @@ RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
 
 FROM python:3.12.11-slim-bookworm AS model-downloader
 
-ARG SKIP_MODEL_DOWNLOAD=false
-
 WORKDIR /build
 COPY scripts/download-face-models.py scripts/download-face-models.py
 
-RUN if [ "$SKIP_MODEL_DOWNLOAD" = "true" ]; then \
-      mkdir -p /models; \
-    else \
-      python3 -m pip install --no-cache-dir huggingface-hub==0.34.4; \
-    fi
+RUN python3 -m pip install --no-cache-dir huggingface-hub==0.34.4
 
-RUN --mount=type=secret,id=HUGGING_FACE_TOKEN \
-    if [ "$SKIP_MODEL_DOWNLOAD" = "true" ]; then \
-      echo "Skipping model download"; \
-    else \
-      test -s /run/secrets/HUGGING_FACE_TOKEN || \
-        { echo "HUGGING_FACE_TOKEN BuildKit secret is required" >&2; exit 1; }; \
-      HUGGING_FACE_TOKEN="$(cat /run/secrets/HUGGING_FACE_TOKEN)" \
-        python3 scripts/download-face-models.py --output /models; \
-    fi
+RUN --mount=type=secret,id=HUGGING_FACE_TOKEN,required=true \
+    HUGGING_FACE_TOKEN="$(cat /run/secrets/HUGGING_FACE_TOKEN)" \
+      python3 scripts/download-face-models.py --output /models
 
 FROM debian:bookworm-slim
 

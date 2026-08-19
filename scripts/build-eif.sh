@@ -9,7 +9,6 @@ set -euo pipefail
 #        (output-dir defaults to target/eif)
 # Outputs: embedding-verifier-enclave.eif, pcrs.json
 # Env: NITRO_CLI_VERSION (default v1.4.2), ENCLAVE_IMAGE_TAG,
-#      SKIP_MODEL_DOWNLOAD (default false),
 #      GIT_HUB_TOKEN (read access to private GitHub dependencies),
 #      HUGGING_FACE_TOKEN (read access to private model repositories)
 
@@ -20,7 +19,6 @@ fi
 
 NITRO_CLI_VERSION="${NITRO_CLI_VERSION:-v1.4.2}"
 ENCLAVE_IMAGE_TAG="${ENCLAVE_IMAGE_TAG:-embedding-verifier-enclave:local}"
-SKIP_MODEL_DOWNLOAD="${SKIP_MODEL_DOWNLOAD:-false}"
 
 usage() {
   printf '%s\n' \
@@ -74,18 +72,14 @@ if [[ "$build_image" == "true" ]]; then
     exit 1
   fi
 
-  docker_secrets=(--secret id=GITHUB_TOKEN,env=GIT_HUB_TOKEN)
-  if [[ "$SKIP_MODEL_DOWNLOAD" != "true" ]]; then
-    if [[ -z "${HUGGING_FACE_TOKEN:-}" ]]; then
-      echo "[ERROR] HUGGING_FACE_TOKEN is required to download private models." >&2
-      exit 1
-    fi
-    docker_secrets+=(--secret id=HUGGING_FACE_TOKEN,env=HUGGING_FACE_TOKEN)
+  if [[ -z "${HUGGING_FACE_TOKEN:-}" ]]; then
+    echo "[ERROR] HUGGING_FACE_TOKEN is required to download private models." >&2
+    exit 1
   fi
 
   docker build \
-    "${docker_secrets[@]}" \
-    --build-arg "SKIP_MODEL_DOWNLOAD=$SKIP_MODEL_DOWNLOAD" \
+    --secret id=GITHUB_TOKEN,env=GIT_HUB_TOKEN \
+    --secret id=HUGGING_FACE_TOKEN,env=HUGGING_FACE_TOKEN \
     -t "$ENCLAVE_IMAGE_TAG" \
     -f secure-enclave/Dockerfile \
     .
