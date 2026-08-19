@@ -5,6 +5,8 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 /// Errors that can occur during enclave attestation verification.
 #[derive(Debug, thiserror::Error)]
 pub enum EnclaveAttestationError {
@@ -55,12 +57,13 @@ pub enum EnclaveAttestationError {
 /// Result type for enclave attestation operations.
 pub type EnclaveAttestationResult<T, E = EnclaveAttestationError> = Result<T, E>;
 
-/// One expected PCR measurement.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One expected PCR measurement. Serializes with the value as hex.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PcrMeasurement {
     /// Index of the PCR measurement.
     pub index: u32,
     /// Expected value.
+    #[serde(with = "hex::serde")]
     pub value: Vec<u8>,
 }
 

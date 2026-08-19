@@ -6,7 +6,7 @@ use pontifex::client::ConnectionDetails;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use verifier_client::nitro::EnclaveAttestationVerifier;
-use verifier_client::policy::verifier_from_env;
+use verifier_client::{Client, Config};
 
 const DEFAULT_ENCLAVE_PORT: u32 = 1000;
 const DEFAULT_MATCH_THRESHOLD: f32 = 0.9;
@@ -40,20 +40,23 @@ async fn main() -> Result<()> {
     let match_threshold = optional_f32("MATCH_THRESHOLD", DEFAULT_MATCH_THRESHOLD)?;
     let connection = ConnectionDetails::new(enclave_cid, enclave_port);
 
-    let verifier = verifier_from_env().context(
-        "failed to read the verification policy; on a debug-mode dev enclave set \
-         ALLOW_DEBUG_MEASUREMENTS=true alongside the expected PCRs",
-    )?;
+    let config = load_config()?;
+    let verifier = config.verifier();
 
     let keys_response = pontifex::client::send(connection, &GetEnclaveKeysRequest)
         .await
         .context("failed to call the enclave keys route")?
         .map_err(|error| anyhow!("enclave rejected the enclave-keys request: {error:?}"))?;
-    let encryption_key = attested_public_key(
-        &verifier,
-        &keys_response.encryption_key_attestation,
-        "encryption",
-    )?;
+
+    // Take the encryption key the way a real client does — over HTTP from the host — so this
+    // exercises the assignment route and the client together. The signing key is not part of
+    // an assignment, so it still comes over vsock.
+    let encryption_key = Client::new(config)
+        .context("failed to build the assignment client")?
+        .request_assignment(SystemTime::now())
+        .await
+        .context("enclave assignment did not verify")?
+        .enclave_public_key;
     ensure!(
         encryption_key.len() == 32,
         "attested encryption public key was not 32 bytes"
@@ -106,6 +109,19 @@ async fn main() -> Result<()> {
         response.statement.match_coefficient, match_threshold
     );
     Ok(())
+}
+
+/// Loads the client configuration named by `VERIFIER_CONFIG`.
+///
+/// A JSON file rather than a set of variables, matching how `world-id-protocol` configures an
+/// authenticator. See the README for the schema.
+fn load_config() -> Result<Config> {
+    let path = env::var("VERIFIER_CONFIG")
+        .context("VERIFIER_CONFIG must name a JSON client configuration file")?;
+    let json = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read the client config at {path}"))?;
+
+    Config::from_json(&json).with_context(|| format!("{path} is not a valid client config"))
 }
 
 /// Verifies an attestation document and returns the `public_key` it commits to.

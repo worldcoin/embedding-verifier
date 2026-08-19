@@ -4465,6 +4465,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -4542,10 +4543,11 @@ dependencies = [
  "p384",
  "reqwest",
  "serde",
+ "serde_json",
  "sha2",
  "thiserror 2.0.18",
  "tokio",
- "tracing",
+ "url",
  "webpki",
  "x509-cert",
 ]

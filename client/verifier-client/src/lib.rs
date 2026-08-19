@@ -13,7 +13,8 @@
 )]
 
 pub mod client;
+pub mod config;
 pub mod nitro;
-pub mod policy;
 
-pub use client::{Client, ClientConfig, ClientError};
+pub use client::{Client, ClientError};
+pub use config::{Config, ConfigError};

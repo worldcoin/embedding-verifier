@@ -7,8 +7,8 @@ use axum::Router;
 use axum::http::StatusCode;
 use axum::routing::post;
 use hex_literal::hex;
-use verifier_client::nitro::{EnclaveAttestationVerifier, PcrMeasurement};
-use verifier_client::{Client, ClientConfig, ClientError};
+use verifier_client::nitro::PcrMeasurement;
+use verifier_client::{Client, ClientError, Config};
 
 const REAL_ATTESTATION_DOC_BASE64: &str =
     include_str!("../src/nitro/testdata/real_attestation_doc.b64");
@@ -21,7 +21,7 @@ fn fixture_instant() -> SystemTime {
     UNIX_EPOCH + Duration::from_millis(FIXTURE_TIMESTAMP_MILLIS)
 }
 
-fn verifier() -> EnclaveAttestationVerifier {
+fn config(base_url: &str) -> Config {
     let pcrs = vec![PcrMeasurement::new(
         0,
         hex!(
@@ -30,7 +30,13 @@ fn verifier() -> EnclaveAttestationVerifier {
     )];
 
     // Ten years, so the fixture is never rejected for staleness.
-    EnclaveAttestationVerifier::new(vec![pcrs], 10 * 365 * 24 * 60 * 60 * 1000)
+    Config::new(
+        base_url,
+        vec![pcrs],
+        Duration::from_secs(10 * 365 * 24 * 60 * 60),
+        false,
+    )
+    .expect("config should be valid")
 }
 
 /// Serves `router` on an ephemeral port and returns its base URL.
@@ -76,7 +82,7 @@ async fn fetches_and_verifies_an_assignment_over_http() {
     );
     let base_url = serve_assignment(body).await;
 
-    let verified = Client::new(ClientConfig::new(&base_url), verifier())
+    let verified = Client::new(config(&base_url))
         .expect("client should build")
         .request_assignment(fixture_instant())
         .await
@@ -92,7 +98,7 @@ async fn rejects_an_assignment_whose_attestation_does_not_verify() {
     // A syntactically fine response carrying a document signed by nobody.
     let base_url = serve_assignment(r#"{"attestation":"hEBAQEA="}"#).await;
 
-    let error = Client::new(ClientConfig::new(&base_url), verifier())
+    let error = Client::new(config(&base_url))
         .expect("client should build")
         .request_assignment(fixture_instant())
         .await
@@ -112,7 +118,7 @@ async fn surfaces_a_host_error_status_rather_than_retrying() {
     ))
     .await;
 
-    let error = Client::new(ClientConfig::new(&base_url), verifier())
+    let error = Client::new(config(&base_url))
         .expect("client should build")
         .request_assignment(fixture_instant())
         .await
