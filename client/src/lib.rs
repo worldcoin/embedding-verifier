@@ -1,8 +1,8 @@
 //! Client for the embedding verifier's enclave-assignment flow.
 //!
 //! Fetches an assignment, verifies the AWS Nitro attestation document it carries, and yields
-//! the enclave's encryption public key. The host is untrusted, so the enclave's identity,
-//! measurements and public key are all read from the signed document.
+//! a [`Requester`] for sealing requests to the enclave. The host is untrusted, so
+//! the enclave's identity, measurements and public key are all read from the signed document.
 
 #![deny(
     clippy::all,
@@ -17,5 +17,6 @@ mod config;
 
 pub mod nitro;
 
-pub use client::{ClientError, FaceVerifierClient};
+pub use client::{ClientError, FaceVerifierClient, VerifiedAssignment};
 pub use config::{Config, ConfigError};
+pub use crypto::sealed_channel::Requester;

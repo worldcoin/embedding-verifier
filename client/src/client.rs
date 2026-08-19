@@ -4,6 +4,8 @@ use std::time::SystemTime;
 
 use serde::Deserialize;
 
+use crypto::sealed_channel::Requester;
+
 use crate::config::Config;
 use crate::nitro::{EnclaveAttestationError, EnclaveAttestationVerifier, VerifiedAttestation};
 
@@ -32,12 +34,25 @@ pub enum ClientError {
     /// An attestation document did not verify.
     #[error(transparent)]
     Attestation(#[from] EnclaveAttestationError),
+
+    /// The attested encryption public key was absent or not exactly 32 bytes.
+    #[error("attested encryption public key was invalid")]
+    InvalidEncryptionKey,
 }
 
 /// The host's assignment response.
 #[derive(Debug, Deserialize)]
 struct EnclaveAssignmentResponse {
     attestation: String,
+}
+
+/// An assignment whose attestation verified and whose encryption key is ready for sealing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedAssignment {
+    /// Metadata read from the signed attestation document.
+    pub attestation: VerifiedAttestation,
+    /// The verified requester handle for sealing to this enclave boot.
+    pub requester: Requester,
 }
 
 /// Calls the face verifier host and verifies the attestation documents it relays.
@@ -83,7 +98,7 @@ impl FaceVerifierClient {
     pub async fn request_assignment(
         &self,
         now: SystemTime,
-    ) -> Result<VerifiedAttestation, ClientError> {
+    ) -> Result<VerifiedAssignment, ClientError> {
         let url = format!(
             "{}{ASSIGNMENT_PATH}",
             self.config.host_url().as_str().trim_end_matches('/')
@@ -105,8 +120,15 @@ impl FaceVerifierClient {
             .await
             .map_err(ClientError::MalformedResponse)?;
 
-        Ok(self
+        let attestation = self
             .verifier
-            .verify_base64(assignment.attestation.trim(), now)?)
+            .verify_base64(assignment.attestation.trim(), now)?;
+        let requester = Requester::from_attestation(&attestation.enclave_public_key)
+            .map_err(|_| ClientError::InvalidEncryptionKey)?;
+
+        Ok(VerifiedAssignment {
+            attestation,
+            requester,
+        })
     }
 }

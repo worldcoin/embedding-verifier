@@ -22,11 +22,12 @@ use aes_gcm::{
     aead::{Aead, Nonce},
 };
 use hkdf::Hkdf;
+use hpke::rand_core::CryptoRng;
+pub use hpke::rand_core::UnwrapErr;
 use hpke::{
     Deserializable, Kem as KemTrait, OpModeR, OpModeS, Serializable, aead::AeadCtxS,
-    setup_receiver, setup_sender,
+    setup_receiver, setup_sender_with_rng,
 };
-use rand::{RngCore, rngs::OsRng};
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
@@ -50,7 +51,7 @@ pub const ENCRYPTION_KEY_LEN: usize = 32;
 /// Domain-separation prefix for the channel's HPKE `info`.
 const CHANNEL_INFO_DOMAIN: &[u8] = b"embedding-verifier/match";
 
-/// Exporter context for the response secret — RFC 9458 §4.4 step 1. Substituted for the RFC's `"message/bhttp response"` under §4.6 and §6.4
+/// Exporter context for the response secret — RFC 9458 §4.4 step 1. Substituted for the RFC's `"message/bhttp response"` under §4.6 and §4.4
 const RESPONSE_EXPORTER_LABEL: &[u8] = b"embedding-verifier/match response";
 
 /// `Expand` info for the response AEAD key — RFC 9458 §4.4 step 4.
@@ -73,24 +74,16 @@ const AEAD_TAG_LEN: usize = 16;
 
 /// `max(Nn, Nk)`, the length RFC 9458 §4.4 uses for both the exported secret (step 1) and the
 /// `response_nonce` (step 2).
-///
-/// Computed rather than written out so it cannot drift if the suite changes.
 const RESPONSE_NONCE_LEN: usize = if AEAD_NONCE_LEN > AEAD_KEY_LEN {
     AEAD_NONCE_LEN
 } else {
     AEAD_KEY_LEN
 };
 
-// The exported secret is used as HKDF input keying material and the response nonce is the HKDF
-// salt suffix, so both must cover the wider of the two AEAD parameters. Checked at compile time
-// rather than in a test, so changing the suite cannot slip past.
 const _: () = assert!(RESPONSE_NONCE_LEN >= AEAD_KEY_LEN);
 const _: () = assert!(RESPONSE_NONCE_LEN >= AEAD_NONCE_LEN);
 
 /// Why a channel operation did not complete.
-///
-/// Callers facing an untrusted peer are expected to collapse these into one opaque rejection;
-/// the distinctions exist so the enclave log can say which stage failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelError {
     /// A wire body was too short to hold its framing, a tag, and any plaintext.
@@ -110,11 +103,54 @@ pub enum ChannelError {
     SealFailed,
 }
 
-/// Builds the HPKE `info` both parties bind into the key schedule.
-///
-/// Binding the encryption key means a client that sealed to a *different* enclave boot cannot
-/// open a channel at all; binding `version` means a wire-format change fails at setup rather
-/// than producing a garbled plaintext.
+/// A sealed request on the wire: `enc || ciphertext`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SealedRequest(Vec<u8>);
+
+impl SealedRequest {
+    /// Wraps request bytes. Validation happens in [`Responder::open`].
+    #[must_use]
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
+        Self(bytes.into())
+    }
+
+    /// Returns the raw wire bytes.
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl AsRef<[u8]> for SealedRequest {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// A sealed response on the wire: `response_nonce || ciphertext`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SealedResponse(Vec<u8>);
+
+impl SealedResponse {
+    /// Wraps response bytes. Validation happens in [`ResponseOpener::open`].
+    #[must_use]
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
+        Self(bytes.into())
+    }
+
+    /// Returns the raw wire bytes.
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl AsRef<[u8]> for SealedResponse {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 fn channel_info(version: u8, encryption_public_key: &[u8; ENCRYPTION_KEY_LEN]) -> Vec<u8> {
     let mut info = Vec::with_capacity(CHANNEL_INFO_DOMAIN.len() + 1 + encryption_public_key.len());
     info.extend_from_slice(CHANNEL_INFO_DOMAIN);
@@ -123,10 +159,8 @@ fn channel_info(version: u8, encryption_public_key: &[u8; ENCRYPTION_KEY_LEN]) -
     info
 }
 
-/// Response secret exported from a request context — RFC 9458 §4.4 step 1.
 type ResponseSecret = Zeroizing<[u8; RESPONSE_NONCE_LEN]>;
 
-/// Derives the response AEAD from the exported secret — RFC 9458 §4.4 steps 3 to 5.
 fn derive_response_aead(
     secret: &ResponseSecret,
     encapsulated_key: &[u8; ENCAPSULATED_KEY_LEN],
@@ -150,29 +184,21 @@ fn derive_response_aead(
     ))
 }
 
-/// The enclave's side of the channel: a boot-scoped X25519 keypair.
-///
-/// The public key is what travels in the `public_key` field of the enclave's attestation
-/// document, so a client only ever seals to a key it has verified.
-pub struct EnclaveEndpoint {
+/// Responder-side boot keypair. Opens sealed requests and seals responses.
+pub struct Responder {
     secret_key: <Kem as KemTrait>::PrivateKey,
     public_key: [u8; ENCRYPTION_KEY_LEN],
 }
 
-impl EnclaveEndpoint {
-    /// Generates a fresh keypair from the system RNG.
-    ///
-    /// Inside an enclave the system RNG is the Nitro hardware RNG, which the boot sequence
-    /// verifies before this is reached. `hpke` panics rather than returning if the RNG fails,
-    /// which is the correct hard gate for key generation.
+impl Responder {
+    /// Generates a fresh keypair from `rng`.
     ///
     /// # Panics
     ///
-    /// Panics if the KEM produces a public key that is not [`ENCRYPTION_KEY_LEN`] bytes, which
-    /// the DHKEM(X25519, HKDF-SHA256) definition makes impossible.
+    /// Panics if the KEM produces a public key that is not [`ENCRYPTION_KEY_LEN`] bytes.
     #[must_use]
-    pub fn generate() -> Self {
-        let (secret_key, public_key) = Kem::gen_keypair();
+    pub fn generate(rng: &mut impl CryptoRng) -> Self {
+        let (secret_key, public_key) = Kem::gen_keypair_with_rng(rng);
         let public_key = public_key
             .to_bytes()
             .as_slice()
@@ -185,30 +211,23 @@ impl EnclaveEndpoint {
         }
     }
 
-    /// Returns the public key clients seal to for this boot.
+    /// Returns the public key requesters seal to for this boot.
     #[must_use]
     pub const fn public_key(&self) -> [u8; ENCRYPTION_KEY_LEN] {
         self.public_key
     }
 
-    /// Opens a request sealed to this boot's public key.
-    ///
-    /// Splits the wire body into the fixed-width encapsulated key and the ciphertext, runs
-    /// `SetupBaseR` (RFC 9180 §5.1.1), and opens. Base mode means the sender is anonymous by
-    /// design: callers are not pre-registered, and provenance is enforced downstream.
-    ///
-    /// Returns the plaintext together with a [`ResponseSealer`] carrying the secret exported
-    /// from the *same* context, which is what makes the reply readable only by this request's
-    /// sender.
+    /// Opens a sealed request and returns the plaintext plus a [`ResponseSealer`] for the reply.
     ///
     /// # Errors
     ///
-    /// Returns [`ChannelError`] if the body is too short, the encapsulated key is unusable, the
-    /// ciphertext fails authentication, or the response secret cannot be exported. No plaintext,
-    /// ciphertext, or key material is surfaced in the error.
-    pub fn open_request(&self, body: &[u8]) -> Result<(Vec<u8>, ResponseSealer), ChannelError> {
-        // A well-formed body carries an encapsulated key, at least one plaintext byte, and a
-        // tag, so anything at or below the fixed overhead cannot be valid.
+    /// Returns [`ChannelError`] if the request is too short, the encapsulated key is unusable, the
+    /// ciphertext fails authentication, or the response secret cannot be exported.
+    pub fn open(
+        &self,
+        request: &SealedRequest,
+    ) -> Result<(Zeroizing<Vec<u8>>, ResponseSealer), ChannelError> {
+        let body = request.as_ref();
         if body.len() <= ENCAPSULATED_KEY_LEN + AEAD_TAG_LEN {
             return Err(ChannelError::Truncated);
         }
@@ -229,8 +248,6 @@ impl EnclaveEndpoint {
         )
         .map_err(|_| ChannelError::InvalidEncapsulatedKey)?;
 
-        // Nothing outside the ciphertext needs binding as AAD: `enc` is already folded into the
-        // key schedule by the KEM, and the request carries no other cleartext field.
         let plaintext = context
             .open(ciphertext, &[])
             .map_err(|_| ChannelError::OpenFailed)?;
@@ -241,7 +258,7 @@ impl EnclaveEndpoint {
             .map_err(|_| ChannelError::ExportFailed)?;
 
         Ok((
-            plaintext,
+            Zeroizing::new(plaintext),
             ResponseSealer {
                 secret,
                 encapsulated_key,
@@ -250,41 +267,68 @@ impl EnclaveEndpoint {
     }
 }
 
-/// The client's side of one channel, held across the request so the response can be opened.
-pub struct ClientEndpoint {
-    context: AeadCtxS<ChannelAead, Kdf, Kem>,
-    encapsulated_key: [u8; ENCAPSULATED_KEY_LEN],
+/// Requester-side handle built from a verified encryption public key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Requester {
+    public_key: [u8; ENCRYPTION_KEY_LEN],
 }
 
-impl ClientEndpoint {
-    /// Runs `SetupBaseS` against an enclave's attested encryption key and seals `plaintext`.
-    ///
-    /// Returns the channel plus the wire body, which is `enc || ciphertext`.
+impl Requester {
+    /// Builds a requester from an attested encryption public key.
     ///
     /// # Errors
     ///
-    /// Returns [`ChannelError`] if the key is not a valid X25519 point or the AEAD refuses to
-    /// seal.
-    pub fn seal(
-        encryption_public_key: &[u8; ENCRYPTION_KEY_LEN],
-        plaintext: &[u8],
-    ) -> Result<(Self, Vec<u8>), ChannelError> {
-        Self::seal_with_version(encryption_public_key, CHANNEL_VERSION, plaintext)
+    /// Returns [`ChannelError::InvalidEncryptionKey`] if `public_key` is not a valid X25519 point.
+    pub fn new(public_key: [u8; ENCRYPTION_KEY_LEN]) -> Result<Self, ChannelError> {
+        <Kem as KemTrait>::PublicKey::from_bytes(&public_key)
+            .map_err(|_| ChannelError::InvalidEncryptionKey)?;
+        Ok(Self { public_key })
     }
 
-    /// As [`Self::seal`], but with a caller-chosen version so tests can prove the `info`
-    /// binding actually bites.
+    /// Builds a requester from attestation document bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChannelError::InvalidEncryptionKey`] if `public_key` is not exactly
+    /// [`ENCRYPTION_KEY_LEN`] bytes or not a valid X25519 point.
+    pub fn from_attestation(public_key: &[u8]) -> Result<Self, ChannelError> {
+        let public_key: [u8; ENCRYPTION_KEY_LEN] = public_key
+            .try_into()
+            .map_err(|_| ChannelError::InvalidEncryptionKey)?;
+        Self::new(public_key)
+    }
+
+    /// Returns the raw X25519 public key.
+    #[must_use]
+    pub const fn public_key(&self) -> [u8; ENCRYPTION_KEY_LEN] {
+        self.public_key
+    }
+
+    /// Seals one request, returning the wire body and a [`ResponseOpener`] for the reply.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChannelError`] if the AEAD refuses to seal.
+    pub fn seal(
+        &self,
+        plaintext: &[u8],
+        rng: &mut impl CryptoRng,
+    ) -> Result<(SealedRequest, ResponseOpener), ChannelError> {
+        self.seal_with_version(CHANNEL_VERSION, plaintext, rng)
+    }
+
     fn seal_with_version(
-        encryption_public_key: &[u8; ENCRYPTION_KEY_LEN],
+        &self,
         version: u8,
         plaintext: &[u8],
-    ) -> Result<(Self, Vec<u8>), ChannelError> {
-        let public_key = <Kem as KemTrait>::PublicKey::from_bytes(encryption_public_key)
+        rng: &mut impl CryptoRng,
+    ) -> Result<(SealedRequest, ResponseOpener), ChannelError> {
+        let public_key = <Kem as KemTrait>::PublicKey::from_bytes(&self.public_key)
             .map_err(|_| ChannelError::InvalidEncryptionKey)?;
 
-        let info = channel_info(version, encryption_public_key);
+        let info = channel_info(version, &self.public_key);
         let (encapped, mut context) =
-            setup_sender::<ChannelAead, Kdf, Kem>(&OpModeS::Base, &public_key, &info)
+            setup_sender_with_rng::<ChannelAead, Kdf, Kem>(&OpModeS::Base, &public_key, &info, rng)
                 .map_err(|_| ChannelError::InvalidEncryptionKey)?;
 
         let ciphertext = context
@@ -301,25 +345,30 @@ impl ClientEndpoint {
         body.extend_from_slice(&ciphertext);
 
         Ok((
-            Self {
+            SealedRequest(body),
+            ResponseOpener {
                 context,
                 encapsulated_key,
             },
-            body,
         ))
     }
+}
 
-    /// Opens a response sealed to this channel.
-    ///
-    /// Parses `response_nonce || ciphertext` and re-derives the AEAD the enclave used, per
-    /// RFC 9458 §4.4's client-side procedure.
+/// Opens the response belonging to one [`Requester::seal`] call.
+pub struct ResponseOpener {
+    context: AeadCtxS<ChannelAead, Kdf, Kem>,
+    encapsulated_key: [u8; ENCAPSULATED_KEY_LEN],
+}
+
+impl ResponseOpener {
+    /// Opens a sealed response.
     ///
     /// # Errors
     ///
     /// Returns [`ChannelError`] if the response is too short, the secret cannot be exported or
-    /// expanded, or the ciphertext fails authentication under the derived key — which is also
-    /// what a tampered `response_nonce` looks like.
-    pub fn open_response(&self, sealed: &[u8]) -> Result<Vec<u8>, ChannelError> {
+    /// expanded, or the ciphertext fails authentication.
+    pub fn open(&self, response: &SealedResponse) -> Result<Zeroizing<Vec<u8>>, ChannelError> {
+        let sealed = response.as_ref();
         if sealed.len() <= RESPONSE_NONCE_LEN + AEAD_TAG_LEN {
             return Err(ChannelError::Truncated);
         }
@@ -336,39 +385,34 @@ impl ClientEndpoint {
         let (cipher, nonce) =
             derive_response_aead(&secret, &self.encapsulated_key, &response_nonce)?;
 
-        // Step 6's `aad` is empty; `&[u8]` converts to a `Payload` with no associated data.
-        cipher
+        let plaintext = cipher
             .decrypt(&nonce, ciphertext)
-            .map_err(|_| ChannelError::OpenFailed)
+            .map_err(|_| ChannelError::OpenFailed)?;
+
+        Ok(Zeroizing::new(plaintext))
     }
 }
 
-/// Seals the one response belonging to a request, per RFC 9458 §4.4.
+/// Seals the one response belonging to a [`Responder::open`] call.
 pub struct ResponseSealer {
     secret: ResponseSecret,
     encapsulated_key: [u8; ENCAPSULATED_KEY_LEN],
 }
 
 impl ResponseSealer {
-    /// Seals `plaintext`, returning `response_nonce || ciphertext`.
-    ///
-    /// Follows RFC 9458 §4.4 steps 2 to 7: a fresh `response_nonce` is drawn per response and
-    /// mixed into the key schedule, so the AEAD key and nonce are unique per response rather
-    /// than fixed for the lifetime of the context. `aad` is empty, per step 6.
-    ///
-    /// Consumes `self` because the protocol has exactly one response per request. Unlike a
-    /// construction that exported the nonce directly, this is a protocol constraint and not a
-    /// nonce-reuse guard — the fresh nonce of step 2 makes a second seal safe on its own, which
-    /// is what §6.5 depends on.
+    /// Seals one response, per RFC 9458 §4.4.
     ///
     /// # Errors
     ///
     /// Returns [`ChannelError`] if the key or nonce cannot be expanded, or the AEAD refuses to
-    /// seal — which a well-formed key, nonce, and in-memory plaintext make unreachable.
-    pub fn seal(self, plaintext: &[u8]) -> Result<Vec<u8>, ChannelError> {
-        // Step 2. Inside the enclave this is the Nitro hardware RNG.
+    /// seal.
+    pub fn seal(
+        self,
+        plaintext: &[u8],
+        rng: &mut impl CryptoRng,
+    ) -> Result<SealedResponse, ChannelError> {
         let mut response_nonce = [0u8; RESPONSE_NONCE_LEN];
-        OsRng.fill_bytes(&mut response_nonce);
+        rng.fill_bytes(&mut response_nonce);
 
         let (cipher, nonce) =
             derive_response_aead(&self.secret, &self.encapsulated_key, &response_nonce)?;
@@ -377,32 +421,58 @@ impl ResponseSealer {
             .encrypt(&nonce, plaintext)
             .map_err(|_| ChannelError::SealFailed)?;
 
-        // Step 7. `response_nonce` is fixed-length, so parsing is unambiguous.
         let mut sealed = response_nonce.to_vec();
         sealed.extend_from_slice(&ciphertext);
 
-        Ok(sealed)
+        Ok(SealedResponse(sealed))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use getrandom::SysRng;
+    use hpke::rand_core::UnwrapErr;
+
     use super::{
-        AEAD_TAG_LEN, CHANNEL_INFO_DOMAIN, CHANNEL_VERSION, ChannelError, ClientEndpoint,
-        ENCAPSULATED_KEY_LEN, EnclaveEndpoint, RESPONSE_NONCE_LEN, channel_info,
+        AEAD_TAG_LEN, CHANNEL_INFO_DOMAIN, CHANNEL_VERSION, ChannelError, ENCAPSULATED_KEY_LEN,
+        RESPONSE_NONCE_LEN, Requester, Responder, ResponseOpener, SealedRequest, SealedResponse,
+        channel_info,
     };
 
-    /// Seals `plaintext` to `keypair` and returns the client channel plus the wire body.
-    fn sealed_to(keypair: &EnclaveEndpoint, plaintext: &[u8]) -> (ClientEndpoint, Vec<u8>) {
-        ClientEndpoint::seal(&keypair.public_key(), plaintext).expect("sealing should succeed")
+    fn seal_to(responder: &Responder, plaintext: &[u8]) -> (SealedRequest, ResponseOpener) {
+        let requester = Requester::new(responder.public_key()).expect("valid key");
+        let mut rng = UnwrapErr(SysRng);
+        let (request, opener) = requester
+            .seal(plaintext, &mut rng)
+            .expect("sealing should succeed");
+        (request, opener)
+    }
+
+    fn test_rng() -> UnwrapErr<SysRng> {
+        UnwrapErr(SysRng)
+    }
+
+    #[test]
+    fn requester_from_attestation_matches_new() {
+        let responder = Responder::generate(&mut test_rng());
+        let from_attestation =
+            Requester::from_attestation(&responder.public_key()).expect("should parse");
+        let from_new = Requester::new(responder.public_key()).expect("should parse");
+        assert_eq!(from_attestation, from_new);
+    }
+
+    #[test]
+    fn rejects_a_non_32_byte_attestation_key() {
+        assert_eq!(
+            Requester::from_attestation(&[0u8; 31]).err(),
+            Some(ChannelError::InvalidEncryptionKey)
+        );
     }
 
     #[test]
     fn channel_info_binds_domain_version_and_key() {
         let key = [7u8; 32];
-
         let info = channel_info(CHANNEL_VERSION, &key);
-
         let (domain, rest) = info.split_at(CHANNEL_INFO_DOMAIN.len());
         assert_eq!(domain, CHANNEL_INFO_DOMAIN);
         assert_eq!(rest, [&[CHANNEL_VERSION][..], &key[..]].concat());
@@ -411,119 +481,113 @@ mod tests {
     #[test]
     fn channel_info_separates_versions_and_keys() {
         let key = [7u8; 32];
-
         assert_ne!(channel_info(1, &key), channel_info(2, &key));
         assert_ne!(channel_info(1, &key), channel_info(1, &[8u8; 32]));
     }
 
     #[test]
-    fn separate_keypairs_receive_separate_public_keys() {
+    fn separate_responders_receive_separate_public_keys() {
         assert_ne!(
-            EnclaveEndpoint::generate().public_key(),
-            EnclaveEndpoint::generate().public_key()
+            Responder::generate(&mut test_rng()).public_key(),
+            Responder::generate(&mut test_rng()).public_key()
         );
     }
 
     #[test]
-    fn public_key_is_stable_for_one_keypair() {
-        let keypair = EnclaveEndpoint::generate();
-
-        assert_eq!(keypair.public_key(), keypair.public_key());
+    fn public_key_is_stable_for_one_responder() {
+        let responder = Responder::generate(&mut test_rng());
+        assert_eq!(responder.public_key(), responder.public_key());
     }
 
     #[test]
     fn round_trips_a_request_and_its_sealed_response() {
-        let keypair = EnclaveEndpoint::generate();
-        let (client, body) = sealed_to(&keypair, b"match inputs");
+        let responder = Responder::generate(&mut test_rng());
+        let (request, opener) = seal_to(&responder, b"match inputs");
 
-        let (plaintext, sealer) = keypair
-            .open_request(&body)
-            .expect("a well-formed request should open");
-        assert_eq!(plaintext, b"match inputs");
+        let (plaintext, sealer) = responder.open(&request).expect("should open");
+        assert_eq!(&plaintext[..], b"match inputs");
 
-        let response = sealer.seal(b"statement").expect("sealing should succeed");
+        let response = sealer
+            .seal(b"statement", &mut test_rng())
+            .expect("sealing should succeed");
 
-        assert_eq!(
-            client.open_response(&response).as_deref(),
-            Ok(&b"statement"[..])
-        );
+        assert_eq!(&*opener.open(&response).unwrap(), b"statement".as_ref());
     }
 
     #[test]
     fn each_response_draws_a_fresh_nonce() {
-        // The property §4.4 relies on: two responses derived from the *same* context still get
-        // distinct AEAD keys and nonces, so a replayed request cannot force nonce reuse.
-        let keypair = EnclaveEndpoint::generate();
-        let (client, body) = sealed_to(&keypair, b"match inputs");
+        let responder = Responder::generate(&mut test_rng());
+        let (request, opener) = seal_to(&responder, b"match inputs");
 
-        let (_, first_sealer) = keypair.open_request(&body).expect("should open");
-        let (_, second_sealer) = keypair.open_request(&body).expect("should open");
-        let first = first_sealer.seal(b"statement").expect("should seal");
-        let second = second_sealer.seal(b"statement").expect("should seal");
+        let (_, first_sealer) = responder.open(&request).expect("should open");
+        let (_, second_sealer) = responder.open(&request).expect("should open");
+        let first = first_sealer
+            .seal(b"statement", &mut test_rng())
+            .expect("should seal");
+        let second = second_sealer
+            .seal(b"statement", &mut test_rng())
+            .expect("should seal");
 
         assert_ne!(
-            first[..RESPONSE_NONCE_LEN],
-            second[..RESPONSE_NONCE_LEN],
-            "response nonces must not repeat"
+            first.as_ref()[..RESPONSE_NONCE_LEN],
+            second.as_ref()[..RESPONSE_NONCE_LEN],
         );
-        // Both remain openable, and the same plaintext yields different ciphertext.
-        assert_ne!(first[RESPONSE_NONCE_LEN..], second[RESPONSE_NONCE_LEN..]);
-        assert_eq!(
-            client.open_response(&first).as_deref(),
-            Ok(&b"statement"[..])
+        assert_ne!(
+            first.as_ref()[RESPONSE_NONCE_LEN..],
+            second.as_ref()[RESPONSE_NONCE_LEN..],
         );
-        assert_eq!(
-            client.open_response(&second).as_deref(),
-            Ok(&b"statement"[..])
-        );
+        assert_eq!(&*opener.open(&first).unwrap(), b"statement".as_ref());
+        assert_eq!(&*opener.open(&second).unwrap(), b"statement".as_ref());
     }
 
     #[test]
     fn rejects_a_request_sealed_to_another_boot() {
-        let keypair = EnclaveEndpoint::generate();
-        let other = EnclaveEndpoint::generate();
-        let (_, body) = sealed_to(&other, b"match inputs");
+        let responder = Responder::generate(&mut test_rng());
+        let other = Responder::generate(&mut test_rng());
+        let (request, _) = seal_to(&other, b"match inputs");
 
         assert_eq!(
-            keypair.open_request(&body).err(),
+            responder.open(&request).err(),
             Some(ChannelError::OpenFailed)
         );
     }
 
     #[test]
     fn rejects_a_request_bound_to_another_channel_version() {
-        let keypair = EnclaveEndpoint::generate();
-        let public_key = keypair.public_key();
-        let (_, body) =
-            ClientEndpoint::seal_with_version(&public_key, CHANNEL_VERSION + 1, b"match inputs")
-                .expect("sealing should succeed");
+        let responder = Responder::generate(&mut test_rng());
+        let requester = Requester::new(responder.public_key()).expect("valid key");
+        let (request, _) = requester
+            .seal_with_version(CHANNEL_VERSION + 1, b"match inputs", &mut test_rng())
+            .expect("sealing should succeed");
 
         assert_eq!(
-            keypair.open_request(&body).err(),
+            responder.open(&request).err(),
             Some(ChannelError::OpenFailed)
         );
     }
 
     #[test]
     fn rejects_a_low_order_encapsulated_key() {
-        // RFC 9180 §7.1.4: an all-zero X25519 shared secret must abort.
-        let keypair = EnclaveEndpoint::generate();
-        let (_, mut body) = sealed_to(&keypair, b"match inputs");
+        let responder = Responder::generate(&mut test_rng());
+        let (request, _) = seal_to(&responder, b"match inputs");
+        let mut body = request.into_bytes();
         body[..ENCAPSULATED_KEY_LEN].fill(0);
 
         assert_eq!(
-            keypair.open_request(&body).err(),
+            responder.open(&SealedRequest(body)).err(),
             Some(ChannelError::InvalidEncapsulatedKey)
         );
     }
 
     #[test]
     fn rejects_a_truncated_request_body() {
-        let keypair = EnclaveEndpoint::generate();
+        let responder = Responder::generate(&mut test_rng());
 
         for length in [0, ENCAPSULATED_KEY_LEN, ENCAPSULATED_KEY_LEN + AEAD_TAG_LEN] {
             assert_eq!(
-                keypair.open_request(&vec![0u8; length]).err(),
+                responder
+                    .open(&SealedRequest::from_bytes(vec![0u8; length]))
+                    .err(),
                 Some(ChannelError::Truncated),
                 "length {length}"
             );
@@ -532,24 +596,27 @@ mod tests {
 
     #[test]
     fn rejects_a_tampered_request_ciphertext() {
-        let keypair = EnclaveEndpoint::generate();
-        let (_, mut body) = sealed_to(&keypair, b"match inputs");
+        let responder = Responder::generate(&mut test_rng());
+        let (request, _) = seal_to(&responder, b"match inputs");
+        let mut body = request.into_bytes();
         body[ENCAPSULATED_KEY_LEN] ^= 0x01;
 
         assert_eq!(
-            keypair.open_request(&body).err(),
+            responder.open(&SealedRequest(body)).err(),
             Some(ChannelError::OpenFailed)
         );
     }
 
     #[test]
     fn rejects_a_truncated_response() {
-        let keypair = EnclaveEndpoint::generate();
-        let (client, _) = sealed_to(&keypair, b"match inputs");
+        let responder = Responder::generate(&mut test_rng());
 
         for length in [0, RESPONSE_NONCE_LEN, RESPONSE_NONCE_LEN + AEAD_TAG_LEN] {
+            let (_, opener) = seal_to(&responder, b"match inputs");
             assert_eq!(
-                client.open_response(&vec![0u8; length]).err(),
+                opener
+                    .open(&SealedResponse::from_bytes(vec![0u8; length]))
+                    .err(),
                 Some(ChannelError::Truncated),
                 "length {length}"
             );
@@ -557,58 +624,63 @@ mod tests {
     }
 
     #[test]
-    fn a_second_channel_to_the_same_key_cannot_open_the_response() {
-        let keypair = EnclaveEndpoint::generate();
-        let (_, body) = sealed_to(&keypair, b"match inputs");
-        // A second setup against the same key: a different ephemeral, so a different exporter
-        // secret.
-        let (eavesdropper, _) = sealed_to(&keypair, b"unrelated");
+    fn a_second_request_to_the_same_key_cannot_open_the_response() {
+        let responder = Responder::generate(&mut test_rng());
+        let (request, _) = seal_to(&responder, b"match inputs");
+        let (_, eavesdropper) = seal_to(&responder, b"unrelated");
 
-        let (_, sealer) = keypair.open_request(&body).expect("should open");
-        let response = sealer.seal(b"statement").expect("sealing should succeed");
+        let (_, sealer) = responder.open(&request).expect("should open");
+        let response = sealer
+            .seal(b"statement", &mut test_rng())
+            .expect("sealing should succeed");
 
         assert_eq!(
-            eavesdropper.open_response(&response).err(),
+            eavesdropper.open(&response).err(),
             Some(ChannelError::OpenFailed)
         );
     }
 
     #[test]
     fn rejects_a_tampered_response_ciphertext() {
-        let keypair = EnclaveEndpoint::generate();
-        let (client, body) = sealed_to(&keypair, b"match inputs");
-        let (_, sealer) = keypair.open_request(&body).expect("should open");
+        let responder = Responder::generate(&mut test_rng());
+        let (request, opener) = seal_to(&responder, b"match inputs");
+        let (_, sealer) = responder.open(&request).expect("should open");
 
-        let mut response = sealer.seal(b"statement").expect("sealing should succeed");
-        response[RESPONSE_NONCE_LEN] ^= 0x01;
+        let response = sealer
+            .seal(b"statement", &mut test_rng())
+            .expect("sealing should succeed");
+        let mut body = response.into_bytes();
+        body[RESPONSE_NONCE_LEN] ^= 0x01;
 
         assert_eq!(
-            client.open_response(&response).err(),
+            opener.open(&SealedResponse(body)).err(),
             Some(ChannelError::OpenFailed)
         );
     }
 
     #[test]
     fn rejects_a_tampered_response_nonce() {
-        // The nonce is cleartext on the wire, but it is folded into the salt, so flipping it
-        // changes the derived key and the open fails.
-        let keypair = EnclaveEndpoint::generate();
-        let (client, body) = sealed_to(&keypair, b"match inputs");
-        let (_, sealer) = keypair.open_request(&body).expect("should open");
+        let responder = Responder::generate(&mut test_rng());
+        let (request, opener) = seal_to(&responder, b"match inputs");
+        let (_, sealer) = responder.open(&request).expect("should open");
 
-        let mut response = sealer.seal(b"statement").expect("sealing should succeed");
-        response[0] ^= 0x01;
+        let response = sealer
+            .seal(b"statement", &mut test_rng())
+            .expect("sealing should succeed");
+        let mut body = response.into_bytes();
+        body[0] ^= 0x01;
 
         assert_eq!(
-            client.open_response(&response).err(),
+            opener.open(&SealedResponse(body)).err(),
             Some(ChannelError::OpenFailed)
         );
     }
 
     #[test]
     fn rejects_an_invalid_encryption_key() {
-        // An all-zero X25519 public key has no valid shared secret.
-        let result = ClientEndpoint::seal(&[0u8; 32], b"match inputs");
+        // All-zero encodes as a point but yields no valid shared secret at encapsulation.
+        let requester = Requester::new([0u8; 32]).expect("all-zero key encodes");
+        let result = requester.seal(b"match inputs", &mut test_rng());
 
         assert_eq!(result.err(), Some(ChannelError::InvalidEncryptionKey));
     }

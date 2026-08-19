@@ -12,12 +12,10 @@ publish.workspace = true
 # in the tree via `hpke`'s `aes` feature, so this is a manifest entry, not a new crate.
 aes-gcm.workspace = true
 hkdf.workspace = true
+getrandom.workspace = true
 hpke.workspace = true
-# The response nonce of RFC 9458 §4.4 step 2. Inside the enclave `OsRng` is the Nitro hardware
-# RNG, which the boot sequence verifies before any of this runs.
-rand.workspace = true
 # Deliberately not the workspace `sha2` (0.10, which the image-hashing users are on): this must
 # match the generation `hpke` already resolves for HKDF-SHA256, so the enclave links one SHA-256
 # rather than two. Verify with `cargo tree -p crypto`.
 sha2 = "0.11"
-zeroize.workspace = true
+zeroize = { workspace = true, features = ["alloc"] }

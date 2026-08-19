@@ -2,7 +2,8 @@
 //!
 //! The keypair is generated in memory at boot and never persisted, sealed, or shared across
 //! enclaves. There is deliberately no KMS-, disk-, or leader-derived key path. The sealed
-//! channel endpoint lives in [`crypto::sealed_channel`] and is owned by [`crate::state::EnclaveState`].
+//! channel endpoint lives in [`crypto::sealed_channel::Responder`] and is owned by
+//! [`crate::state::EnclaveState`].
 
 use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSAPublicKey, EdDSASignature};
 

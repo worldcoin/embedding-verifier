@@ -47,16 +47,12 @@ async fn main() -> Result<()> {
         .context("failed to call the enclave keys route")?
         .map_err(|error| anyhow!("enclave rejected the enclave-keys request: {error:?}"))?;
 
-    let encryption_key = FaceVerifierClient::new(config)
+    let assignment = FaceVerifierClient::new(config)
         .context("failed to build the assignment client")?
         .request_assignment(SystemTime::now())
         .await
-        .context("enclave assignment did not verify")?
-        .enclave_public_key;
-    ensure!(
-        encryption_key.len() == 32,
-        "attested encryption public key was not 32 bytes"
-    );
+        .context("enclave assignment did not verify")?;
+    let _requester = assignment.requester;
     let signing_key = verifier
         .verify(&keys_response.signing_key_attestation, SystemTime::now())
         .context("the signing-key attestation document did not verify")?

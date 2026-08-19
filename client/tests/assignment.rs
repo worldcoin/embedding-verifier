@@ -77,9 +77,9 @@ async fn fetches_and_verifies_an_assignment_over_http() {
         .await
         .expect("a well-formed assignment should verify");
 
-    assert_eq!(verified.timestamp_millis, FIXTURE_TIMESTAMP_MILLIS);
-    assert!(verified.module_id.contains("-enc"));
-    assert_eq!(verified.enclave_public_key.len(), 32);
+    assert_eq!(verified.attestation.timestamp_millis, FIXTURE_TIMESTAMP_MILLIS);
+    assert!(verified.attestation.module_id.contains("-enc"));
+    assert_eq!(verified.requester.public_key().len(), 32);
 }
 
 #[tokio::test]
