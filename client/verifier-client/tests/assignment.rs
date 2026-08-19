@@ -7,8 +7,8 @@ use axum::Router;
 use axum::http::StatusCode;
 use axum::routing::post;
 use hex_literal::hex;
-use verifier_client::http::{Client, ClientError};
 use verifier_client::nitro::{EnclaveAttestationVerifier, PcrMeasurement};
+use verifier_client::{Client, ClientConfig, ClientError};
 
 const REAL_ATTESTATION_DOC_BASE64: &str =
     include_str!("../src/nitro/testdata/real_attestation_doc.b64");
@@ -76,7 +76,7 @@ async fn fetches_and_verifies_an_assignment_over_http() {
     );
     let base_url = serve_assignment(body).await;
 
-    let verified = Client::new(&base_url, verifier())
+    let verified = Client::new(ClientConfig::new(&base_url), verifier())
         .expect("client should build")
         .request_assignment(fixture_instant())
         .await
@@ -92,7 +92,7 @@ async fn rejects_an_assignment_whose_attestation_does_not_verify() {
     // A syntactically fine response carrying a document signed by nobody.
     let base_url = serve_assignment(r#"{"attestation":"hEBAQEA="}"#).await;
 
-    let error = Client::new(&base_url, verifier())
+    let error = Client::new(ClientConfig::new(&base_url), verifier())
         .expect("client should build")
         .request_assignment(fixture_instant())
         .await
@@ -112,14 +112,14 @@ async fn surfaces_a_host_error_status_rather_than_retrying() {
     ))
     .await;
 
-    let error = Client::new(&base_url, verifier())
+    let error = Client::new(ClientConfig::new(&base_url), verifier())
         .expect("client should build")
         .request_assignment(fixture_instant())
         .await
         .expect_err("a 503 should surface to the caller");
 
     assert!(
-        matches!(error, ClientError::Status { status: 503 }),
+        matches!(error, ClientError::Status { status: 503, .. }),
         "unexpected error: {error}"
     );
 }

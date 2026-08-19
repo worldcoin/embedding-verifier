@@ -12,6 +12,8 @@
     dead_code
 )]
 
-pub mod http;
+pub mod client;
 pub mod nitro;
 pub mod policy;
+
+pub use client::{Client, ClientConfig, ClientError};
