@@ -33,7 +33,6 @@ ciborium = "0.2"
 client = { path = "client" }
 coset = "0.4.2"
 crypto = { path = "crypto" }
-crypto_box = { version = "0.9.1", default-features = false, features = ["getrandom"] }
 eddsa-babyjubjub = { package = "taceo-eddsa-babyjubjub", version = "0.5" }
 enclave-types = { path = "enclave-types" }
 face-engine = { git = "https://github.com/worldcoin/biometric-engines", rev = "face-engine-v2.16.0", default-features = false, features = ["tract"] }
