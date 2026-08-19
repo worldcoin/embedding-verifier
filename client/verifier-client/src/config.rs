@@ -23,11 +23,6 @@ const fn default_request_timeout_millis() -> u64 {
     10_000
 }
 
-/// An attestation document is a few kB.
-const fn default_max_response_bytes() -> u64 {
-    64 * 1024
-}
-
 /// Failures while building a [`Config`].
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -66,9 +61,6 @@ pub struct Config {
     /// Bound on a whole request.
     #[serde(default = "default_request_timeout_millis")]
     request_timeout_millis: u64,
-    /// Largest response body accepted.
-    #[serde(default = "default_max_response_bytes")]
-    max_response_bytes: u64,
 }
 
 impl Config {
@@ -94,7 +86,6 @@ impl Config {
             allow_debug_measurements: false,
             connect_timeout_millis: default_connect_timeout_millis(),
             request_timeout_millis: default_request_timeout_millis(),
-            max_response_bytes: default_max_response_bytes(),
         };
         config.validate()?;
 
@@ -174,19 +165,13 @@ impl Config {
     pub const fn request_timeout(&self) -> Duration {
         Duration::from_millis(self.request_timeout_millis)
     }
-
-    /// Largest response body accepted.
-    #[must_use]
-    pub const fn max_response_bytes(&self) -> u64 {
-        self.max_response_bytes
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use super::{Config, ConfigError, default_max_response_bytes};
+    use super::{Config, ConfigError};
     use crate::nitro::PcrMeasurement;
 
     fn pcrs() -> Vec<Vec<PcrMeasurement>> {
@@ -218,7 +203,6 @@ mod tests {
 
         let config = Config::from_json(json).expect("config should parse");
 
-        assert_eq!(config.max_response_bytes(), default_max_response_bytes());
         assert_eq!(config.request_timeout(), Duration::from_secs(10));
     }
 }

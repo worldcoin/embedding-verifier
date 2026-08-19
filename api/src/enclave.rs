@@ -39,7 +39,6 @@ pub trait EnclaveClient: Send + Sync {
 }
 
 impl EnclaveClientError {
-    /// Names the failure class for telemetry, so triage does not parse `Debug` output.
     #[must_use]
     pub const fn failure_class(&self) -> &'static str {
         match self {

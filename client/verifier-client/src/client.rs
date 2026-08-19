@@ -25,15 +25,6 @@ pub enum ClientError {
     #[error("host returned HTTP {0}")]
     Status(u16),
 
-    /// The response body exceeded [`Config::max_response_bytes`].
-    #[error("response is {length} bytes, over the {limit} byte limit")]
-    ResponseTooLarge {
-        /// Length the host advertised.
-        length: u64,
-        /// Configured limit.
-        limit: u64,
-    },
-
     /// The response was not the JSON the endpoint is specified to return.
     #[error("response was not valid JSON: {0}")]
     MalformedResponse(#[source] reqwest::Error),
@@ -104,14 +95,6 @@ impl Client {
         let status = response.status();
         if !status.is_success() {
             return Err(ClientError::Status(status.as_u16()));
-        }
-
-        // A host that omits Content-Length is still bounded by the request timeout.
-        let limit = self.config.max_response_bytes();
-        if let Some(length) = response.content_length()
-            && length > limit
-        {
-            return Err(ClientError::ResponseTooLarge { length, limit });
         }
 
         let assignment: EnclaveAssignmentResponse = response

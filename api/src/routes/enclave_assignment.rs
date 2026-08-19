@@ -38,7 +38,6 @@ pub async fn handler(
             status
         })?;
 
-    // The signing-key attestation belongs to the Key Registry, not to an assignment.
     Ok(Json(EnclaveAssignmentResponse {
         attestation: STANDARD.encode(response.encryption_key_attestation),
     }))

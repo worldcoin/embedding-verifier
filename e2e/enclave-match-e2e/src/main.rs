@@ -47,9 +47,6 @@ async fn main() -> Result<()> {
         .context("failed to call the enclave keys route")?
         .map_err(|error| anyhow!("enclave rejected the enclave-keys request: {error:?}"))?;
 
-    // Take the encryption key the way a real client does — over HTTP from the host — so this
-    // exercises the assignment route and the client together. The signing key is not part of
-    // an assignment, so it still comes over vsock.
     let encryption_key = Client::new(config)
         .context("failed to build the assignment client")?
         .request_assignment(SystemTime::now())
