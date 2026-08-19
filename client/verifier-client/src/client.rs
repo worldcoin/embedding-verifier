@@ -3,7 +3,6 @@
 use std::time::SystemTime;
 
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 
 use crate::config::Config;
 use crate::nitro::{EnclaveAttestationError, EnclaveAttestationVerifier, VerifiedAttestation};
@@ -19,29 +18,16 @@ pub enum ClientError {
     Transport(#[source] reqwest::Error),
 
     /// The request failed, timed out, or the body could not be read.
-    #[error("request to {path} failed: {source}")]
-    Request {
-        /// Path that was requested.
-        path: &'static str,
-        /// Underlying failure.
-        #[source]
-        source: reqwest::Error,
-    },
+    #[error("request to the host failed: {0}")]
+    Request(#[source] reqwest::Error),
 
     /// The host answered with a non-success status.
-    #[error("{path} returned HTTP {status}")]
-    Status {
-        /// Path that was requested.
-        path: &'static str,
-        /// The status the host returned.
-        status: u16,
-    },
+    #[error("host returned HTTP {0}")]
+    Status(u16),
 
     /// The response body exceeded [`Config::max_response_bytes`].
-    #[error("{path} response is {length} bytes, over the {limit} byte limit")]
+    #[error("response is {length} bytes, over the {limit} byte limit")]
     ResponseTooLarge {
-        /// Path that was requested.
-        path: &'static str,
         /// Length the host advertised.
         length: u64,
         /// Configured limit.
@@ -49,14 +35,8 @@ pub enum ClientError {
     },
 
     /// The response was not the JSON the endpoint is specified to return.
-    #[error("{path} response was not valid JSON: {source}")]
-    MalformedResponse {
-        /// Path that was requested.
-        path: &'static str,
-        /// Underlying failure.
-        #[source]
-        source: reqwest::Error,
-    },
+    #[error("response was not valid JSON: {0}")]
+    MalformedResponse(#[source] reqwest::Error),
 
     /// An attestation document did not verify.
     #[error(transparent)]
@@ -72,8 +52,7 @@ struct EnclaveAssignmentResponse {
 /// Calls the host and verifies the attestation documents it relays.
 #[derive(Debug)]
 pub struct Client {
-    /// The configuration this client was built from.
-    pub config: Config,
+    config: Config,
     http: reqwest::Client,
     verifier: EnclaveAttestationVerifier,
 }
@@ -111,49 +90,37 @@ impl Client {
         &self,
         now: SystemTime,
     ) -> Result<VerifiedAttestation, ClientError> {
-        let assignment: EnclaveAssignmentResponse = self.post_json(ASSIGNMENT_PATH).await?;
+        let url = format!(
+            "{}{ASSIGNMENT_PATH}",
+            self.config.host_url().as_str().trim_end_matches('/')
+        );
+        let response = self
+            .http
+            .post(url)
+            .send()
+            .await
+            .map_err(ClientError::Request)?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ClientError::Status(status.as_u16()));
+        }
+
+        // A host that omits Content-Length is still bounded by the request timeout.
+        let limit = self.config.max_response_bytes();
+        if let Some(length) = response.content_length()
+            && length > limit
+        {
+            return Err(ClientError::ResponseTooLarge { length, limit });
+        }
+
+        let assignment: EnclaveAssignmentResponse = response
+            .json()
+            .await
+            .map_err(ClientError::MalformedResponse)?;
 
         Ok(self
             .verifier
             .verify_base64(assignment.attestation.trim(), now)?)
-    }
-
-    /// POSTs to `path` with no body and decodes the JSON response.
-    ///
-    /// Shared by every operation so status handling and the size cap cannot diverge.
-    async fn post_json<T: DeserializeOwned>(&self, path: &'static str) -> Result<T, ClientError> {
-        let response = self
-            .http
-            .post(format!(
-                "{}{path}",
-                self.config.host_url().as_str().trim_end_matches('/')
-            ))
-            .send()
-            .await
-            .map_err(|source| ClientError::Request { path, source })?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(ClientError::Status {
-                path,
-                status: status.as_u16(),
-            });
-        }
-
-        // A host that omits Content-Length is still bounded by the request timeout.
-        if let Some(length) = response.content_length()
-            && length > self.config.max_response_bytes()
-        {
-            return Err(ClientError::ResponseTooLarge {
-                path,
-                length,
-                limit: self.config.max_response_bytes(),
-            });
-        }
-
-        response
-            .json()
-            .await
-            .map_err(|source| ClientError::MalformedResponse { path, source })
     }
 }

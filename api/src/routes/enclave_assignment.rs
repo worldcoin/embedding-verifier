@@ -32,7 +32,7 @@ pub async fn handler(
                 ?error,
                 %status,
                 dependency = "secure-enclave",
-                failure_class = failure_class(&error),
+                failure_class = error.failure_class(),
                 "enclave assignment failed"
             );
             status
@@ -53,23 +53,17 @@ const fn status_for(error: &EnclaveClientError) -> StatusCode {
             EnclaveError::NotReady
             | EnclaveError::SecureModuleNotInitialized
             | EnclaveError::AttestationFailed => StatusCode::SERVICE_UNAVAILABLE,
-            // A match-path error means the enclave answered a request it was not asked, so
-            // surface it as a host bug rather than retryable unavailability.
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        },
-    }
-}
-
-/// Names the failure class for telemetry.
-const fn failure_class(error: &EnclaveClientError) -> &'static str {
-    match error {
-        EnclaveClientError::Timeout => "timeout",
-        EnclaveClientError::Transport(_) => "transport",
-        EnclaveClientError::Operation(operation) => match operation {
-            EnclaveError::NotReady => "enclave_not_ready",
-            EnclaveError::SecureModuleNotInitialized => "nsm_unavailable",
-            EnclaveError::AttestationFailed => "attestation_failed",
-            _ => "unexpected_operation_error",
+            // Match-path errors cannot arise from an attestation request. Reaching one means
+            // the enclave answered a request it was not asked, so surface a host bug rather
+            // than retryable unavailability.
+            EnclaveError::DecryptFailed
+            | EnclaveError::MalformedMatchPayload
+            | EnclaveError::InvalidHashesJson
+            | EnclaveError::ThumbnailHashMismatch
+            | EnclaveError::MatchBelowThreshold
+            | EnclaveError::InvalidImage
+            | EnclaveError::EmbeddingGenerationFailed
+            | EnclaveError::EmbeddingComparisonFailed => StatusCode::INTERNAL_SERVER_ERROR,
         },
     }
 }
@@ -85,10 +79,13 @@ mod tests {
 
     #[tokio::test]
     async fn returns_the_encryption_key_attestation_and_nothing_else() {
-        let state = state_with(StubEnclaveClient::returning_keys(GetEnclaveKeysResponse {
-            encryption_key_attestation: vec![1, 2, 3],
-            signing_key_attestation: vec![4, 5, 6],
-        }));
+        let state = state_with(StubEnclaveClient {
+            keys: Some(Ok(GetEnclaveKeysResponse {
+                encryption_key_attestation: vec![1, 2, 3],
+                signing_key_attestation: vec![4, 5, 6],
+            })),
+            ..StubEnclaveClient::default()
+        });
 
         let response = handler(State(state))
             .await
@@ -103,7 +100,10 @@ mod tests {
 
     #[tokio::test]
     async fn maps_enclave_failure_to_its_status() {
-        let state = state_with(StubEnclaveClient::failing(EnclaveClientError::Timeout));
+        let state = state_with(StubEnclaveClient {
+            keys: Some(Err(EnclaveClientError::Timeout)),
+            ..StubEnclaveClient::default()
+        });
 
         let status = handler(State(state))
             .await

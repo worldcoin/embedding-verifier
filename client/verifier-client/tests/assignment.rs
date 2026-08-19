@@ -29,14 +29,10 @@ fn config(base_url: &str) -> Config {
         ),
     )];
 
-    // Ten years, so the fixture is never rejected for staleness.
-    Config::new(
-        base_url,
-        vec![pcrs],
-        Duration::from_secs(10 * 365 * 24 * 60 * 60),
-        false,
-    )
-    .expect("config should be valid")
+    Config::new(base_url, vec![pcrs])
+        .expect("config should be valid")
+        // Ten years, so the fixture is never rejected for staleness.
+        .with_max_attestation_age(Duration::from_secs(10 * 365 * 24 * 60 * 60))
 }
 
 /// Serves `router` on an ephemeral port and returns its base URL.
@@ -58,14 +54,14 @@ async fn serve(router: Router) -> String {
 }
 
 /// A stub host answering assignments as the real one does.
-async fn serve_assignment(body: &'static str) -> String {
+async fn serve_assignment(attestation: &str) -> String {
+    let body = serde_json::json!({ "attestation": attestation.trim() });
+
     serve(Router::new().route(
         "/v1/enclave-assignment",
-        post(move || async move {
-            (
-                [(axum::http::header::CONTENT_TYPE, "application/json")],
-                body,
-            )
+        post(move || {
+            let body = body.clone();
+            async move { axum::Json(body) }
         }),
     ))
     .await
@@ -73,14 +69,7 @@ async fn serve_assignment(body: &'static str) -> String {
 
 #[tokio::test]
 async fn fetches_and_verifies_an_assignment_over_http() {
-    let body: &'static str = Box::leak(
-        format!(
-            r#"{{"attestation":"{}"}}"#,
-            REAL_ATTESTATION_DOC_BASE64.trim()
-        )
-        .into_boxed_str(),
-    );
-    let base_url = serve_assignment(body).await;
+    let base_url = serve_assignment(REAL_ATTESTATION_DOC_BASE64).await;
 
     let verified = Client::new(config(&base_url))
         .expect("client should build")
@@ -96,7 +85,7 @@ async fn fetches_and_verifies_an_assignment_over_http() {
 #[tokio::test]
 async fn rejects_an_assignment_whose_attestation_does_not_verify() {
     // A syntactically fine response carrying a document signed by nobody.
-    let base_url = serve_assignment(r#"{"attestation":"hEBAQEA="}"#).await;
+    let base_url = serve_assignment("hEBAQEA=").await;
 
     let error = Client::new(config(&base_url))
         .expect("client should build")
@@ -125,7 +114,7 @@ async fn surfaces_a_host_error_status_rather_than_retrying() {
         .expect_err("a 503 should surface to the caller");
 
     assert!(
-        matches!(error, ClientError::Status { status: 503, .. }),
+        matches!(error, ClientError::Status(503)),
         "unexpected error: {error}"
     );
 }

@@ -5,18 +5,15 @@
 //! `POST /v1/enclave-assignment`. Both sides therefore run the same logic rather than two
 //! readings of the AWS spec.
 //!
-//! Divergences from bedrock: no uniffi surface or global config, policy is passed in; `now`
-//! is a parameter rather than a `cfg(test)` bypass; PCRs come from the caller, since ours are
-//! unknown until the image is built; zeroed measurements need an opt-in; no sealing.
-//!
 //! Follows <https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html#validation-process>
 
+use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aws_nitro_enclaves_nsm_api::api::AttestationDoc;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use coset::{AsCborValue, CborSerializable, CoseSign1};
+use coset::{AsCborValue, CoseSign1};
 use p384::ecdsa::{Signature, VerifyingKey, signature::Verifier as _};
 use webpki::{EndEntityCert, TrustAnchor};
 use x509_cert::{Certificate, der::Decode};
@@ -34,9 +31,8 @@ pub use types::{
 /// The AWS Nitro Attestation PKI root, from
 /// <https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip>.
 ///
-/// SHA-256 `641a0321a3e244efe456463195d606317ed7cdcc3c1756e09893f3c68f79bb5b` — the
-/// fingerprint AWS publishes, asserted by a test. AWS publishes the fingerprint of the
-/// certificate, not of the zip, so the certificate is what we pin. Valid until 2049-10-28.
+/// Pinned by SHA-256 against the fingerprint AWS publishes for the certificate (not the zip);
+/// a test asserts it. Valid until 2049-10-28.
 pub const AWS_NITRO_ROOT_CERT: &[u8] = include_bytes!("../../certs/aws_nitro_root_g1.der");
 
 /// Nitro COSE signatures are ECDSA over P-384, so raw `r || s` is always 96 bytes.
@@ -45,10 +41,8 @@ const P384_SIGNATURE_LENGTH: usize = 96;
 /// Verifies AWS Nitro Enclave attestation documents.
 #[derive(Debug, Clone)]
 pub struct EnclaveAttestationVerifier {
-    /// A document is trusted if it matches any one configuration in full, which lets several
-    /// enclave versions be trusted at once during a rollout.
     allowed_pcr_configs: Vec<Vec<PcrMeasurement>>,
-    root_certificate: Vec<u8>,
+    root_certificate: Cow<'static, [u8]>,
     max_age_millis: u64,
     allow_debug_measurements: bool,
 }
@@ -58,10 +52,10 @@ impl EnclaveAttestationVerifier {
     ///
     /// `max_age_millis` bounds how old a document's own timestamp may be.
     #[must_use]
-    pub fn new(allowed_pcr_configs: Vec<Vec<PcrMeasurement>>, max_age_millis: u64) -> Self {
+    pub const fn new(allowed_pcr_configs: Vec<Vec<PcrMeasurement>>, max_age_millis: u64) -> Self {
         Self {
             allowed_pcr_configs,
-            root_certificate: AWS_NITRO_ROOT_CERT.to_vec(),
+            root_certificate: Cow::Borrowed(AWS_NITRO_ROOT_CERT),
             max_age_millis,
             allow_debug_measurements: false,
         }
@@ -80,7 +74,7 @@ impl EnclaveAttestationVerifier {
     #[cfg(test)]
     #[must_use]
     fn with_root_certificate(mut self, root_certificate: Vec<u8>) -> Self {
-        self.root_certificate = root_certificate;
+        self.root_certificate = Cow::Owned(root_certificate);
         self
     }
 
@@ -198,8 +192,8 @@ impl EnclaveAttestationVerifier {
         attestation: &AttestationDoc,
         now_millis: u64,
     ) -> EnclaveAttestationResult<Certificate> {
-        let trust_anchor = TrustAnchor::try_from_cert_der(self.root_certificate.as_slice())
-            .map_err(|error| {
+        let trust_anchor =
+            TrustAnchor::try_from_cert_der(self.root_certificate.as_ref()).map_err(|error| {
                 EnclaveAttestationError::AttestationChainInvalid(format!(
                     "failed to create trust anchor from root certificate: {error}"
                 ))
@@ -266,32 +260,9 @@ impl EnclaveAttestationVerifier {
             ));
         }
 
-        let protected_bytes = cose_sign1.protected.clone().to_vec().map_err(|error| {
-            EnclaveAttestationError::AttestationSignatureInvalid(format!(
-                "failed to serialize protected headers: {error}"
-            ))
-        })?;
-
-        let payload = cose_sign1.payload.as_ref().ok_or_else(|| {
-            EnclaveAttestationError::AttestationSignatureInvalid(
-                "missing payload in COSE Sign1".to_string(),
-            )
-        })?;
-
-        // Sig_structure for COSE_Sign1, per RFC 8152 §4.4.
-        let sig_structure_cbor = ciborium::Value::Array(vec![
-            ciborium::Value::Text("Signature1".to_string()),
-            ciborium::Value::Bytes(protected_bytes),
-            ciborium::Value::Bytes(Vec::new()),
-            ciborium::Value::Bytes(payload.clone()),
-        ]);
-
-        let mut sig_structure = Vec::new();
-        ciborium::into_writer(&sig_structure_cbor, &mut sig_structure).map_err(|error| {
-            EnclaveAttestationError::AttestationSignatureInvalid(format!(
-                "failed to encode Sig_structure: {error}"
-            ))
-        })?;
+        // Sig_structure per RFC 8152 §4.4, with no external AAD. Bedrock builds this by hand;
+        // coset produces byte-identical output, which the real-document test proves.
+        let sig_structure = cose_sign1.tbs_data(&[]);
 
         let ecdsa_signature = Signature::try_from(signature.as_slice()).map_err(|error| {
             EnclaveAttestationError::AttestationSignatureInvalid(format!(
@@ -310,10 +281,9 @@ impl EnclaveAttestationVerifier {
 
     fn validate_pcr_values(&self, attestation: &AttestationDoc) -> EnclaveAttestationResult<()> {
         if attestation.pcrs.is_empty() {
-            return Err(EnclaveAttestationError::CodeUntrusted {
-                pcr_index: 0,
-                actual: "empty".to_string(),
-            });
+            return Err(EnclaveAttestationError::CodeUntrusted(
+                "document carries no PCRs".to_string(),
+            ));
         }
 
         if !self.allow_debug_measurements
@@ -326,15 +296,13 @@ impl EnclaveAttestationVerifier {
         }
 
         if self.allowed_pcr_configs.is_empty() {
-            return Err(EnclaveAttestationError::CodeUntrusted {
-                pcr_index: 0,
-                actual: "no allowed PCR configurations".to_string(),
-            });
+            return Err(EnclaveAttestationError::CodeUntrusted(
+                "no allowed PCR configurations".to_string(),
+            ));
         }
 
         let expected_pcr_length = expected_pcr_length(attestation.digest);
 
-        // A document is trusted if it matches any one configuration in full.
         for allowed_pcr_measurements in &self.allowed_pcr_configs {
             let all_match = allowed_pcr_measurements.iter().all(|measurement| {
                 attestation
@@ -351,10 +319,9 @@ impl EnclaveAttestationVerifier {
             }
         }
 
-        Err(EnclaveAttestationError::CodeUntrusted {
-            pcr_index: 0,
-            actual: "no allowed PCR configuration matched".to_string(),
-        })
+        Err(EnclaveAttestationError::CodeUntrusted(
+            "no allowed PCR configuration matched".to_string(),
+        ))
     }
 
     fn check_attestation_freshness(
@@ -382,14 +349,13 @@ impl EnclaveAttestationVerifier {
     }
 
     fn extract_public_key(attestation: &AttestationDoc) -> EnclaveAttestationResult<Vec<u8>> {
-        attestation.public_key.as_ref().map_or_else(
-            || {
-                Err(EnclaveAttestationError::InvalidEnclavePublicKey(
-                    "no public key in attestation document".to_string(),
-                ))
-            },
-            |key| Ok(key.to_vec()),
-        )
+        let key = attestation.public_key.as_ref().ok_or_else(|| {
+            EnclaveAttestationError::InvalidEnclavePublicKey(
+                "no public key in attestation document".to_string(),
+            )
+        })?;
+
+        Ok(key.to_vec())
     }
 }
 

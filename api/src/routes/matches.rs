@@ -73,10 +73,11 @@ pub async fn handler(
         .await
         .map_err(|error| {
             let status = status_for(&error);
+            let failure_class = error.failure_class();
             if status.is_server_error() {
-                tracing::error!(?error, %status, "match request failed");
+                tracing::error!(?error, %status, dependency = "secure-enclave", failure_class, "match request failed");
             } else {
-                tracing::warn!(?error, %status, "match request rejected");
+                tracing::warn!(?error, %status, failure_class, "match request rejected");
             }
             status
         })?;
@@ -117,7 +118,11 @@ mod tests {
     use crate::types::AppState;
 
     fn state_returning(result: Result<enclave::MatchResponse, EnclaveClientError>) -> AppState {
-        state_with(StubEnclaveClient::returning_match(result).expecting_sealed_payload(b"sealed"))
+        state_with(StubEnclaveClient {
+            match_result: Some(result),
+            expected_sealed_payload: Some(b"sealed".to_vec()),
+            ..StubEnclaveClient::default()
+        })
     }
 
     fn sample_response() -> enclave::MatchResponse {

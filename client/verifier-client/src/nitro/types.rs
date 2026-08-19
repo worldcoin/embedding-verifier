@@ -22,14 +22,9 @@ pub enum EnclaveAttestationError {
     #[error("signature verification failed: {0}")]
     AttestationSignatureInvalid(String),
 
-    /// A PCR value did not match any allowed configuration.
-    #[error("PCR{pcr_index} value not trusted: {actual}")]
-    CodeUntrusted {
-        /// Index of the PCR that failed validation.
-        pcr_index: u32,
-        /// What was observed, for triage.
-        actual: String,
-    },
+    /// The measurements did not match any allowed configuration.
+    #[error("enclave code not trusted: {0}")]
+    CodeUntrusted(String),
 
     /// Every PCR was zero, which means a `--debug-mode` enclave whose memory the parent
     /// instance can read.

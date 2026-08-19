@@ -5,7 +5,6 @@ use enclave_types::{GetEnclaveKeysRequest, MatchRequest};
 use pontifex::client::ConnectionDetails;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use verifier_client::nitro::EnclaveAttestationVerifier;
 use verifier_client::{Client, Config};
 
 const DEFAULT_ENCLAVE_PORT: u32 = 1000;
@@ -61,8 +60,10 @@ async fn main() -> Result<()> {
         encryption_key.len() == 32,
         "attested encryption public key was not 32 bytes"
     );
-    let signing_key =
-        attested_public_key(&verifier, &keys_response.signing_key_attestation, "signing")?;
+    let signing_key = verifier
+        .verify(&keys_response.signing_key_attestation, SystemTime::now())
+        .context("the signing-key attestation document did not verify")?
+        .enclave_public_key;
     ensure!(
         signing_key.len() == 32,
         "attested signing public key was not 32 bytes"
@@ -111,10 +112,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Loads the client configuration named by `VERIFIER_CONFIG`.
-///
-/// A JSON file rather than a set of variables, matching how `world-id-protocol` configures an
-/// authenticator. See the README for the schema.
+/// Loads the client configuration named by `VERIFIER_CONFIG`. Schema is in the README.
 fn load_config() -> Result<Config> {
     let path = env::var("VERIFIER_CONFIG")
         .context("VERIFIER_CONFIG must name a JSON client configuration file")?;
@@ -122,22 +120,6 @@ fn load_config() -> Result<Config> {
         .with_context(|| format!("failed to read the client config at {path}"))?;
 
     Config::from_json(&json).with_context(|| format!("{path} is not a valid client config"))
-}
-
-/// Verifies an attestation document and returns the `public_key` it commits to.
-///
-/// Checks the COSE signature, the chain up to the pinned AWS Nitro root, and the expected
-/// PCRs.
-fn attested_public_key(
-    verifier: &EnclaveAttestationVerifier,
-    document: &[u8],
-    label: &str,
-) -> Result<Vec<u8>> {
-    let verified = verifier
-        .verify(document, SystemTime::now())
-        .with_context(|| format!("the {label}-key attestation document did not verify"))?;
-
-    Ok(verified.enclave_public_key)
 }
 
 struct ImagePaths {

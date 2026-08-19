@@ -154,45 +154,33 @@ fn rejects_an_expired_certificate_chain() {
 }
 
 #[test]
-fn rejects_mismatched_pcrs() {
-    let wrong = vec![vec![PcrMeasurement::new(0, [0xabu8; 48])]];
+fn rejects_measurements_that_match_no_allowed_configuration() {
+    let absent_index = {
+        // Index 20 is valid but not carried by this document.
+        let mut config = fixture_pcr_config();
+        config.push(PcrMeasurement::new(20, [0x11u8; 48]));
+        vec![config]
+    };
 
-    let error = EnclaveAttestationVerifier::new(wrong, GENEROUS_MAX_AGE_MILLIS)
-        .verify(&real_document(), fixture_instant())
-        .expect_err("an enclave running unexpected code must not verify");
+    let cases = [
+        (
+            "a wrong value",
+            vec![vec![PcrMeasurement::new(0, [0xabu8; 48])]],
+        ),
+        ("a pinned index the document omits", absent_index),
+        ("nothing pinned at all", Vec::new()),
+    ];
 
-    assert!(
-        matches!(error, EnclaveAttestationError::CodeUntrusted { .. }),
-        "unexpected error: {error}"
-    );
-}
+    for (label, configs) in cases {
+        let error = EnclaveAttestationVerifier::new(configs, GENEROUS_MAX_AGE_MILLIS)
+            .verify(&real_document(), fixture_instant())
+            .expect_err(&format!("{label} must fail closed"));
 
-#[test]
-fn rejects_a_pinned_pcr_index_absent_from_the_document() {
-    // Index 20 is valid but not carried by this document.
-    let mut config = fixture_pcr_config();
-    config.push(PcrMeasurement::new(20, [0x11u8; 48]));
-
-    let error = EnclaveAttestationVerifier::new(vec![config], GENEROUS_MAX_AGE_MILLIS)
-        .verify(&real_document(), fixture_instant())
-        .expect_err("a pinned PCR that is absent must not be silently skipped");
-
-    assert!(
-        matches!(error, EnclaveAttestationError::CodeUntrusted { .. }),
-        "unexpected error: {error}"
-    );
-}
-
-#[test]
-fn rejects_when_no_pcr_configuration_is_allowed() {
-    let error = EnclaveAttestationVerifier::new(Vec::new(), GENEROUS_MAX_AGE_MILLIS)
-        .verify(&real_document(), fixture_instant())
-        .expect_err("an empty policy must fail closed, not accept everything");
-
-    assert!(
-        matches!(error, EnclaveAttestationError::CodeUntrusted { .. }),
-        "unexpected error: {error}"
-    );
+        assert!(
+            matches!(error, EnclaveAttestationError::CodeUntrusted(_)),
+            "{label}: unexpected error: {error}"
+        );
+    }
 }
 
 #[test]
