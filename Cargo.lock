@@ -98,27 +98,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb5dfbc6d8d2675589ccbe4d0fd61df2419075625f8c1a62325e718e2b0049f9"
 
 [[package]]
-name = "api"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "base64",
- "enclave-types",
- "hex",
- "http-body-util",
- "pontifex",
- "serde",
- "serde_json",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -659,6 +638,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "client"
+version = "0.1.0"
+dependencies = [
+ "aws-nitro-enclaves-nsm-api",
+ "axum",
+ "base64",
+ "ciborium",
+ "coset",
+ "hex",
+ "hex-literal",
+ "p384",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "url",
+ "webpki",
+ "x509-cert",
+]
+
+[[package]]
 name = "colorutils-rs"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -996,6 +998,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "15401da73a9ed8c80e3b2d4dc05fe10e7b72d7243b9f614e516a44fa99986e88"
 
 [[package]]
+name = "e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ciborium",
+ "client",
+ "enclave-types",
+ "hex",
+ "pontifex",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "ecdsa"
 version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1045,19 +1063,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "enclave-match-e2e"
+name = "enclave"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "ciborium",
+ "crypto_box",
  "enclave-types",
+ "face-engine",
  "hex",
+ "image",
  "pontifex",
+ "rand 0.8.7",
  "serde",
  "serde_bytes",
+ "serde_json",
  "sha2",
+ "taceo-ark-babyjubjub",
+ "taceo-eddsa-babyjubjub",
  "tokio",
- "verifier-client",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1562,6 +1588,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
  "digest",
+]
+
+[[package]]
+name = "host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64",
+ "enclave-types",
+ "hex",
+ "http-body-util",
+ "pontifex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3432,30 +3479,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "secure-enclave"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ciborium",
- "crypto_box",
- "enclave-types",
- "face-engine",
- "hex",
- "image",
- "pontifex",
- "rand 0.8.7",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2",
- "taceo-ark-babyjubjub",
- "taceo-eddsa-babyjubjub",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4529,29 +4552,6 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
-
-[[package]]
-name = "verifier-client"
-version = "0.1.0"
-dependencies = [
- "aws-nitro-enclaves-nsm-api",
- "axum",
- "base64",
- "ciborium",
- "coset",
- "hex",
- "hex-literal",
- "p384",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
- "tokio",
- "url",
- "webpki",
- "x509-cert",
-]
 
 [[package]]
 name = "version-compare"

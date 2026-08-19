@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "api",
-    "client/verifier-client",
-    "e2e/enclave-match-e2e",
-    "secure-enclave",
-    "shared/enclave-types",
+    "client",
+    "e2e",
+    "enclave",
+    "enclave-types",
+    "host",
 ]
 resolver = "3"
 
@@ -24,10 +24,11 @@ aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
 axum = "0.8"
 base64 = "0.22"
 ciborium = "0.2"
+client = { path = "client" }
 coset = "0.4.2"
 crypto_box = { version = "0.9.1", default-features = false, features = ["getrandom"] }
 eddsa-babyjubjub = { package = "taceo-eddsa-babyjubjub", version = "0.5" }
-enclave-types = { path = "shared/enclave-types" }
+enclave-types = { path = "enclave-types" }
 face-engine = { git = "https://github.com/worldcoin/biometric-engines", rev = "face-engine-v2.16.0", default-features = false, features = ["tract"] }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 hex-literal = "1.1"
@@ -47,6 +48,5 @@ tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2", features = ["serde"] }
-verifier-client = { path = "client/verifier-client" }
 webpki = "0.22"
 x509-cert = "0.2.5"

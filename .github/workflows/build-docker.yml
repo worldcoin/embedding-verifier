@@ -1,16 +1,15 @@
-# Builds the host-side `api` image and pushes it to the GitHub Container
-# Registry (attested). 
+# Builds the `host` image and pushes it to the GitHub Container
+# Registry (attested).
 name: Build and Push Docker Image
 
 on:
   pull_request:
     paths:
-      - "api/**"
-      - "shared/**"
+      - "host/**"
+      - "enclave-types/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
-      - "Dockerfile"
       - ".dockerignore"
       - ".github/workflows/build-docker.yml"
   push:
@@ -95,6 +94,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
+          file: host/Dockerfile
           # Publish on push/tag/dispatch; PRs build only (validation).
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
