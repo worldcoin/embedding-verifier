@@ -9,6 +9,7 @@
 )]
 
 pub mod enclave;
+pub mod error;
 pub mod routes;
 pub mod server;
 pub mod types;
