@@ -6,7 +6,7 @@ use anyhow::Context;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
-use crate::{routes, types::AppState};
+use crate::{AppState, routes};
 
 const DEFAULT_PORT: u16 = 8000;
 

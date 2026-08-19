@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use host::{
-    enclave::PontifexEnclaveClient,
-    types::{AppState, Environment},
-};
+use host::{AppState, Environment, enclave::PontifexEnclaveClient};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]

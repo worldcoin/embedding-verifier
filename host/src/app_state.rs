@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use crate::enclave::EnclaveClient;
-
-use super::Environment;
+use crate::{Environment, enclave::EnclaveClient};
 
 /// Dependencies shared by API request handlers.
 #[derive(Clone)]

@@ -2,8 +2,8 @@ use axum::{Json, extract::State};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Serialize;
 
+use crate::AppState;
 use crate::error::AppError;
-use crate::types::AppState;
 
 /// The enclave assigned to a client, as an attestation document.
 ///

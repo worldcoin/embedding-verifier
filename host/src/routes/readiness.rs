@@ -1,6 +1,6 @@
 use axum::{extract::State, http::StatusCode};
 
-use crate::types::AppState;
+use crate::AppState;
 
 pub async fn handler(State(state): State<AppState>) -> StatusCode {
     match state.enclave_client().health().await {

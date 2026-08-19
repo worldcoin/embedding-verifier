@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use enclave_types::{GetEnclaveKeysResponse, MatchRequest, MatchResponse};
 use host::enclave::{EnclaveClient, EnclaveClientError};
-use host::types::{AppState, Environment};
+use host::{AppState, Environment};
 
 /// An [`EnclaveClient`] answering from fixed results.
 ///

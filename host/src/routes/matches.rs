@@ -2,8 +2,8 @@ use axum::{Json, body::Bytes, extract::State, http::StatusCode};
 use enclave_types::{self as enclave};
 use serde::Serialize;
 
+use crate::AppState;
 use crate::error::AppError;
-use crate::types::AppState;
 
 /// A match statement rendered for HTTP clients.
 ///

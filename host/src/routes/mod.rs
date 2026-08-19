@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::types::AppState;
+use crate::AppState;
 
 /// Builds the router with all API routes.
 pub fn handler() -> Router<AppState> {

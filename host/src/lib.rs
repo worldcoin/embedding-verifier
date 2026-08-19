@@ -8,8 +8,13 @@
     dead_code
 )]
 
+mod app_state;
+mod environment;
+
 pub mod enclave;
 pub mod error;
 pub mod routes;
 pub mod server;
-pub mod types;
+
+pub use app_state::AppState;
+pub use environment::Environment;
