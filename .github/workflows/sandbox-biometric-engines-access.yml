@@ -63,7 +63,7 @@ jobs:
           face-engine = { git = "https://github.com/worldcoin/biometric-engines", rev = "face-engine-v2.16.0", default-features = false, features = ["tract"] }
           EOF
 
-      - name: cargo fetch (real dependency-resolution path, same as ci.yml/build-enclave-eif.yml would use)
+      - name: cargo fetch (real dependency-resolution path used by CI builds)
         working-directory: /tmp/face-engine-fetch-test
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: true
