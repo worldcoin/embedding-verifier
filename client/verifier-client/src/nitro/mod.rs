@@ -6,6 +6,8 @@
 //! readings of the AWS spec.
 //!
 //! Follows <https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html#validation-process>
+//!
+//! Licence and copyright notice: see `client/verifier-client/NOTICE`.
 
 use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};

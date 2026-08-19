@@ -3,6 +3,8 @@
 //! Cases and the real attestation document are ported from `worldcoin/bedrock`
 //! (`bedrock/src/nitro_enclave/tests.rs`), MIT © Tools for Humanity.
 //!
+//! Licence and copyright notice: see `client/verifier-client/NOTICE`.
+//!
 //! The fixture's chain expired in September 2025, so tests pin `now` to the document's own
 //! timestamp. Bedrock needed a `cfg(test)` flag to bypass the certificate time check; passing
 //! the clock as an argument exercises the production path instead.
