@@ -5,9 +5,8 @@
 //!
 //! Licence and copyright notice: see `client/verifier-client/NOTICE`.
 //!
-//! The fixture's chain expired in September 2025, so tests pin `now` to the document's own
-//! timestamp. Bedrock needed a `cfg(test)` flag to bypass the certificate time check; passing
-//! the clock as an argument exercises the production path instead.
+//! The fixture's certificate chain expired in September 2025, so tests pin `now` to the
+//! document's own timestamp, which falls inside its validity window.
 
 // `Duration::from_days` / `from_hours`, which clippy suggests here, are unstable on 1.97.
 #![allow(clippy::duration_suboptimal_units)]

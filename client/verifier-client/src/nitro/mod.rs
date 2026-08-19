@@ -262,8 +262,7 @@ impl EnclaveAttestationVerifier {
             ));
         }
 
-        // Sig_structure per RFC 8152 §4.4, with no external AAD. Bedrock builds this by hand;
-        // coset produces byte-identical output, which the real-document test proves.
+        // Sig_structure per RFC 8152 §4.4, with no external AAD.
         let sig_structure = cose_sign1.tbs_data(&[]);
 
         let ecdsa_signature = Signature::try_from(signature.as_slice()).map_err(|error| {

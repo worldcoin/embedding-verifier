@@ -1,8 +1,7 @@
 //! Route tests driven through the real router.
 //!
-//! These go through `routes::handler()` rather than calling handler functions directly, so
-//! the path and method a route is registered under are covered too. Calling handlers
-//! directly cannot catch a route registered at the wrong path or with the wrong method.
+//! Requests go through `routes::handler()`, so the path and method each route is registered
+//! under are covered alongside its behaviour.
 
 mod common;
 
@@ -90,9 +89,10 @@ async fn assignment_is_not_reachable_by_get() {
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
 }
 
-/// The route this one replaced must be gone, not merely unused.
+/// Enclave keys are not exposed as their own route. The signing-key attestation belongs to
+/// the Key Registry, and the encryption key is only served as part of an assignment.
 #[tokio::test]
-async fn the_old_enclave_keys_route_is_gone() {
+async fn enclave_keys_are_not_served_as_a_route() {
     let state = state_with(keys(vec![1, 2, 3], vec![4, 5, 6]));
 
     let request = Request::builder()
