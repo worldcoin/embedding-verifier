@@ -153,6 +153,10 @@ impl AsRef<[u8]> for SealedResponse {
     }
 }
 
+/// HPKE `info` for the match channel: domain prefix, wire version, and responder public key.
+///
+/// Both sides bind this into the key schedule so mismatched boots or channel versions fail at
+/// setup rather than decrypting garbage.
 fn channel_info(version: u8, encryption_public_key: &[u8; ENCRYPTION_KEY_LEN]) -> Vec<u8> {
     let mut info = Vec::with_capacity(CHANNEL_INFO_DOMAIN.len() + 1 + encryption_public_key.len());
     info.extend_from_slice(CHANNEL_INFO_DOMAIN);
