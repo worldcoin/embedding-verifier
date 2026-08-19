@@ -16,5 +16,5 @@ pub mod client;
 pub mod config;
 pub mod nitro;
 
-pub use client::{Client, ClientError};
+pub use client::{ClientError, FaceVerifierClient};
 pub use config::{Config, ConfigError};

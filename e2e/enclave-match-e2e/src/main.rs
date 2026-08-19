@@ -5,7 +5,7 @@ use enclave_types::{GetEnclaveKeysRequest, MatchRequest};
 use pontifex::client::ConnectionDetails;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use verifier_client::{Client, Config};
+use verifier_client::{Config, FaceVerifierClient};
 
 const DEFAULT_ENCLAVE_PORT: u32 = 1000;
 const DEFAULT_MATCH_THRESHOLD: f32 = 0.9;
@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
         .context("failed to call the enclave keys route")?
         .map_err(|error| anyhow!("enclave rejected the enclave-keys request: {error:?}"))?;
 
-    let encryption_key = Client::new(config)
+    let encryption_key = FaceVerifierClient::new(config)
         .context("failed to build the assignment client")?
         .request_assignment(SystemTime::now())
         .await

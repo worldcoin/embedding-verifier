@@ -40,15 +40,18 @@ struct EnclaveAssignmentResponse {
     attestation: String,
 }
 
-/// Calls the host and verifies the attestation documents it relays.
+/// Calls the face verifier host and verifies the attestation documents it relays.
+///
+/// Nothing is returned until the enclave that produced it has been verified, so callers
+/// cannot accidentally use an unattested key.
 #[derive(Debug)]
-pub struct Client {
+pub struct FaceVerifierClient {
     config: Config,
     http: reqwest::Client,
     verifier: EnclaveAttestationVerifier,
 }
 
-impl Client {
+impl FaceVerifierClient {
     /// Builds a client from `config`.
     ///
     /// # Errors

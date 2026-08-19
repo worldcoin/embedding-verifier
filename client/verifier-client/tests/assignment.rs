@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use hex_literal::hex;
 use verifier_client::nitro::PcrMeasurement;
-use verifier_client::{Client, ClientError, Config};
+use verifier_client::{ClientError, Config, FaceVerifierClient};
 
 const REAL_ATTESTATION_DOC_BASE64: &str =
     include_str!("../src/nitro/testdata/real_attestation_doc.b64");
@@ -71,7 +71,7 @@ async fn serve_assignment(attestation: &str) -> String {
 async fn fetches_and_verifies_an_assignment_over_http() {
     let base_url = serve_assignment(REAL_ATTESTATION_DOC_BASE64).await;
 
-    let verified = Client::new(config(&base_url))
+    let verified = FaceVerifierClient::new(config(&base_url))
         .expect("client should build")
         .request_assignment(fixture_instant())
         .await
@@ -87,7 +87,7 @@ async fn rejects_an_assignment_whose_attestation_does_not_verify() {
     // A syntactically fine response carrying a document signed by nobody.
     let base_url = serve_assignment("hEBAQEA=").await;
 
-    let error = Client::new(config(&base_url))
+    let error = FaceVerifierClient::new(config(&base_url))
         .expect("client should build")
         .request_assignment(fixture_instant())
         .await
@@ -107,7 +107,7 @@ async fn surfaces_a_host_error_status_rather_than_retrying() {
     ))
     .await;
 
-    let error = Client::new(config(&base_url))
+    let error = FaceVerifierClient::new(config(&base_url))
         .expect("client should build")
         .request_assignment(fixture_instant())
         .await
