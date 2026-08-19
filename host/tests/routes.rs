@@ -5,13 +5,13 @@
 
 mod common;
 
-use api::enclave::EnclaveClientError;
-use api::routes;
-use api::types::AppState;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use common::{StubEnclaveClient, state_with};
 use enclave_types::{EnclaveError, GetEnclaveKeysResponse};
+use host::enclave::EnclaveClientError;
+use host::routes;
+use host::types::AppState;
 use http_body_util::BodyExt as _;
 use serde_json::Value;
 use tower::ServiceExt as _;

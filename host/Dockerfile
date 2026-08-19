@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-# Builds the host-side `api` service as a statically-linked musl binary and
-# packages it in a `scratch` image.
+# Builds the `host` service as a statically-linked musl binary and packages it
+# in a `scratch` image. Built with the repository root as the context.
 
 FROM ghcr.io/rust-cross/rust-musl-cross:x86_64-musl AS chef
 USER root
@@ -27,7 +27,7 @@ RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
     CARGO_NET_GIT_FETCH_WITH_CLI=true cargo chef cook --release --locked \
       --target x86_64-unknown-linux-musl \
       --recipe-path recipe.json \
-      --package api && \
+      --package host && \
     git config --global --unset-all \
       url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf
 COPY . .
@@ -38,8 +38,8 @@ RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
       "https://github.com/worldcoin/biometric-engines" && \
     CARGO_NET_GIT_FETCH_WITH_CLI=true cargo build --release --locked \
       --target x86_64-unknown-linux-musl \
-      --package api \
- && mv target/x86_64-unknown-linux-musl/release/api /app/api-bin \
+      --package host \
+ && mv target/x86_64-unknown-linux-musl/release/host /app/host-bin \
  && git config --global --unset-all \
       url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf
 
@@ -47,11 +47,11 @@ FROM scratch AS runtime
 WORKDIR /app
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /app/api-bin /usr/local/bin/api
+COPY --from=builder /app/host-bin /usr/local/bin/host
 
 # Run unprivileged (nonroot UID). The static binary needs no shell or libc.
 USER 65532
 
 EXPOSE 8000
 
-ENTRYPOINT ["/usr/local/bin/api"]
+ENTRYPOINT ["/usr/local/bin/host"]

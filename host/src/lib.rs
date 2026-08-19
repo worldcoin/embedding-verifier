@@ -1,4 +1,4 @@
-//! HTTP API for the embedding verifier.
+//! HTTP host for the embedding verifier — the untrusted side of the enclave boundary.
 
 #![deny(
     clippy::all,

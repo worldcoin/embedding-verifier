@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use api::enclave::{EnclaveClient, EnclaveClientError};
-use api::types::{AppState, Environment};
 use async_trait::async_trait;
 use enclave_types::{GetEnclaveKeysResponse, MatchRequest, MatchResponse};
+use host::enclave::{EnclaveClient, EnclaveClientError};
+use host::types::{AppState, Environment};
 
 /// An [`EnclaveClient`] answering from fixed results.
 ///

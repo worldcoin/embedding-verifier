@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "api",
     "client/verifier-client",
     "e2e/enclave-match-e2e",
+    "host",
     "secure-enclave",
     "shared/enclave-types",
 ]

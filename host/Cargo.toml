@@ -1,5 +1,5 @@
 [package]
-name = "api"
+name = "host"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "api"
+name = "host"
 path = "src/main.rs"
 
 [dependencies]

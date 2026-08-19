@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use api::{
+use host::{
     enclave::PontifexEnclaveClient,
     types::{AppState, Environment},
 };
@@ -21,5 +21,5 @@ async fn main() -> anyhow::Result<()> {
     ));
     let state = AppState::new(environment, enclave_client);
 
-    api::server::start(state).await
+    host::server::start(state).await
 }

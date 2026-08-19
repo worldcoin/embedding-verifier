@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use api::{
+use axum::{body::Body, http::Request};
+use host::{
     enclave::PontifexEnclaveClient,
     routes,
     types::{AppState, Environment},
 };
-use axum::{body::Body, http::Request};
 use tower::ServiceExt;
 
 #[tokio::test]

@@ -1,12 +1,12 @@
 # Embedding Verifier
 
-Rust workspace for the embedding verifier API and secure enclave.
+Rust workspace for the embedding verifier host and secure enclave.
 
 ## Structure
 
 ```text
 embedding-verifier/
-├── api/                       # Axum HTTP API (the untrusted host)
+├── host/                      # Axum HTTP API (the untrusted host)
 ├── client/verifier-client/    # Attestation-verifying client
 └── secure-enclave/            # Secure enclave process
 ```
@@ -22,9 +22,9 @@ cargo clippy --all-targets --all-features --
 cargo build
 cargo test --all
 
-# Run the API on http://localhost:8000
+# Run the host on http://localhost:8000
 # ENCLAVE_CID and ENCLAVE_PORT are required; the process panics without them.
-RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin api
+RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin host
 curl http://localhost:8000/health
 
 # Run the secure enclave placeholder
