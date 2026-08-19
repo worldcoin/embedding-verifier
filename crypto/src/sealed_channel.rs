@@ -51,7 +51,9 @@ pub const ENCRYPTION_KEY_LEN: usize = 32;
 /// Domain-separation prefix for the channel's HPKE `info`.
 const CHANNEL_INFO_DOMAIN: &[u8] = b"embedding-verifier/match";
 
-/// Exporter context for the response secret — RFC 9458 §4.4 step 1. Substituted for the RFC's `"message/bhttp response"` under §4.6 and §4.4
+/// Exporter context for the response secret — RFC 9458 §4.4 step 1. Substituted for the RFC's
+/// `"message/bhttp response"` under §4.6 and §6.4, which direct anyone reusing the format to
+/// choose their own label for key diversity.
 const RESPONSE_EXPORTER_LABEL: &[u8] = b"embedding-verifier/match response";
 
 /// `Expand` info for the response AEAD key — RFC 9458 §4.4 step 4.
@@ -276,9 +278,13 @@ pub struct Requester {
 impl Requester {
     /// Builds a requester from an attested encryption public key.
     ///
+    /// This is a format check, not point validation: every 32-byte string decodes as an X25519
+    /// public key (RFC 7748 clamps on use), so a key yielding no valid shared secret — the
+    /// all-zero point, for instance — is only rejected when [`Self::seal`] runs encapsulation.
+    ///
     /// # Errors
     ///
-    /// Returns [`ChannelError::InvalidEncryptionKey`] if `public_key` is not a valid X25519 point.
+    /// Returns [`ChannelError::InvalidEncryptionKey`] if `public_key` cannot be decoded.
     pub fn new(public_key: [u8; ENCRYPTION_KEY_LEN]) -> Result<Self, ChannelError> {
         <Kem as KemTrait>::PublicKey::from_bytes(&public_key)
             .map_err(|_| ChannelError::InvalidEncryptionKey)?;
@@ -290,7 +296,8 @@ impl Requester {
     /// # Errors
     ///
     /// Returns [`ChannelError::InvalidEncryptionKey`] if `public_key` is not exactly
-    /// [`ENCRYPTION_KEY_LEN`] bytes or not a valid X25519 point.
+    /// [`ENCRYPTION_KEY_LEN`] bytes or cannot be decoded; see [`Self::new`] for what decoding
+    /// does and does not validate.
     pub fn from_attestation(public_key: &[u8]) -> Result<Self, ChannelError> {
         let public_key: [u8; ENCRYPTION_KEY_LEN] = public_key
             .try_into()
