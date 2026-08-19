@@ -39,6 +39,7 @@ pub trait EnclaveClient: Send + Sync {
 }
 
 impl EnclaveClientError {
+    /// Failure class for telemetry.
     #[must_use]
     pub const fn failure_class(&self) -> &'static str {
         match self {
