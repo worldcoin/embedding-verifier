@@ -163,11 +163,15 @@ fn channel_info(version: u8, encryption_public_key: &[u8; ENCRYPTION_KEY_LEN]) -
 
 type ResponseSecret = Zeroizing<[u8; RESPONSE_NONCE_LEN]>;
 
-fn derive_response_aead(
+/// The `Extract`/`Expand` chain of RFC 9458 §4.4 steps 3 to 5, returning raw key material.
+///
+/// Split from [`derive_response_aead`] so a known-answer test can pin the derived bytes against
+/// an independently computed vector; production code never sees the raw key outside this file.
+fn derive_response_key_nonce(
     secret: &ResponseSecret,
     encapsulated_key: &[u8; ENCAPSULATED_KEY_LEN],
     response_nonce: &[u8; RESPONSE_NONCE_LEN],
-) -> Result<(Aes256Gcm, Nonce<Aes256Gcm>), ChannelError> {
+) -> Result<(Zeroizing<[u8; AEAD_KEY_LEN]>, [u8; AEAD_NONCE_LEN]), ChannelError> {
     let mut salt = Vec::with_capacity(ENCAPSULATED_KEY_LEN + RESPONSE_NONCE_LEN);
     salt.extend_from_slice(encapsulated_key);
     salt.extend_from_slice(response_nonce);
@@ -175,14 +179,24 @@ fn derive_response_aead(
     let hkdf = Hkdf::<Sha256>::new(Some(&salt), secret.as_slice());
 
     let mut key = Zeroizing::new([0u8; AEAD_KEY_LEN]);
-    let mut nonce = Zeroizing::new([0u8; AEAD_NONCE_LEN]);
+    let mut nonce = [0u8; AEAD_NONCE_LEN];
     hkdf.expand(INFO_KEY, key.as_mut_slice())
-        .and_then(|()| hkdf.expand(INFO_NONCE, nonce.as_mut_slice()))
+        .and_then(|()| hkdf.expand(INFO_NONCE, &mut nonce))
         .map_err(|_| ChannelError::DeriveFailed)?;
+
+    Ok((key, nonce))
+}
+
+fn derive_response_aead(
+    secret: &ResponseSecret,
+    encapsulated_key: &[u8; ENCAPSULATED_KEY_LEN],
+    response_nonce: &[u8; RESPONSE_NONCE_LEN],
+) -> Result<(Aes256Gcm, Nonce<Aes256Gcm>), ChannelError> {
+    let (key, nonce) = derive_response_key_nonce(secret, encapsulated_key, response_nonce)?;
 
     Ok((
         Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key)),
-        Nonce::<Aes256Gcm>::from(*nonce),
+        Nonce::<Aes256Gcm>::from(nonce),
     ))
 }
 
@@ -691,4 +705,215 @@ mod tests {
 
         assert_eq!(result.err(), Some(ChannelError::InvalidEncryptionKey));
     }
+}
+
+/// Known-answer tests.
+///
+/// Three layers, each guarding a different failure mode:
+///
+/// 1. **Official RFC 9180 vector** for this module's exact suite — `mode_base`,
+///    DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM — taken from the reference vector set
+///    the `hpke` crate ships (`test-vectors/origrfc-5f503c5.json`; the RFC's own appendix has no
+///    vector for this AEAD with X25519). Catches a broken build of the suite itself: upstream's
+///    vector tests never run in this repository's CI.
+/// 2. **Independent HKDF vector** for the response derivation, computed with a stdlib-only
+///    Python HMAC implementation that shares no code with the `hkdf` crate. Pins the
+///    `enc || response_nonce` salt construction and the `"key"`/`"nonce"` labels.
+/// 3. **Deterministic wire vectors** for the full channel under a fixed RNG. Self-generated, so
+///    they verify nothing about correctness — they freeze the wire contract (`channel_info`
+///    domain, version and key binding, the exporter label, framing) so any accidental change
+///    fails a test instead of shipping silently.
+#[cfg(test)]
+mod kat {
+    use core::convert::Infallible;
+
+    use hex_literal::hex;
+    use hpke::rand_core::{TryCryptoRng, TryRng};
+
+    use super::*;
+
+    /// Yields exactly the queued bytes, in order. Panics when drained, so a test that consumes
+    /// more randomness than its vector provides fails loudly instead of diverging silently.
+    struct FixedRng(Vec<u8>);
+
+    impl FixedRng {
+        fn new(bytes: &[u8]) -> Self {
+            Self(bytes.to_vec())
+        }
+    }
+
+    impl TryRng for FixedRng {
+        type Error = Infallible;
+
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            let mut bytes = [0u8; 4];
+            self.try_fill_bytes(&mut bytes)?;
+            Ok(u32::from_le_bytes(bytes))
+        }
+
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            let mut bytes = [0u8; 8];
+            self.try_fill_bytes(&mut bytes)?;
+            Ok(u64::from_le_bytes(bytes))
+        }
+
+        fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+            assert!(
+                self.0.len() >= dst.len(),
+                "FixedRng drained: the test consumed more randomness than its vector provides"
+            );
+            let rest = self.0.split_off(dst.len());
+            dst.copy_from_slice(&self.0);
+            self.0 = rest;
+            Ok(())
+        }
+    }
+
+    impl TryCryptoRng for FixedRng {}
+
+    // RFC 9180 reference vector: mode_base, kem_id 0x0020, kdf_id 0x0001, aead_id 0x0002.
+    // Source: the `hpke` crate's `test-vectors/origrfc-5f503c5.json`.
+    const IKM_E: [u8; 32] =
+        hex!("2cd7c601cefb3d42a62b04b7a9041494c06c7843818e0ce28a8f704ae7ab20f9");
+    const IKM_R: [u8; 32] =
+        hex!("dac33b0e9db1b59dbbea58d59a14e7b5896e9bdf98fad6891e99d1686492b9ee");
+    const PK_RM: [u8; 32] =
+        hex!("430f4b9859665145a6b1ba274024487bd66f03a2dd577d7753c68d7d7d00c00c");
+    const ENC: [u8; 32] = hex!("6c93e09869df3402d7bf231bf540fadd35cd56be14f97178f0954db94b7fc256");
+    /// "Ode on a Grecian Urn"
+    const VECTOR_INFO: &[u8] = &hex!("4f6465206f6e2061204772656369616e2055726e");
+    /// "Beauty is truth, truth beauty"
+    const VECTOR_PT: &[u8] = &hex!("4265617574792069732074727574682c20747275746820626561757479");
+    /// "Count-0"
+    const VECTOR_AAD: &[u8] = &hex!("436f756e742d30");
+    const VECTOR_CT: &[u8] = &hex!(
+        "e5d84cd531cfb583096e7cfa9641bd3079cf3a91cda813c52deb5f512be9931980a41de125a925cdad859d5b7a"
+    );
+    const EXPORT_EMPTY_CONTEXT: [u8; 32] =
+        hex!("ded6cffafaea6b812cbf3e241e88332adbc077aca81512914213810ee291770a");
+    const EXPORT_TEST_CONTEXT: [u8; 32] =
+        hex!("7c5ded445732c14fe09727d29b4251c0fd38455fe8440571e687f0886aac94d2");
+
+    /// Layer 1: the `hpke` crate, built with this workspace's feature set, reproduces the
+    /// official vector for the exact suite this module pins.
+    ///
+    /// The ephemeral is reproducible because DHKEM's `encap_with_rng` is
+    /// `DeriveKeyPair(random(Nsk))`: feeding the RNG the vector's `ikmE` yields the vector's
+    /// ephemeral key.
+    #[test]
+    fn hpke_suite_matches_the_official_vector() {
+        // Recipient keypair from ikmR.
+        let (sk_r, pk_r) = <Kem as KemTrait>::derive_keypair(&IKM_R);
+        assert_eq!(pk_r.to_bytes().as_slice(), PK_RM, "pkRm");
+
+        // Sender: ephemeral from ikmE, then seal the vector's first plaintext.
+        let pk_recip = <Kem as KemTrait>::PublicKey::from_bytes(&PK_RM).expect("pkRm decodes");
+        let mut rng = FixedRng::new(&IKM_E);
+        let (encapped, mut sender) = setup_sender_with_rng::<ChannelAead, Kdf, Kem>(
+            &OpModeS::Base,
+            &pk_recip,
+            VECTOR_INFO,
+            &mut rng,
+        )
+        .expect("sender setup");
+        assert_eq!(encapped.to_bytes().as_slice(), ENC, "enc");
+        let ciphertext = sender.seal(VECTOR_PT, VECTOR_AAD).expect("seal");
+        assert_eq!(ciphertext.as_slice(), VECTOR_CT, "ct[0]");
+
+        // Receiver: open the vector ciphertext.
+        let encapped = <Kem as KemTrait>::EncappedKey::from_bytes(&ENC).expect("enc decodes");
+        let mut receiver =
+            setup_receiver::<ChannelAead, Kdf, Kem>(&OpModeR::Base, &sk_r, &encapped, VECTOR_INFO)
+                .expect("receiver setup");
+        assert_eq!(
+            receiver
+                .open(VECTOR_CT, VECTOR_AAD)
+                .expect("open")
+                .as_slice(),
+            VECTOR_PT,
+            "pt[0]"
+        );
+
+        // Exporter, both sides.
+        let mut exported = [0u8; 32];
+        receiver.export(b"", &mut exported).expect("export");
+        assert_eq!(exported, EXPORT_EMPTY_CONTEXT, "export(\"\")");
+        sender
+            .export(b"TestContext", &mut exported)
+            .expect("export");
+        assert_eq!(exported, EXPORT_TEST_CONTEXT, "export(\"TestContext\")");
+    }
+
+    /// Layer 2: the response `Extract`/`Expand` chain matches a vector computed with a
+    /// stdlib-only Python HMAC implementation — independent of the `hkdf` crate.
+    ///
+    /// ```text
+    /// prk   = HMAC-SHA256(salt = enc || response_nonce, ikm = secret)
+    /// key   = HKDF-Expand(prk, "key", 32)
+    /// nonce = HKDF-Expand(prk, "nonce", 12)
+    /// ```
+    #[test]
+    fn response_derivation_matches_an_independent_hkdf() {
+        let secret: ResponseSecret =
+            Zeroizing::new(core::array::from_fn(|i| u8::try_from(i).unwrap()));
+        let encapsulated_key: [u8; ENCAPSULATED_KEY_LEN] =
+            core::array::from_fn(|i| u8::try_from(0x20 + i).unwrap());
+        let response_nonce: [u8; RESPONSE_NONCE_LEN] =
+            core::array::from_fn(|i| u8::try_from(0x40 + i).unwrap());
+
+        let (key, nonce) = derive_response_key_nonce(&secret, &encapsulated_key, &response_nonce)
+            .expect("derivation");
+
+        assert_eq!(
+            *key,
+            hex!("40ec528847cd4e928449f2ed1a70a7d1e8ee317d5e900424fc1dd5b0475b97f7")
+        );
+        assert_eq!(nonce, hex!("f8b0ce9466f27aa6243c65f9"));
+    }
+
+    /// Layer 3 (regression, self-generated): the full channel under a fixed RNG produces these
+    /// exact wire bytes. Freezes `channel_info`, the exporter label, the suite, and framing —
+    /// any of them changing alters the bytes and fails this test, which is the point: the wire
+    /// contract only moves together with `CHANNEL_VERSION`.
+    #[test]
+    fn wire_bytes_are_frozen_under_a_fixed_rng() {
+        let responder = Responder::generate(&mut FixedRng::new(&[0x11; 32]));
+        assert_eq!(responder.public_key(), PINNED_PUBLIC_KEY, "responder key");
+
+        let requester = Requester::new(responder.public_key()).expect("valid key");
+        let (request, opener) = requester
+            .seal(b"match inputs", &mut FixedRng::new(&[0x22; 32]))
+            .expect("seal");
+        assert_eq!(request.as_ref(), PINNED_REQUEST, "request bytes");
+
+        let (plaintext, sealer) = responder
+            .open(&SealedRequest::from_bytes(PINNED_REQUEST.to_vec()))
+            .expect("open");
+        assert_eq!(&plaintext[..], b"match inputs");
+
+        let response = sealer
+            .seal(b"statement", &mut FixedRng::new(&[0x33; 32]))
+            .expect("seal response");
+        assert_eq!(response.as_ref(), PINNED_RESPONSE, "response bytes");
+
+        assert_eq!(
+            &*opener
+                .open(&SealedResponse::from_bytes(PINNED_RESPONSE.to_vec()))
+                .expect("open response"),
+            b"statement".as_ref()
+        );
+    }
+
+    const PINNED_PUBLIC_KEY: [u8; 32] =
+        hex!("1a239249ea74403babc01f32df9931a16f71ac8972c461d69fed15640e310639");
+    const PINNED_REQUEST: [u8; 60] = hex!(
+        "e3b9708aaa21a7f1e62a95ee28d1e5d60b0fceed6c68599013a54b318e9e0b15"
+        "81fd0d3318729a9833bb0a090f9af62d8b87fc166aee22d70849f970"
+    );
+    const PINNED_RESPONSE: [u8; 57] = hex!(
+        // The leading 32 bytes are the response_nonce exactly as drawn from the fixed RNG,
+        // confirming the `response_nonce || ciphertext` layout of RFC 9458 section 4.4 step 7.
+        "3333333333333333333333333333333333333333333333333333333333333333"
+        "ede83b5b125ab339ee2bd91d320571a796feec732954644a95"
+    );
 }

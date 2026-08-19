@@ -19,3 +19,6 @@ hpke.workspace = true
 # rather than two. Verify with `cargo tree -p crypto`.
 sha2 = "0.11"
 zeroize = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+hex-literal.workspace = true
