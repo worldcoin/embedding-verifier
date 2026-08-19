@@ -2,8 +2,8 @@
 members = [
     "client/verifier-client",
     "e2e/enclave-match-e2e",
+    "enclave",
     "host",
-    "secure-enclave",
     "shared/enclave-types",
 ]
 resolver = "3"

@@ -16,7 +16,7 @@ pub mod face_engine;
 pub mod keys;
 /// PCP binding verification (transport-free).
 pub mod pcp;
-/// Pontifex operations exposed to the API host.
+/// Pontifex operations exposed to the host.
 pub mod pontifex_server;
 /// Nitro hardware RNG verification.
 pub mod rng;

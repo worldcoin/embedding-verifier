@@ -1024,6 +1024,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "enclave"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ciborium",
+ "crypto_box",
+ "enclave-types",
+ "face-engine",
+ "hex",
+ "image",
+ "pontifex",
+ "rand 0.8.7",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2",
+ "taceo-ark-babyjubjub",
+ "taceo-eddsa-babyjubjub",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "enclave-match-e2e"
 version = "0.1.0"
 dependencies = [
@@ -3429,30 +3453,6 @@ dependencies = [
  "generic-array",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "secure-enclave"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ciborium",
- "crypto_box",
- "enclave-types",
- "face-engine",
- "hex",
- "image",
- "pontifex",
- "rand 0.8.7",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2",
- "taceo-ark-babyjubjub",
- "taceo-eddsa-babyjubjub",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

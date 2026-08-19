@@ -1,4 +1,4 @@
-//! Wire types shared by the API host and secure enclave.
+//! Wire types shared by the host and enclave.
 
 #![deny(
     clippy::all,

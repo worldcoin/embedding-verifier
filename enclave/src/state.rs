@@ -1,4 +1,4 @@
-//! Boot-scoped state owned by the secure enclave.
+//! Boot-scoped state owned by the enclave.
 
 use std::sync::Arc;
 

@@ -1,4 +1,4 @@
-//! Client boundary between the HTTP API and secure enclave.
+//! Client boundary between the host and enclave.
 
 use std::time::Duration;
 
@@ -14,7 +14,7 @@ const CONTROL_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 // Match requests can carry large payloads and require expensive computation.
 const MATCH_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Failures while calling a secure-enclave operation.
+/// Failures while calling an enclave operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnclaveClientError {
     /// The Pontifex connection or wire operation failed.
@@ -25,7 +25,7 @@ pub enum EnclaveClientError {
     Timeout,
 }
 
-/// Operations the HTTP API requires from the secure enclave.
+/// Operations the host requires from the enclave.
 #[async_trait]
 pub trait EnclaveClient: Send + Sync {
     /// Checks whether the enclave process is reachable and ready.
@@ -38,7 +38,7 @@ pub trait EnclaveClient: Send + Sync {
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError>;
 }
 
-/// Pontifex-backed secure-enclave client.
+/// Pontifex-backed enclave client.
 #[derive(Debug, Clone, Copy)]
 pub struct PontifexEnclaveClient {
     connection: ConnectionDetails,

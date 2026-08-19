@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::EnclaveError;
 
-/// Requests the current health of the secure enclave.
+/// Requests the current health of the enclave.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct HealthRequest;
 

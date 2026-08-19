@@ -23,7 +23,7 @@ RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
       url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
       "https://github.com/worldcoin/biometric-engines" && \
     CARGO_NET_GIT_FETCH_WITH_CLI=true \
-      cargo build --release --locked --package secure-enclave --bin secure-enclave && \
+      cargo build --release --locked --package enclave --bin enclave && \
     git config --global --unset-all \
       url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf
 
@@ -44,9 +44,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /src/target/release/secure-enclave /usr/local/bin/secure-enclave
+COPY --from=builder /src/target/release/enclave /usr/local/bin/enclave
 COPY --from=model-downloader /models /models
 
 ENV RUST_LOG=info
 
-ENTRYPOINT ["/usr/local/bin/secure-enclave"]
+ENTRYPOINT ["/usr/local/bin/enclave"]

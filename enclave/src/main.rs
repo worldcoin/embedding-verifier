@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use anyhow::{Context, anyhow};
-use pontifex::SecureModule;
-use secure_enclave::{
+use enclave::{
     attestation::{self, NsmAttestor},
     face_engine::FaceEngine,
     pontifex_server, rng,
     state::EnclaveState,
 };
+use pontifex::SecureModule;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 

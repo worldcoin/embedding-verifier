@@ -8,7 +8,7 @@ Rust workspace for the embedding verifier host and secure enclave.
 embedding-verifier/
 ├── host/                      # Axum HTTP API (the untrusted host)
 ├── client/verifier-client/    # Attestation-verifying client
-└── secure-enclave/            # Secure enclave process
+└── enclave/                   # Secure enclave process
 ```
 
 ## Development
@@ -28,7 +28,7 @@ RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin host
 curl http://localhost:8000/health
 
 # Run the secure enclave placeholder
-RUST_LOG=info cargo run --bin secure-enclave
+RUST_LOG=info cargo run --bin enclave
 ```
 
 ## Enclave assignment

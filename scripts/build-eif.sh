@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build the secure-enclave EIF and emit its PCR measurements. Needs Linux
+# Build the enclave EIF and emit its PCR measurements. Needs Linux
 # x86_64 + Docker; Nitro hardware is only required to run the enclave, not
 # build it.
 #
@@ -24,7 +24,7 @@ usage() {
   printf '%s\n' \
     "Usage: scripts/build-eif.sh [--from-image] [output-dir]" \
     "" \
-    "Build the secure-enclave EIF and emit its PCR measurements." \
+    "Build the enclave EIF and emit its PCR measurements." \
     "" \
     "Options:" \
     "  --from-image  Convert ENCLAVE_IMAGE_TAG without building it first." \
@@ -81,7 +81,7 @@ if [[ "$build_image" == "true" ]]; then
     --secret id=GITHUB_TOKEN,env=GIT_HUB_TOKEN \
     --secret id=HUGGING_FACE_TOKEN,env=HUGGING_FACE_TOKEN \
     -t "$ENCLAVE_IMAGE_TAG" \
-    -f secure-enclave/Dockerfile \
+    -f enclave/Dockerfile \
     .
 else
   echo "[1/3] Using existing enclave container image ($ENCLAVE_IMAGE_TAG)..."

@@ -198,7 +198,7 @@ impl IntoResponse for AppError {
                 code = self.code,
                 status = %self.status,
                 detail = self.detail.as_deref().unwrap_or_default(),
-                dependency = "secure-enclave",
+                dependency = "enclave",
                 "request failed"
             );
         } else {

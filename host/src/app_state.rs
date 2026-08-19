@@ -25,7 +25,7 @@ impl AppState {
         self.environment
     }
 
-    /// Returns a shared secure-enclave client.
+    /// Returns a shared enclave client.
     #[must_use]
     pub fn enclave_client(&self) -> Arc<dyn EnclaveClient> {
         Arc::clone(&self.enclave_client)
