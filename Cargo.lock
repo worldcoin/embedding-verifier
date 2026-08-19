@@ -107,6 +107,7 @@ dependencies = [
  "base64",
  "enclave-types",
  "hex",
+ "http-body-util",
  "pontifex",
  "serde",
  "serde_json",

@@ -38,23 +38,6 @@ pub trait EnclaveClient: Send + Sync {
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError>;
 }
 
-impl EnclaveClientError {
-    /// Failure class for telemetry.
-    #[must_use]
-    pub const fn failure_class(&self) -> &'static str {
-        match self {
-            Self::Timeout => "timeout",
-            Self::Transport(_) => "transport",
-            Self::Operation(operation) => match operation {
-                EnclaveError::NotReady => "enclave_not_ready",
-                EnclaveError::SecureModuleNotInitialized => "nsm_unavailable",
-                EnclaveError::AttestationFailed => "attestation_failed",
-                _ => "enclave_operation",
-            },
-        }
-    }
-}
-
 /// Pontifex-backed secure-enclave client.
 #[derive(Debug, Clone, Copy)]
 pub struct PontifexEnclaveClient {

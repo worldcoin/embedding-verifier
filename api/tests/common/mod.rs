@@ -1,12 +1,11 @@
-//! Shared test doubles for the HTTP API.
+//! Test doubles shared across the host's integration tests.
 
 use std::sync::Arc;
 
+use api::enclave::{EnclaveClient, EnclaveClientError};
+use api::types::{AppState, Environment};
 use async_trait::async_trait;
 use enclave_types::{GetEnclaveKeysResponse, MatchRequest, MatchResponse};
-
-use crate::enclave::{EnclaveClient, EnclaveClientError};
-use crate::types::{AppState, Environment};
 
 /// An [`EnclaveClient`] answering from fixed results.
 ///

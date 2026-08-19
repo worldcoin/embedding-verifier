@@ -9,8 +9,7 @@
 )]
 
 pub mod enclave;
+pub mod error;
 pub mod routes;
 pub mod server;
-#[cfg(test)]
-mod test_support;
 pub mod types;
