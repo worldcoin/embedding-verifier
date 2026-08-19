@@ -5,11 +5,13 @@ set -euo pipefail
 # x86_64 + Docker; Nitro hardware is only required to run the enclave, not
 # build it.
 #
-# Usage: scripts/build-eif.sh [output-dir]   (default: target/eif)
+# Usage: scripts/build-eif.sh [--from-image] [output-dir]
+#        (output-dir defaults to target/eif)
 # Outputs: embedding-verifier-enclave.eif, pcrs.json
 # Env: NITRO_CLI_VERSION (default v1.4.2), ENCLAVE_IMAGE_TAG,
 #      SKIP_MODEL_DOWNLOAD (default false),
-#      GIT_HUB_TOKEN (read access to private GitHub dependencies)
+#      GIT_HUB_TOKEN (read access to private GitHub dependencies),
+#      HUGGING_FACE_TOKEN (read access to private model repositories)
 
 if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
   echo "[ERROR] EIF builds require Linux x86_64 (got $(uname -s)/$(uname -m))." >&2
@@ -20,24 +22,80 @@ NITRO_CLI_VERSION="${NITRO_CLI_VERSION:-v1.4.2}"
 ENCLAVE_IMAGE_TAG="${ENCLAVE_IMAGE_TAG:-embedding-verifier-enclave:local}"
 SKIP_MODEL_DOWNLOAD="${SKIP_MODEL_DOWNLOAD:-false}"
 
+usage() {
+  printf '%s\n' \
+    "Usage: scripts/build-eif.sh [--from-image] [output-dir]" \
+    "" \
+    "Build the secure-enclave EIF and emit its PCR measurements." \
+    "" \
+    "Options:" \
+    "  --from-image  Convert ENCLAVE_IMAGE_TAG without building it first." \
+    "  -h, --help    Show this help."
+}
+
+build_image=true
+out_dir="target/eif"
+output_dir_provided=false
+while (( $# > 0 )); do
+  case "$1" in
+    --from-image)
+      build_image=false
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "[ERROR] Unknown option: $1" >&2
+      exit 2
+      ;;
+    *)
+      if [[ "$output_dir_provided" == "true" ]]; then
+        echo "[ERROR] Only one output directory may be provided." >&2
+        exit 2
+      fi
+      out_dir="$1"
+      output_dir_provided=true
+      ;;
+  esac
+  shift
+done
+
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-out_dir="${1:-target/eif}"
 mkdir -p "$out_dir"
 out_dir="$(cd "$out_dir" && pwd)"
 
-echo "[1/3] Building enclave container image ($ENCLAVE_IMAGE_TAG)..."
-if [[ -z "${GIT_HUB_TOKEN:-}" ]]; then
-  echo "[ERROR] GIT_HUB_TOKEN is required to fetch private GitHub dependencies." >&2
-  exit 1
+if [[ "$build_image" == "true" ]]; then
+  echo "[1/3] Building enclave container image ($ENCLAVE_IMAGE_TAG)..."
+  if [[ -z "${GIT_HUB_TOKEN:-}" ]]; then
+    echo "[ERROR] GIT_HUB_TOKEN is required to fetch private GitHub dependencies." >&2
+    exit 1
+  fi
+
+  docker_secrets=(--secret id=GITHUB_TOKEN,env=GIT_HUB_TOKEN)
+  if [[ "$SKIP_MODEL_DOWNLOAD" != "true" ]]; then
+    if [[ -z "${HUGGING_FACE_TOKEN:-}" ]]; then
+      echo "[ERROR] HUGGING_FACE_TOKEN is required to download private models." >&2
+      exit 1
+    fi
+    docker_secrets+=(--secret id=HUGGING_FACE_TOKEN,env=HUGGING_FACE_TOKEN)
+  fi
+
+  docker build \
+    "${docker_secrets[@]}" \
+    --build-arg "SKIP_MODEL_DOWNLOAD=$SKIP_MODEL_DOWNLOAD" \
+    -t "$ENCLAVE_IMAGE_TAG" \
+    -f secure-enclave/Dockerfile \
+    .
+else
+  echo "[1/3] Using existing enclave container image ($ENCLAVE_IMAGE_TAG)..."
+  if ! docker image inspect "$ENCLAVE_IMAGE_TAG" >/dev/null 2>&1; then
+    echo "[ERROR] Enclave container image not found locally: $ENCLAVE_IMAGE_TAG" >&2
+    exit 1
+  fi
 fi
-docker build \
-  --secret id=GITHUB_TOKEN,env=GIT_HUB_TOKEN \
-  --build-arg "SKIP_MODEL_DOWNLOAD=$SKIP_MODEL_DOWNLOAD" \
-  -t "$ENCLAVE_IMAGE_TAG" \
-  -f secure-enclave/Dockerfile \
-  .
 
 echo "[2/3] Building nitro-cli $NITRO_CLI_VERSION..."
 nitro_cli_dir="$out_dir/aws-nitro-enclaves-cli-$NITRO_CLI_VERSION"

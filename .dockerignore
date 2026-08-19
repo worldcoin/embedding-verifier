@@ -5,10 +5,8 @@ build/
 .git/
 .github/
 
-# The placeholder Face Engine graph only loads these two private model artifacts.
-models/*
-!models/face_embedding_generator.onnx
-!models/rgbnet.onnx
+# Private model artifacts are downloaded inside the model-downloader stage.
+models/
 
 # Local editor / OS cruft.
 .vscode/

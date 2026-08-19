@@ -10,6 +10,7 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "scripts/build-eif.sh"
+      - "scripts/download-face-models.py"
       - ".github/workflows/build-enclave-eif.yml"
   push:
     branches:

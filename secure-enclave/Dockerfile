@@ -27,6 +27,29 @@ RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
     git config --global --unset-all \
       url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf
 
+FROM python:3.12.11-slim-bookworm AS model-downloader
+
+ARG SKIP_MODEL_DOWNLOAD=false
+
+WORKDIR /build
+COPY scripts/download-face-models.py scripts/download-face-models.py
+
+RUN if [ "$SKIP_MODEL_DOWNLOAD" = "true" ]; then \
+      mkdir -p /models; \
+    else \
+      python3 -m pip install --no-cache-dir huggingface-hub==0.34.4; \
+    fi
+
+RUN --mount=type=secret,id=HUGGING_FACE_TOKEN \
+    if [ "$SKIP_MODEL_DOWNLOAD" = "true" ]; then \
+      echo "Skipping model download"; \
+    else \
+      test -s /run/secrets/HUGGING_FACE_TOKEN || \
+        { echo "HUGGING_FACE_TOKEN BuildKit secret is required" >&2; exit 1; }; \
+      HUGGING_FACE_TOKEN="$(cat /run/secrets/HUGGING_FACE_TOKEN)" \
+        python3 scripts/download-face-models.py --output /models; \
+    fi
+
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -34,18 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/target/release/secure-enclave /usr/local/bin/secure-enclave
-
-# TODO: Remove this build-time switch once models are injected into the enclave
-# at runtime. CI sets it to true because private model artifacts are unavailable.
-ARG SKIP_MODEL_DOWNLOAD=false
-RUN --mount=from=builder,source=/src,target=/build,ro \
-    if [ "$SKIP_MODEL_DOWNLOAD" = "true" ]; then \
-      echo "Skipping model packaging"; \
-    else \
-      mkdir -p /models; \
-      cp /build/models/face_embedding_generator.onnx /models/face_embedding_generator.onnx; \
-      cp /build/models/rgbnet.onnx /models/rgbnet.onnx; \
-    fi
+COPY --from=model-downloader /models /models
 
 ENV RUST_LOG=info
 
