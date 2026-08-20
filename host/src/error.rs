@@ -13,7 +13,7 @@ use axum::{
 use enclave_types::EnclaveError;
 use serde::Serialize;
 
-use crate::challenge_fetch::FetchError;
+use crate::challenge_fetcher::FetchError;
 use crate::enclave::EnclaveClientError;
 
 /// Error envelope returned to clients.

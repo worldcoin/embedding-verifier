@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use host::{
-    AppState, Environment, challenge_fetch::ChallengeFetcher, enclave::PontifexEnclaveClient,
+    AppState, Environment, challenge_fetcher::ChallengeFetcher, enclave::PontifexEnclaveClient,
 };
 use tracing_subscriber::EnvFilter;
 

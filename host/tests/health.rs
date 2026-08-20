@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{body::Body, http::Request};
 use host::{
-    AppState, Environment, challenge_fetch::ChallengeFetcher, enclave::PontifexEnclaveClient,
+    AppState, Environment, challenge_fetcher::ChallengeFetcher, enclave::PontifexEnclaveClient,
     routes,
 };
 use tower::ServiceExt;

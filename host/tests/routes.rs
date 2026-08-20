@@ -11,7 +11,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use common::{StubChallengeSource, StubEnclaveClient, state_with, state_with_source};
 use enclave_types::{EnclaveError, GetEnclaveKeysResponse};
 use host::AppState;
-use host::challenge_fetch::FetchError;
+use host::challenge_fetcher::FetchError;
 use host::enclave::EnclaveClientError;
 use host::routes;
 use http_body_util::BodyExt as _;

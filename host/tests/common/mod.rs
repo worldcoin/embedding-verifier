@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use enclave_types::{GetEnclaveKeysResponse, MatchRequest, MatchResponse};
-use host::challenge_fetch::{ChallengeSource, FetchError};
+use host::challenge_fetcher::{ChallengeSource, FetchError};
 use host::enclave::{EnclaveClient, EnclaveClientError};
 use host::{AppState, Environment};
 
