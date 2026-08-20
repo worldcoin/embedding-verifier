@@ -14,4 +14,3 @@
 pub mod match_token;
 pub mod payload;
 pub mod sealed_channel;
-pub mod sealed_channel;

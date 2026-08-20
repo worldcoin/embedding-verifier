@@ -1152,6 +1152,7 @@ dependencies = [
 name = "enclave"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "ciborium",
  "crypto",

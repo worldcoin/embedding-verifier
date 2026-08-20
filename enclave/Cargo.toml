@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+aes-gcm.workspace = true
 ciborium.workspace = true
 crypto.workspace = true
 enclave-types.workspace = true
