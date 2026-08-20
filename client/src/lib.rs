@@ -17,6 +17,6 @@ mod config;
 
 pub mod nitro;
 
+pub use attested_channel::channel::Requester;
 pub use client::{ClientError, FaceVerifierClient, VerifiedAssignment};
 pub use config::{Config, ConfigError};
-pub use crypto::sealed_channel::Requester;

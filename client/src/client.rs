@@ -4,7 +4,7 @@ use std::time::SystemTime;
 
 use serde::Deserialize;
 
-use crypto::sealed_channel::Requester;
+use attested_channel::channel::Requester;
 
 use crate::config::Config;
 use crate::nitro::{EnclaveAttestationError, EnclaveAttestationVerifier, VerifiedAttestation};

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crypto::sealed_channel::{ENCRYPTION_KEY_LEN, Responder, UnwrapErr};
+use attested_channel::channel::{ENCRYPTION_KEY_LEN, Responder, UnwrapErr};
 use eddsa_babyjubjub::EdDSAPublicKey;
 use enclave_types::EnclaveError;
 use getrandom::SysRng;

@@ -1,5 +1,6 @@
 [package]
-name = "crypto"
+name = "attested-channel"
+description = "Verifying an enclave's attestation and opening an HPKE channel to the enclave it attests"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,7 +17,7 @@ getrandom.workspace = true
 hpke.workspace = true
 # Deliberately not the workspace `sha2` (0.10, which the image-hashing users are on): this must
 # match the generation `hpke` already resolves for HKDF-SHA256, so the enclave links one SHA-256
-# rather than two. Verify with `cargo tree -p crypto`.
+# rather than two. Verify with `cargo tree -p attested-channel`.
 sha2 = "0.11"
 zeroize = { workspace = true, features = ["alloc"] }
 

@@ -1,7 +1,7 @@
 [workspace]
 members = [
+    "attested-channel",
     "client",
-    "crypto",
     "e2e",
     "enclave",
     "enclave-types",
@@ -25,6 +25,7 @@ aes-gcm = { version = "0.11", default-features = false, features = ["aes", "allo
 anyhow = "1.0"
 ark-babyjubjub = { package = "taceo-ark-babyjubjub", version = "0.5" }
 async-trait = "0.1"
+attested-channel = { path = "attested-channel" }
 # Attestation crates are pinned to bedrock's versions so the two verifiers cannot drift.
 aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
 axum = "0.8"
@@ -32,7 +33,6 @@ base64 = "0.22"
 ciborium = "0.2"
 client = { path = "client" }
 coset = "0.4.2"
-crypto = { path = "crypto" }
 eddsa-babyjubjub = { package = "taceo-eddsa-babyjubjub", version = "0.5" }
 enclave-types = { path = "enclave-types" }
 face-engine = { git = "https://github.com/worldcoin/biometric-engines", rev = "face-engine-v2.16.0", default-features = false, features = ["tract"] }
