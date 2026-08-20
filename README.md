@@ -12,6 +12,7 @@ embedding-verifier/
 ├── enclave/           # Nitro enclave workload — the trusted side
 ├── enclave-types/     # Wire contract carried over vsock between the two
 ├── attested-channel/  # Client↔enclave channel and the attestation it rests on; destined for pontifex
+├── deepface-protocol/ # Match inputs and outputs; travels sealed, the host links none of it. Will likely move to `world-id-protocol`.
 ├── client/            # Attestation-verifying client
 └── e2e/               # End-to-end harness driving host and enclave together
 ```
