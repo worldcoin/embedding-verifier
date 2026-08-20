@@ -46,6 +46,12 @@ impl EnclaveState {
         self.responder.public_key()
     }
 
+    /// Returns the signing key for this boot.
+    #[must_use]
+    pub const fn signing_key(&self) -> &SigningKey {
+        &self.signing_key
+    }
+
     /// Returns the `BabyJubJub` public key that verifies this boot's statements.
     #[must_use]
     pub const fn signing_public_key(&self) -> &EdDSAPublicKey {

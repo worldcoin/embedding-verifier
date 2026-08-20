@@ -1,31 +1,20 @@
 use std::{env, fs, path::PathBuf, time::SystemTime};
 
-use anyhow::{Context, Result, anyhow, ensure};
+use aes_gcm::{
+    Aes256Gcm, Key, KeyInit,
+    aead::{Aead, Nonce},
+};
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use attested_channel::channel::{CHANNEL_VERSION, SealedResponse, UnwrapErr};
 use client::{Config, FaceVerifierClient};
-use enclave_types::{GetEnclaveKeysRequest, MatchRequest};
+use deepface_protocol::match_token::{self, EdDSAPublicKey};
+use deepface_protocol::messages::{CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, MatchInputs, MatchResult};
+use enclave_types::{GetEnclaveKeysRequest, MatchOutcome, MatchRequest};
 use pontifex::client::ConnectionDetails;
-use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 const DEFAULT_ENCLAVE_PORT: u32 = 1000;
 const DEFAULT_MATCH_THRESHOLD: f32 = 0.9;
-
-/// Plaintext schema wrapped by [`MatchRequest`].
-///
-/// This is intentionally not part of `enclave-types`: Pontifex only transports
-/// the opaque payload, while this schema is the private match protocol.
-#[derive(Serialize)]
-struct MatchInputs<'a> {
-    #[serde(with = "serde_bytes")]
-    live_image: &'a [u8],
-    #[serde(with = "serde_bytes")]
-    credential_image: &'a [u8],
-    #[serde(with = "serde_bytes")]
-    hashes_json: &'a [u8],
-    #[serde(with = "serde_bytes")]
-    challenge_image: &'a [u8],
-    match_threshold: f32,
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -52,55 +41,98 @@ async fn main() -> Result<()> {
         .request_assignment(SystemTime::now())
         .await
         .context("enclave assignment did not verify")?;
-    let _requester = assignment.requester;
+    let requester = assignment.requester;
     let signing_key = verifier
         .verify(&keys_response.signing_key_attestation, SystemTime::now())
         .context("the signing-key attestation document did not verify")?
         .enclave_public_key;
-    ensure!(
-        signing_key.len() == 32,
-        "attested signing public key was not 32 bytes"
-    );
+    let signing_key = <[u8; 32]>::try_from(signing_key.as_slice())
+        .map_err(|_| anyhow!("attested signing public key was not 32 bytes"))?;
+    let signing_key = EdDSAPublicKey::from_compressed_bytes(signing_key)
+        .map_err(|error| anyhow!("attested signing public key did not decode: {error:?}"))?;
+
+    // Stands in for the RP: encrypt the challenge frame, keep the key for the sealed payload.
+    let challenge_image_key: [u8; CHALLENGE_KEY_LEN] = rand::random();
+    let challenge_image_iv: [u8; CHALLENGE_IV_LEN] = rand::random();
+    let challenge_ciphertext = Aes256Gcm::new(&Key::<Aes256Gcm>::from(challenge_image_key))
+        .encrypt(
+            &Nonce::<Aes256Gcm>::from(challenge_image_iv),
+            challenge_image.as_slice(),
+        )
+        .map_err(|_| anyhow!("failed to encrypt the challenge image"))?;
 
     let hashes_json = hashes_json_for(&credential_image);
-    let payload = MatchInputs {
-        live_image: &live_image,
-        credential_image: &credential_image,
-        hashes_json: &hashes_json,
-        challenge_image: &challenge_image,
+    let inputs = MatchInputs {
+        version: CHANNEL_VERSION,
+        live_image: live_image.clone(),
+        credential_image: credential_image.clone(),
+        hashes_json: hashes_json.clone(),
+        challenge_image_key,
+        challenge_image_iv,
         match_threshold,
     };
-    let mut sealed_payload = Vec::new();
-    ciborium::into_writer(&payload, &mut sealed_payload)
-        .context("failed to encode the match payload")?;
+    let plaintext = inputs
+        .to_cbor()
+        .map_err(|error| anyhow!("failed to encode the match inputs: {error:?}"))?;
+    let (sealed, opener) = requester
+        .seal(&plaintext, &mut UnwrapErr(getrandom::SysRng))
+        .map_err(|error| anyhow!("failed to seal the match request: {error:?}"))?;
 
-    let response = pontifex::client::send(connection, &MatchRequest { sealed_payload })
-        .await
-        .context("failed to call the enclave matches route")?
-        .map_err(|error| anyhow!("enclave rejected the match request: {error:?}"))?;
+    let response = pontifex::client::send(
+        connection,
+        &MatchRequest {
+            body: sealed.into_bytes(),
+            challenge_ciphertext,
+        },
+    )
+    .await
+    .context("failed to call the enclave matches route")?
+    .map_err(|error| anyhow!("enclave rejected the match request: {error:?}"))?;
 
+    let sealed_outcome = opener
+        .open(&SealedResponse::from_bytes(response.ciphertext))
+        .map_err(|error| anyhow!("failed to open the sealed response: {error:?}"))?;
+    let result = MatchResult::from_cbor(&sealed_outcome)
+        .map_err(|error| anyhow!("failed to decode the sealed result: {error:?}"))?;
+
+    // The cleartext class is the host's hint; the sealed result is the authority. A disagreement
+    // between them is host misbehaviour, not a failed match.
+    let token = match result {
+        MatchResult::Statement(token) => {
+            ensure!(
+                response.outcome == MatchOutcome::Statement,
+                "enclave sealed a statement but reported {:?}",
+                response.outcome
+            );
+            token
+        }
+        MatchResult::Rejected(reason) => bail!("match was rejected: {reason:?}"),
+    };
+
+    let statement = match_token::verify(&token, &signing_key)
+        .map_err(|error| anyhow!("the match statement did not verify: {error:?}"))?;
     ensure!(
-        response.statement.match_coefficient >= match_threshold,
+        statement.match_coefficient >= match_threshold,
         "credential/live score {} did not meet threshold {}",
-        response.statement.match_coefficient,
+        statement.match_coefficient,
         match_threshold
     );
     ensure!(
-        response.statement.live_image_hash == Sha256::digest(&live_image).as_slice(),
+        statement.live_image_hash == Sha256::digest(&live_image).as_slice(),
         "statement did not commit to the live image"
     );
     ensure!(
-        response.statement.challenger_image_hash == Sha256::digest(&challenge_image).as_slice(),
+        statement.challenger_image_hash == Sha256::digest(&challenge_image).as_slice(),
         "statement did not commit to the challenge image"
     );
     ensure!(
-        response.statement.credential_claim == Sha256::digest(&hashes_json).as_slice(),
+        statement.credential_claim == Sha256::digest(&hashes_json).as_slice(),
         "statement did not commit to hashes.json"
     );
 
     println!(
         "match succeeded: credential/live similarity={:.6}, threshold={:.6}",
-        response.statement.match_coefficient, match_threshold
+        statement.match_coefficient, match_threshold
     );
     Ok(())
 }

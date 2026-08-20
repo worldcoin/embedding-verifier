@@ -97,14 +97,10 @@ impl AppError {
                 EnclaveError::NotReady
                 | EnclaveError::SecureModuleNotInitialized
                 | EnclaveError::AttestationFailed => Self::enclave_not_ready(*operation),
-                EnclaveError::DecryptFailed
-                | EnclaveError::MalformedMatchPayload
-                | EnclaveError::InvalidHashesJson
-                | EnclaveError::ThumbnailHashMismatch
-                | EnclaveError::MatchBelowThreshold
-                | EnclaveError::InvalidImage
-                | EnclaveError::EmbeddingGenerationFailed
-                | EnclaveError::EmbeddingComparisonFailed => Self::new(
+                EnclaveError::BadRequest
+                | EnclaveError::ChallengeDecryptFailed
+                | EnclaveError::ImageAnalysisFailed
+                | EnclaveError::Internal => Self::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal_error",
                     "Internal server error",
@@ -125,27 +121,34 @@ impl AppError {
                 Self::enclave_unreachable(error)
             }
             EnclaveClientError::Operation(operation) => match operation {
-                EnclaveError::DecryptFailed
-                | EnclaveError::MalformedMatchPayload
-                | EnclaveError::InvalidHashesJson
-                | EnclaveError::InvalidImage => Self::new(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_request",
-                    "The match request could not be processed",
-                    false,
+                // The request did not open. Indistinguishable from a corrupt ciphertext here, so
+                // the client is told to re-assign and re-seal -- once. See the spec's §6 note on
+                // bounding this retry: an unbounded one would loop on a genuine sealing bug.
+                EnclaveError::BadRequest => Self::new(
+                    StatusCode::CONFLICT,
+                    "reassign_required",
+                    "The request was not sealed to this enclave's current encryption key",
+                    true,
                 )
                 .with_detail(format!("{operation:?}")),
-                // Well-formed request, but the match itself did not hold.
-                EnclaveError::ThumbnailHashMismatch
-                | EnclaveError::MatchBelowThreshold
-                | EnclaveError::EmbeddingGenerationFailed => Self::new(
+                // The one input the host supplied, so it is attributed outward rather than to the
+                // caller or the enclave.
+                EnclaveError::ChallengeDecryptFailed => Self::new(
                     StatusCode::UNPROCESSABLE_ENTITY,
-                    "match_failed",
-                    "The match did not hold",
+                    "challenge_decrypt_failed",
+                    "The challenge image could not be decrypted",
                     false,
                 )
                 .with_detail(format!("{operation:?}")),
-                EnclaveError::EmbeddingComparisonFailed => Self::new(
+                // About the photograph, not the person, so the client must see it to retake.
+                EnclaveError::ImageAnalysisFailed => Self::new(
+                    StatusCode::BAD_REQUEST,
+                    "image_analysis_failed",
+                    "An input image was rejected",
+                    false,
+                )
+                .with_detail(format!("{operation:?}")),
+                EnclaveError::Internal => Self::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal_error",
                     "Internal server error",
@@ -274,31 +277,37 @@ mod tests {
     /// The same enclave error means different things depending on what was asked, which is
     /// why the mapping is per route rather than a blanket `From` impl.
     #[test]
-    fn a_match_error_is_a_client_error_on_matches_and_a_host_bug_on_assignment() {
-        let error = EnclaveClientError::Operation(EnclaveError::DecryptFailed);
+    fn an_unopenable_request_is_retryable_on_matches_and_a_host_bug_on_assignment() {
+        let error = EnclaveClientError::Operation(EnclaveError::BadRequest);
 
-        assert_eq!(
-            AppError::enclave_match(&error).status(),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            AppError::enclave_assignment(&error).status(),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
+        // On the match path the client should re-assign and re-seal.
+        let mapped = AppError::enclave_match(&error);
+        assert_eq!(mapped.status(), StatusCode::CONFLICT);
+        assert!(mapped.allow_retry);
+
+        // Reaching it from an attestation request means the enclave answered something it was
+        // never asked, which is a host bug and not retryable.
+        let mapped = AppError::enclave_assignment(&error);
+        assert_eq!(mapped.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(!mapped.allow_retry);
     }
 
+    /// The challenge blob is the host's input and the image is the caller's, so neither may be
+    /// reported as an enclave fault.
     #[test]
-    fn match_failures_are_unprocessable_and_not_retryable() {
-        for operation in [
-            EnclaveError::ThumbnailHashMismatch,
-            EnclaveError::MatchBelowThreshold,
-            EnclaveError::EmbeddingGenerationFailed,
-        ] {
-            let mapped = AppError::enclave_match(&EnclaveClientError::Operation(operation));
+    fn match_inputs_are_attributed_to_whoever_supplied_them() {
+        let mapped = AppError::enclave_match(&EnclaveClientError::Operation(
+            EnclaveError::ChallengeDecryptFailed,
+        ));
+        assert_eq!(mapped.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(mapped.code(), "challenge_decrypt_failed");
+        assert!(!mapped.allow_retry);
 
-            assert_eq!(mapped.status(), StatusCode::UNPROCESSABLE_ENTITY);
-            assert_eq!(mapped.code(), "match_failed");
-            assert!(!mapped.allow_retry, "a failed match will fail again");
-        }
+        let mapped = AppError::enclave_match(&EnclaveClientError::Operation(
+            EnclaveError::ImageAnalysisFailed,
+        ));
+        assert_eq!(mapped.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(mapped.code(), "image_analysis_failed");
+        assert!(!mapped.allow_retry);
     }
 }

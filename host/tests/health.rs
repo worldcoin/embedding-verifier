@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use axum::{body::Body, http::Request};
-use host::{AppState, Environment, enclave::PontifexEnclaveClient, routes};
+use host::{
+    AppState, Environment, challenge_fetch::ChallengeFetcher, enclave::PontifexEnclaveClient,
+    routes,
+};
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -9,6 +12,7 @@ async fn health_returns_ok() {
     let state = AppState::new(
         Environment::Development,
         Arc::new(PontifexEnclaveClient::new(0, 0)),
+        Arc::new(ChallengeFetcher::new().expect("the HTTP client should build")),
     );
     let response = routes::handler()
         .with_state(state)

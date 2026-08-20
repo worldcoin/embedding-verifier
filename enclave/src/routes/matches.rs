@@ -1,162 +1,210 @@
-use std::io::Cursor;
 use std::sync::Arc;
 
-use enclave_types::{EnclaveError, MatchRequest, MatchResponse, MatchStatement};
+use attested_channel::channel::{SealedRequest, SealedResponse, UnwrapErr};
+use deepface_protocol::Error as ProtocolError;
+use deepface_protocol::match_token::{self, MatchClaims, MatchToken};
+use deepface_protocol::messages::MatchInputs;
+use deepface_protocol::messages::{MatchResult, RejectReason};
+use enclave_types::{EnclaveError, MatchOutcome, MatchRequest, MatchResponse};
+use getrandom::SysRng;
 use pontifex::Request;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{pcp, state::EnclaveState};
+use crate::{challenge, pcp, state::EnclaveState};
 
-/// Statement format version.
-const STATEMENT_VERSION: u8 = 1;
-
-/// Placeholder statement signature until signing lands.
-const DUMMY_SIGNATURE: [u8; 64] = [0u8; 64];
-
-/// CBOR-framed match inputs carried by [`MatchRequest`].
-/// Enclave-internal: the host only forwards the opaque payload.
-#[derive(Serialize, Deserialize)]
-pub(super) struct MatchInputs {
-    /// Raw liveness image bytes.
-    #[serde(with = "serde_bytes")]
-    pub live_image: Vec<u8>,
-    /// Raw credential image bytes (the Orb PCP thumbnail).
-    #[serde(with = "serde_bytes")]
-    pub credential_image: Vec<u8>,
-    /// Raw `hashes.json` bytes from the PCP.
-    #[serde(with = "serde_bytes")]
-    pub hashes_json: Vec<u8>,
-    /// Raw challenge image bytes (the RP-supplied face challenge).
-    #[serde(with = "serde_bytes")]
-    pub challenge_image: Vec<u8>,
-    /// Minimum similarity the RP requires. Convenience gate only.
-    pub match_threshold: f32,
-}
-
-impl MatchInputs {
-    /// Decodes the CBOR-framed match inputs.
-    fn from_cbor(bytes: &[u8]) -> Result<Self, EnclaveError> {
-        ciborium::from_reader(Cursor::new(bytes)).map_err(|_| EnclaveError::MalformedMatchPayload)
-    }
-}
-
-/// Runs a 3-way face match: the credential image against both the live and challenge
-/// images.
+/// Runs a 3-way face match: the credential image against both the live and challenge images.
 ///
-/// The statement signature remains a placeholder.
+/// Request and outcome are both sealed to this boot's channel, so the host learns only
+/// [`MatchOutcome`].
+///
+/// # Errors
+///
+/// Returns [`EnclaveError`] only for what the host may see. A face that did not match is *not* an
+/// error — it is a sealed [`RejectReason`] inside a successful response.
 pub async fn handler(
     state: Arc<EnclaveState>,
     request: MatchRequest,
 ) -> Result<MatchResponse, EnclaveError> {
-    let payload = MatchInputs::from_cbor(&request.sealed_payload).inspect_err(|error| {
+    let (plaintext, sealer) = state
+        .responder()
+        .open(&SealedRequest::from_bytes(request.body))
+        .map_err(|error| {
+            tracing::warn!(
+                ?error,
+                route = MatchRequest::ROUTE_ID,
+                "failed to open sealed request"
+            );
+            EnclaveError::BadRequest
+        })?;
+
+    let inputs = MatchInputs::from_cbor(&plaintext).map_err(|error| {
         tracing::warn!(
             ?error,
             route = MatchRequest::ROUTE_ID,
-            "malformed match payload"
+            "unusable match payload"
         );
+        match error {
+            // The only two decoding can produce. The crate error covers the whole protocol, so
+            // anything else here is a bug rather than a bad request.
+            ProtocolError::Malformed | ProtocolError::UnsupportedChannelVersion => {
+                EnclaveError::BadRequest
+            }
+            _ => EnclaveError::Internal,
+        }
     })?;
 
-    // Bind the credential image to its PCP commitment.
-    let binding = pcp::bind_credential_claim(&payload.credential_image, &payload.hashes_json);
-    let credential_claim = binding.inspect_err(|error| {
-        tracing::warn!(
-            ?error,
-            route = MatchRequest::ROUTE_ID,
-            "pcp binding rejected"
-        );
-    })?;
+    let challenge_image = challenge::decrypt(
+        &request.challenge_ciphertext,
+        &inputs.challenge_image_key,
+        &inputs.challenge_image_iv,
+    )?;
 
-    let live_image_hash: [u8; 32] = Sha256::digest(&payload.live_image).into();
-    let challenger_image_hash: [u8; 32] = Sha256::digest(&payload.challenge_image).into();
+    let (outcome, result) = match evaluate(&state, &inputs, &challenge_image)? {
+        Ok(statement) => (
+            MatchOutcome::Statement,
+            MatchResult::Statement(sign(&state, &statement)?),
+        ),
+        Err(reason) => (MatchOutcome::Rejected, MatchResult::Rejected(reason)),
+    };
+
+    Ok(MatchResponse {
+        outcome,
+        ciphertext: seal(sealer, &result)?.into_bytes(),
+    })
+}
+
+/// Evaluates the opened inputs.
+///
+/// The nesting is the confidentiality split: the outer `Err` is what the host sees, the inner
+/// `Err` is a [`RejectReason`] only the requester sees.
+fn evaluate(
+    state: &EnclaveState,
+    inputs: &MatchInputs,
+    challenge_image: &[u8],
+) -> Result<Result<MatchClaims, RejectReason>, EnclaveError> {
+    // Binds the credential image to the hash its PCP commits. A commitment, not proof of
+    // enrollment — nothing here checks who issued the PCP.
+    let credential_claim =
+        match pcp::bind_credential_claim(&inputs.credential_image, &inputs.hashes_json) {
+            Ok(claim) => claim,
+            Err(pcp::PcpError::InvalidHashesJson) => {
+                tracing::warn!(route = MatchRequest::ROUTE_ID, "malformed hashes.json");
+                return Err(EnclaveError::BadRequest);
+            }
+            Err(pcp::PcpError::ThumbnailHashMismatch) => {
+                tracing::warn!(route = MatchRequest::ROUTE_ID, "pcp binding rejected");
+                return Ok(Err(RejectReason::ThumbnailHashMismatch));
+            }
+        };
 
     let scores = state.face_engine().compare_reference_to_probes(
-        &payload.credential_image,
-        &payload.live_image,
-        &payload.challenge_image,
+        &inputs.credential_image,
+        &inputs.live_image,
+        challenge_image,
     )?;
-    let live_coefficient = scores.live_similarity;
-    let challenge_coefficient = scores.challenge_similarity;
 
-    if live_coefficient < payload.match_threshold || challenge_coefficient < payload.match_threshold
+    if scores.live_similarity < inputs.match_threshold
+        || scores.challenge_similarity < inputs.match_threshold
     {
+        // Scores stay out of the log: they measure a person, and the log has no sealed channel.
         tracing::warn!(
-            live_coefficient,
-            challenge_coefficient,
-            threshold = payload.match_threshold,
             route = MatchRequest::ROUTE_ID,
             "match scored below threshold"
         );
-        return Err(EnclaveError::MatchBelowThreshold);
+        return Ok(Err(RejectReason::MatchBelowThreshold));
     }
 
-    let statement = MatchStatement {
-        version: STATEMENT_VERSION,
-        live_image_hash,
+    Ok(Ok(MatchClaims {
+        live_image_hash: Sha256::digest(&inputs.live_image).into(),
         credential_claim,
-        challenger_image_hash,
-        // Only the credential-vs-live score is surfaced.
-        match_coefficient: live_coefficient,
-    };
+        challenger_image_hash: Sha256::digest(challenge_image).into(),
+        // Only the credential-vs-live score is surfaced; the challenge comparison is a gate.
+        match_coefficient: scores.live_similarity,
+    }))
+}
 
-    // DUMMY: statement signing is not yet implemented.
-    Ok(MatchResponse {
-        statement,
-        signature: DUMMY_SIGNATURE.to_vec(),
+/// Signs a statement with this boot's signing key.
+///
+/// The digest and the token encoding come from `deepface-protocol`; the signature comes from the
+/// enclave's own key, which never leaves this crate.
+fn sign(state: &EnclaveState, statement: &MatchClaims) -> Result<MatchToken, EnclaveError> {
+    let digest = statement.message_hash().map_err(|error| {
+        tracing::error!(?error, "match claims could not be lowered to a digest");
+        EnclaveError::Internal
+    })?;
+    let signature = state.signing_key().sign(digest);
+
+    match_token::build_token(statement, &signature, state.signing_public_key()).map_err(|error| {
+        tracing::error!(?error, "failed to build the match statement");
+        EnclaveError::Internal
     })
+}
+
+/// Seals the authoritative result back to the requester.
+fn seal(
+    sealer: attested_channel::channel::ResponseSealer,
+    result: &MatchResult,
+) -> Result<SealedResponse, EnclaveError> {
+    let encoded = result.to_cbor().map_err(|error| {
+        tracing::error!(?error, "failed to encode the match result");
+        EnclaveError::Internal
+    })?;
+
+    sealer
+        .seal(&encoded, &mut UnwrapErr(SysRng))
+        .map_err(|error| {
+            tracing::error!(?error, "failed to seal the match response");
+            EnclaveError::Internal
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use enclave_types::{EnclaveError, MatchRequest};
+    use aes_gcm::{
+        Aes256Gcm, Key, KeyInit,
+        aead::{Aead, Nonce},
+    };
+    use attested_channel::channel::{
+        CHANNEL_VERSION, Requester, ResponseOpener, SealedResponse, UnwrapErr,
+    };
+    use deepface_protocol::match_token;
+    use deepface_protocol::messages::{CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, MatchInputs};
+    use deepface_protocol::messages::{MatchResult, RejectReason};
+    use enclave_types::{EnclaveError, MatchOutcome, MatchRequest};
+    use getrandom::SysRng;
     use sha2::{Digest, Sha256};
 
-    use super::{DUMMY_SIGNATURE, MatchInputs, handler};
+    use super::handler;
     use crate::{
         face_engine::{ComparisonScores, FaceComparator},
         state::EnclaveState,
         test_support::FailingAttestor,
     };
 
-    struct ExpectedImages {
-        credential: Vec<u8>,
-        live: Vec<u8>,
-        challenge: Vec<u8>,
-    }
+    const KEY: [u8; CHALLENGE_KEY_LEN] = [7u8; CHALLENGE_KEY_LEN];
+    const IV: [u8; CHALLENGE_IV_LEN] = [9u8; CHALLENGE_IV_LEN];
+    const CREDENTIAL: &[u8] = b"credential-thumbnail";
+    const LIVE: &[u8] = b"liveness-frame";
+    const CHALLENGE: &[u8] = b"challenge-frame";
 
     struct MockFaceEngine {
-        expected: Option<ExpectedImages>,
         result: Result<ComparisonScores, EnclaveError>,
     }
 
     impl MockFaceEngine {
-        fn matching(
-            credential: &[u8],
-            live: &[u8],
-            challenge: &[u8],
-            live_similarity: f32,
-            challenge_similarity: f32,
-        ) -> Self {
+        const fn scoring(live: f32, challenge: f32) -> Self {
             Self {
-                expected: Some(ExpectedImages {
-                    credential: credential.to_vec(),
-                    live: live.to_vec(),
-                    challenge: challenge.to_vec(),
-                }),
                 result: Ok(ComparisonScores {
-                    live_similarity,
-                    challenge_similarity,
+                    live_similarity: live,
+                    challenge_similarity: challenge,
                 }),
             }
         }
 
-        fn unused() -> Self {
-            Self {
-                expected: None,
-                result: Err(EnclaveError::NotReady),
-            }
+        const fn failing(error: EnclaveError) -> Self {
+            Self { result: Err(error) }
         }
     }
 
@@ -167,13 +215,10 @@ mod tests {
             live_image: &[u8],
             challenge_image: &[u8],
         ) -> Result<ComparisonScores, EnclaveError> {
-            let expected = self
-                .expected
-                .as_ref()
-                .expect("mock Face Engine was called unexpectedly");
-            assert_eq!(credential_image, expected.credential);
-            assert_eq!(live_image, expected.live);
-            assert_eq!(challenge_image, expected.challenge);
+            // The challenge image must arrive decrypted.
+            assert_eq!(credential_image, CREDENTIAL);
+            assert_eq!(live_image, LIVE);
+            assert_eq!(challenge_image, CHALLENGE);
             self.result
         }
     }
@@ -185,103 +230,223 @@ mod tests {
         ))
     }
 
-    fn encode_match(
-        live: &[u8],
-        credential: &[u8],
-        hashes_json: &[u8],
-        challenge: &[u8],
-        match_threshold: f32,
-    ) -> Vec<u8> {
-        let payload = MatchInputs {
-            live_image: live.to_vec(),
-            credential_image: credential.to_vec(),
-            hashes_json: hashes_json.to_vec(),
-            challenge_image: challenge.to_vec(),
-            match_threshold,
-        };
-        let mut cbor = Vec::new();
-        ciborium::into_writer(&payload, &mut cbor).expect("cbor encoding should succeed");
-        cbor
-    }
-
     fn hashes_json_for(image: &[u8]) -> Vec<u8> {
         let hash = hex::encode(Sha256::digest(image));
         format!(r#"{{"thumbnail.png":"{hash}"}}"#).into_bytes()
     }
 
-    fn request(sealed_payload: Vec<u8>) -> MatchRequest {
-        MatchRequest { sealed_payload }
+    fn inputs(credential: &[u8], threshold: f32) -> MatchInputs {
+        MatchInputs {
+            version: CHANNEL_VERSION,
+            live_image: LIVE.to_vec(),
+            credential_image: credential.to_vec(),
+            hashes_json: hashes_json_for(credential),
+            challenge_image_key: KEY,
+            challenge_image_iv: IV,
+            match_threshold: threshold,
+        }
+    }
+
+    /// Encrypts the challenge the way the RP does.
+    fn challenge_blob(key: &[u8; CHALLENGE_KEY_LEN]) -> Vec<u8> {
+        Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key))
+            .encrypt(&Nonce::<Aes256Gcm>::from(IV), CHALLENGE)
+            .expect("encryption should succeed")
+    }
+
+    /// Seals `inputs` to `state` and pairs the request with a freshly encrypted challenge blob.
+    fn request_for(state: &EnclaveState, inputs: &MatchInputs) -> (ResponseOpener, MatchRequest) {
+        let requester = Requester::new(state.encryption_public_key()).expect("valid key");
+        let plaintext = inputs.to_cbor().expect("encoding should succeed");
+        let (sealed, opener) = requester
+            .seal(&plaintext, &mut UnwrapErr(SysRng))
+            .expect("sealing should succeed");
+
+        (
+            opener,
+            MatchRequest {
+                body: sealed.into_bytes(),
+                challenge_ciphertext: challenge_blob(&KEY),
+            },
+        )
     }
 
     #[tokio::test]
-    async fn handler_produces_statement_for_valid_payload() {
-        let live = b"liveness-frame";
-        let credential = b"credential-thumbnail";
-        let challenge = b"challenge-frame";
-        let state = state_with(MockFaceEngine::matching(
-            credential, live, challenge, 0.92, 0.87,
-        ));
-        let hashes_json = hashes_json_for(credential);
-        let sealed_payload = encode_match(live, credential, &hashes_json, challenge, 0.5);
+    async fn seals_a_signed_statement_to_the_requester() {
+        let state = state_with(MockFaceEngine::scoring(0.92, 0.87));
+        // Outlives the move into `handler`, so the statement can be checked against this boot's key.
+        let signer = Arc::clone(&state);
+        let inputs = inputs(CREDENTIAL, 0.5);
+        let (opener, request) = request_for(&state, &inputs);
 
-        let response = handler(state, request(sealed_payload))
-            .await
-            .expect("match should produce a statement");
+        let response = handler(state, request).await.expect("match should succeed");
 
-        let statement = &response.statement;
-        assert_eq!(statement.version, 1);
-        assert_eq!(statement.live_image_hash, Sha256::digest(live).as_slice());
+        assert_eq!(response.outcome, MatchOutcome::Statement);
+        let plaintext = opener
+            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .expect("the requester should open its own response");
+        let MatchResult::Statement(token) =
+            MatchResult::from_cbor(&plaintext).expect("result should decode")
+        else {
+            panic!("a held match should carry a statement");
+        };
+
+        // The statement verifies under the key this boot attests, and commits to every input.
+        let statement = match_token::verify(&token, signer.signing_public_key())
+            .expect("statement should verify");
+        assert_eq!(statement.live_image_hash, Sha256::digest(LIVE).as_slice());
         assert_eq!(
             statement.credential_claim,
-            Sha256::digest(&hashes_json).as_slice()
+            Sha256::digest(&inputs.hashes_json).as_slice()
         );
         assert_eq!(
             statement.challenger_image_hash,
-            Sha256::digest(challenge).as_slice()
+            Sha256::digest(CHALLENGE).as_slice()
         );
-        assert_eq!(response.signature, DUMMY_SIGNATURE.to_vec());
-        assert_eq!(statement.match_coefficient.to_bits(), 0.92f32.to_bits());
     }
 
     #[tokio::test]
-    async fn handler_rejects_non_cbor_plaintext() {
-        let state = state_with(MockFaceEngine::unused());
+    async fn a_below_threshold_score_is_a_sealed_rejection_not_an_error() {
+        let state = state_with(MockFaceEngine::scoring(0.95, 0.40));
+        let (opener, request) = request_for(&state, &inputs(CREDENTIAL, 0.9));
 
-        let result = handler(state, request(b"not cbor framing".to_vec())).await;
+        let response = handler(state, request)
+            .await
+            .expect("a rejection is still a successful response");
 
-        assert_eq!(result, Err(EnclaveError::MalformedMatchPayload));
-    }
-
-    #[tokio::test]
-    async fn handler_rejects_pcp_binding_mismatch() {
-        let state = state_with(MockFaceEngine::unused());
-        let hashes_json = hashes_json_for(b"the-enrolled-image");
-        let sealed_payload = encode_match(
-            b"liveness",
-            b"a-different-image",
-            &hashes_json,
-            b"challenge",
-            0.5,
+        // The host sees only the coarse class...
+        assert_eq!(response.outcome, MatchOutcome::Rejected);
+        // ...while the reason travels sealed.
+        let plaintext = opener
+            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .expect("should open");
+        assert_eq!(
+            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::Rejected(RejectReason::MatchBelowThreshold)
         );
-
-        let result = handler(state, request(sealed_payload)).await;
-
-        assert_eq!(result, Err(EnclaveError::ThumbnailHashMismatch));
     }
 
     #[tokio::test]
-    async fn handler_rejects_match_below_threshold() {
-        let credential = b"credential-thumbnail";
-        let live = b"liveness";
-        let challenge = b"challenge";
-        let state = state_with(MockFaceEngine::matching(
-            credential, live, challenge, 0.95, 0.85,
-        ));
-        let hashes_json = hashes_json_for(credential);
-        let sealed_payload = encode_match(live, credential, &hashes_json, challenge, 0.9);
+    async fn a_thumbnail_mismatch_is_a_sealed_rejection() {
+        let state = state_with(MockFaceEngine::failing(EnclaveError::NotReady));
+        let mut inputs = inputs(b"the-enrolled-image", 0.5);
+        inputs.credential_image = b"a-different-image".to_vec();
+        let (opener, request) = request_for(&state, &inputs);
 
-        let result = handler(state, request(sealed_payload)).await;
+        let response = handler(state, request)
+            .await
+            .expect("should seal a rejection");
 
-        assert_eq!(result, Err(EnclaveError::MatchBelowThreshold));
+        assert_eq!(response.outcome, MatchOutcome::Rejected);
+        let plaintext = opener
+            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .expect("should open");
+        assert_eq!(
+            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::Rejected(RejectReason::ThumbnailHashMismatch)
+        );
+    }
+
+    #[tokio::test]
+    async fn no_score_appears_in_the_cleartext_response() {
+        let state = state_with(MockFaceEngine::scoring(0.92, 0.87));
+        let (_, request) = request_for(&state, &inputs(CREDENTIAL, 0.5));
+
+        let response = handler(state, request).await.expect("match should succeed");
+
+        // The credential claim is the most sensitive thing the host must not learn.
+        let claim = Sha256::digest(hashes_json_for(CREDENTIAL));
+        assert!(
+            !response
+                .ciphertext
+                .windows(claim.len())
+                .any(|window| window == claim.as_slice())
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_a_request_sealed_to_another_boot() {
+        let state = state_with(MockFaceEngine::failing(EnclaveError::NotReady));
+        let other = state_with(MockFaceEngine::failing(EnclaveError::NotReady));
+        let (_, request) = request_for(&other, &inputs(CREDENTIAL, 0.5));
+
+        assert_eq!(
+            handler(state, request).await.err(),
+            Some(EnclaveError::BadRequest)
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_a_non_cbor_plaintext() {
+        let state = state_with(MockFaceEngine::failing(EnclaveError::NotReady));
+        let requester = Requester::new(state.encryption_public_key()).expect("valid key");
+        let (sealed, _) = requester
+            .seal(b"not cbor framing", &mut UnwrapErr(SysRng))
+            .expect("sealing should succeed");
+
+        let result = handler(
+            state,
+            MatchRequest {
+                body: sealed.into_bytes(),
+                challenge_ciphertext: challenge_blob(&KEY),
+            },
+        )
+        .await;
+
+        assert_eq!(result.err(), Some(EnclaveError::BadRequest));
+    }
+
+    #[tokio::test]
+    async fn rejects_an_unsupported_payload_version() {
+        let state = state_with(MockFaceEngine::failing(EnclaveError::NotReady));
+        let mut inputs = inputs(CREDENTIAL, 0.5);
+        inputs.version = CHANNEL_VERSION + 1;
+        let (_, request) = request_for(&state, &inputs);
+
+        assert_eq!(
+            handler(state, request).await.err(),
+            Some(EnclaveError::BadRequest)
+        );
+    }
+
+    #[tokio::test]
+    async fn attributes_a_bad_challenge_blob_separately() {
+        // The blob is the one input the host supplied, so it must not read as a client error.
+        let state = state_with(MockFaceEngine::failing(EnclaveError::NotReady));
+        let (_, mut request) = request_for(&state, &inputs(CREDENTIAL, 0.5));
+        request.challenge_ciphertext = challenge_blob(&[1u8; CHALLENGE_KEY_LEN]);
+
+        assert_eq!(
+            handler(state, request).await.err(),
+            Some(EnclaveError::ChallengeDecryptFailed)
+        );
+    }
+
+    #[tokio::test]
+    async fn surfaces_an_image_quality_failure_in_the_clear() {
+        // A client has to know to retake the photo, so this one is not sealed.
+        let state = state_with(MockFaceEngine::failing(EnclaveError::ImageAnalysisFailed));
+        let (_, request) = request_for(&state, &inputs(CREDENTIAL, 0.5));
+
+        assert_eq!(
+            handler(state, request).await.err(),
+            Some(EnclaveError::ImageAnalysisFailed)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_requester_cannot_open_the_response() {
+        let state = state_with(MockFaceEngine::scoring(0.92, 0.87));
+        let (_, request) = request_for(&state, &inputs(CREDENTIAL, 0.5));
+        // A different ephemeral, so a different exporter secret.
+        let (eavesdropper, _) = request_for(&state, &inputs(CREDENTIAL, 0.5));
+
+        let response = handler(state, request).await.expect("match should succeed");
+
+        assert!(
+            eavesdropper
+                .open(&SealedResponse::from_bytes(response.ciphertext))
+                .is_err()
+        );
     }
 }

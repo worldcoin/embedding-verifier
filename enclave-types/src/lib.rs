@@ -16,4 +16,4 @@ mod matches;
 pub use enclave_keys::{GetEnclaveKeysRequest, GetEnclaveKeysResponse};
 pub use error::EnclaveError;
 pub use health::HealthRequest;
-pub use matches::{MatchRequest, MatchResponse, MatchStatement};
+pub use matches::{MatchOutcome, MatchRequest, MatchResponse};

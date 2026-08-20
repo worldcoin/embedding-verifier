@@ -68,12 +68,12 @@ impl FaceEngine {
             .with_guessed_format()
             .map_err(|error| {
                 tracing::warn!(%error, "could not determine image format");
-                EnclaveError::InvalidImage
+                EnclaveError::ImageAnalysisFailed
             })?
             .decode()
             .map_err(|error| {
                 tracing::warn!(%error, "could not decode face image");
-                EnclaveError::InvalidImage
+                EnclaveError::ImageAnalysisFailed
             })?;
 
         let rgb_image = RgbImage::new(
@@ -84,7 +84,7 @@ impl FaceEngine {
         )
         .map_err(|error| {
             tracing::warn!(%error, "could not construct Face Engine RGB image");
-            EnclaveError::InvalidImage
+            EnclaveError::ImageAnalysisFailed
         })?;
 
         let analysis = self
@@ -92,16 +92,16 @@ impl FaceEngine {
             .run_inference_rgb(&rgb_image)
             .map_err(|error| {
                 tracing::error!(%error, "Face Engine image analysis failed");
-                EnclaveError::EmbeddingGenerationFailed
+                EnclaveError::ImageAnalysisFailed
             })?;
         if let Some(error) = analysis.error {
             tracing::warn!(?error, "Face Engine image analysis failed");
-            return Err(EnclaveError::EmbeddingGenerationFailed);
+            return Err(EnclaveError::ImageAnalysisFailed);
         }
 
         let subject_metadata = analysis.subject_face_extracted.ok_or_else(|| {
             tracing::warn!("Face Engine did not extract a subject");
-            EnclaveError::EmbeddingGenerationFailed
+            EnclaveError::ImageAnalysisFailed
         })?;
         let subject = SubjectFace {
             input_image: Arc::new(rgb_image),
@@ -113,17 +113,17 @@ impl FaceEngine {
             .run_inference(&subject)
             .map_err(|error| {
                 tracing::error!(%error, "Face Engine template inference failed");
-                EnclaveError::EmbeddingGenerationFailed
+                EnclaveError::ImageAnalysisFailed
             })?;
 
         if let Some(error) = output.metadata.error {
             tracing::warn!(?error, "Face Engine rejected the generated template");
-            return Err(EnclaveError::EmbeddingGenerationFailed);
+            return Err(EnclaveError::ImageAnalysisFailed);
         }
 
         output.embedding_vector.ok_or_else(|| {
             tracing::error!("Face Engine returned no embedding");
-            EnclaveError::EmbeddingGenerationFailed
+            EnclaveError::ImageAnalysisFailed
         })
     }
 
@@ -136,7 +136,7 @@ impl FaceEngine {
             .compute_score(probe, reference)
             .map_err(|error| {
                 tracing::error!(%error, "Face Engine embedding comparison failed");
-                EnclaveError::EmbeddingComparisonFailed
+                EnclaveError::Internal
             })
     }
 }
