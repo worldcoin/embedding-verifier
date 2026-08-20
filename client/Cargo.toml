@@ -7,23 +7,14 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-aws-nitro-enclaves-nsm-api.workspace = true
-base64.workspace = true
-ciborium.workspace = true
-coset.workspace = true
-crypto.workspace = true
-hex = { workspace = true, features = ["serde"] }
-p384.workspace = true
+attested-channel = { workspace = true, features = ["attestation"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 url.workspace = true
-webpki.workspace = true
-x509-cert.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
 hex-literal.workspace = true
-sha2.workspace = true
 tokio.workspace = true

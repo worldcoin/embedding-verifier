@@ -103,7 +103,7 @@ jobs:
             url."https://x-access-token:${BIOMETRIC_ENGINES_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
             "https://github.com/worldcoin/biometric-engines"
       - name: Run tests
-        run: cargo test --locked --all --verbose
+        run: cargo test --locked --all --all-features --verbose
 
   deny:
     name: Cargo deny
