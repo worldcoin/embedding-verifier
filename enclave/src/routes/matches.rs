@@ -12,16 +12,15 @@ use crate::{challenge, pcp, state::EnclaveState};
 
 /// Runs a 3-way face match: the credential image against both the live and challenge images.
 ///
-/// The request arrives sealed to this boot's encryption key and the outcome goes back sealed to
-/// the same channel, so the host learns only [`MatchOutcome`] — enough to pick a status code and
-/// count failures, and nothing more.
+/// The request arrives sealed to this boot's encryption key and the outcome goes back sealed to the
+/// same channel, so the host learns only [`MatchOutcome`].
 ///
 /// # Errors
 ///
-/// Returns [`EnclaveError`] only for what the host may legitimately see: a request that could not
-/// be opened or parsed, a challenge blob that did not decrypt, an image the Face Engine rejected
-/// on quality grounds, or an internal failure. A face that simply did not match is *not* an
-/// error — it is a sealed [`RejectReason`] inside a successful response.
+/// Returns [`EnclaveError`] only for what the host may see: a request that could not be opened or
+/// parsed, a challenge blob that did not decrypt, an image rejected on quality grounds, or an
+/// internal failure. A face that did not match is *not* an error — it is a sealed
+/// [`RejectReason`] inside a successful response.
 pub async fn handler(
     state: Arc<EnclaveState>,
     request: MatchRequest,
@@ -76,8 +75,8 @@ fn evaluate(
     inputs: &MatchInputs,
     challenge_image: &[u8],
 ) -> Result<Result<MatchClaims, RejectReason>, EnclaveError> {
-    // Bind the credential image to the hash its PCP commits. Not a provenance check: the circuit
-    // re-anchors that by binding `credential_claim` to an issuer-signed credential.
+    // Binds the credential image to the hash its PCP commits. A commitment, not proof of
+    // enrollment — nothing here checks who issued the PCP.
     let credential_claim =
         match pcp::bind_credential_claim(&inputs.credential_image, &inputs.hashes_json) {
             Ok(claim) => claim,
@@ -100,8 +99,7 @@ fn evaluate(
     if scores.live_similarity < inputs.match_threshold
         || scores.challenge_similarity < inputs.match_threshold
     {
-        // Scores stay out of the log: they are a measurement of a person, and the enclave log is
-        // the one place biometric detail could leak without a channel.
+        // Scores stay out of the log: they measure a person, and the log has no sealed channel.
         tracing::warn!(
             route = MatchRequest::ROUTE_ID,
             "match scored below threshold"
@@ -202,7 +200,7 @@ mod tests {
             live_image: &[u8],
             challenge_image: &[u8],
         ) -> Result<ComparisonScores, EnclaveError> {
-            // The challenge image must arrive decrypted, which is the point of the plumbing.
+            // The challenge image must arrive decrypted.
             assert_eq!(credential_image, CREDENTIAL);
             assert_eq!(live_image, LIVE);
             assert_eq!(challenge_image, CHALLENGE);
@@ -268,10 +266,10 @@ mod tests {
         let response = handler(state, request).await.expect("match should succeed");
 
         assert_eq!(response.outcome, MatchOutcome::Statement);
-        let opened = opener
+        let plaintext = opener
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("the requester should open its own response");
-        let token = decode_outcome(&opened)
+        let token = decode_outcome(&plaintext)
             .expect("payload should decode")
             .expect("payload should hold a statement");
 
@@ -300,11 +298,11 @@ mod tests {
         // The host sees only the coarse class...
         assert_eq!(response.outcome, MatchOutcome::Rejected);
         // ...while the reason travels sealed.
-        let opened = opener
+        let plaintext = opener
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         assert_eq!(
-            decode_outcome(&opened).expect("should decode"),
+            decode_outcome(&plaintext).expect("should decode"),
             Err(RejectReason::MatchBelowThreshold)
         );
     }
@@ -321,11 +319,11 @@ mod tests {
             .expect("should seal a rejection");
 
         assert_eq!(response.outcome, MatchOutcome::Rejected);
-        let opened = opener
+        let plaintext = opener
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         assert_eq!(
-            decode_outcome(&opened).expect("should decode"),
+            decode_outcome(&plaintext).expect("should decode"),
             Err(RejectReason::ThumbnailHashMismatch)
         );
     }

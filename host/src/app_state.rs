@@ -13,7 +13,6 @@ pub struct AppState {
 impl AppState {
     /// Creates API state from the runtime environment and enclave client.
     #[must_use]
-    #[must_use]
     pub fn new(
         environment: Environment,
         enclave_client: Arc<dyn EnclaveClient>,

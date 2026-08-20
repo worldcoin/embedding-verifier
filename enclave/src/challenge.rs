@@ -1,11 +1,11 @@
 //! Decrypting the RP's challenge image.
 //!
-//! The RP encrypts the challenge frame under its own key, uploads the ciphertext to S3, and sends
-//! the key to the authenticator, which seals it into the match request. The host fetches the blob
-//! but holds no key for it, so a substituted URL or a swapped blob fails closed here.
+//! The RP encrypts the challenge frame, uploads the ciphertext to S3, and sends the key to the
+//! authenticator, which seals it into the match request. The host fetches the blob but holds no key
+//! for it, so a substituted URL or a swapped blob fails closed here.
 //!
-//! The format is fixed by what the RP already writes: AES-256-GCM with a 32-byte key and a
-//! 12-byte IV stored separately, over a blob of `ciphertext || tag`.
+//! The format is fixed by what the RP already writes: AES-256-GCM, 32-byte key, 12-byte IV stored
+//! separately, over a blob of `ciphertext || tag`.
 
 use aes_gcm::{
     Aes256Gcm, Key, KeyInit,
@@ -19,8 +19,8 @@ use enclave_types::EnclaveError;
 /// # Errors
 ///
 /// Returns [`EnclaveError::ChallengeDecryptFailed`] if the blob does not authenticate under the
-/// supplied key and IV — a wrong key, a truncated tag, or a blob the host substituted all look
-/// the same here, and all of them are the host's or the RP's problem rather than a face failing.
+/// supplied key and IV. A wrong key, a truncated tag and a substituted blob are indistinguishable
+/// here, and none of them is a face failing.
 pub fn decrypt(
     ciphertext: &[u8],
     key: &[u8; CHALLENGE_KEY_LEN],

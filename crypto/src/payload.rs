@@ -9,10 +9,8 @@ use zeroize::Zeroizing;
 /// AES-256-GCM key length for the challenge image.
 pub const CHALLENGE_KEY_LEN: usize = 32;
 
-/// AES-256-GCM nonce length for the challenge image.
-///
-/// The RP stores key and IV separately, so both have to travel sealed; the spec's payload listing
-/// names only the key.
+/// AES-256-GCM nonce length for the challenge image. The RP stores it separately from the key, so
+/// both travel sealed.
 pub const CHALLENGE_IV_LEN: usize = 12;
 
 /// Why a payload could not be encoded or decoded.
@@ -22,23 +20,21 @@ pub enum PayloadError {
     Malformed,
     /// The payload declared a channel version this build does not implement.
     UnsupportedVersion,
-    /// Encoding failed, which for an in-memory value should not happen.
+    /// CBOR encoding failed.
     Encoding,
 }
 
 /// The sealed inputs to one match.
 ///
-/// The challenge image is *not* here: the host fetches its ciphertext from the RP's bucket, and
-/// only the key and IV travel sealed. That keeps the image off the mobile network and its
-/// plaintext off the device, while leaving the host holding a blob it cannot read.
+/// The challenge image is *not* here: the host fetches its ciphertext from the RP's bucket and only
+/// the key and IV travel sealed, so the image never crosses the mobile network and the host holds a
+/// blob it cannot read.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchInputs {
     /// Channel version the requester believes it is speaking.
     ///
-    /// The authoritative gate is the HPKE `info`, which binds the same value, so a requester on
-    /// another version cannot open a channel at all. This field only catches one that is
-    /// internally inconsistent, and makes that legible in the enclave log rather than
-    /// indistinguishable from a corrupt payload.
+    /// Not the authoritative gate — the HPKE `info` binds the same value, so a requester on another
+    /// version cannot open a channel at all. This only catches one that is internally inconsistent.
     pub version: u8,
     /// Raw liveness image bytes.
     #[serde(with = "serde_bytes")]
@@ -53,8 +49,7 @@ pub struct MatchInputs {
     pub challenge_image_key: [u8; CHALLENGE_KEY_LEN],
     /// IV the RP encrypted the challenge image under.
     pub challenge_image_iv: [u8; CHALLENGE_IV_LEN],
-    /// Minimum similarity the RP requires. A convenience gate: the real guarantee is the
-    /// in-circuit threshold check, which this cannot substitute for.
+    /// Minimum similarity the RP requires.
     pub match_threshold: f32,
 }
 
@@ -93,15 +88,14 @@ impl MatchInputs {
 
 /// The authoritative outcome of a match, as it travels back sealed.
 ///
-/// `Ok` carries the serialized `COSE_Sign1` statement; `Err` says why no statement was issued.
-/// The cleartext `MatchOutcome` beside the ciphertext is only a hint for the host — a requester
-/// compares the two and treats a mismatch as host misbehaviour.
+/// `Ok` carries the serialized `COSE_Sign1` statement; `Err` says why no statement was issued. The
+/// cleartext `MatchOutcome` beside the ciphertext is only a hint — a requester compares the two and
+/// treats a mismatch as host misbehaviour.
 pub type MatchOutcomePayload = Result<Vec<u8>, RejectReason>;
 
 /// Why a well-formed match request did not yield a statement.
 ///
-/// These say *why a face failed*, so they are only ever sent sealed. The host sees the coarse
-/// class and nothing more.
+/// These say *why a face failed*, so they are only ever sent sealed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RejectReason {
     /// The credential image did not match the `thumbnail.png` hash committed in `hashes.json`.

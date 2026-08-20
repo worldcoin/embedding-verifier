@@ -1,12 +1,11 @@
 //! Fetching the RP's challenge image.
 //!
-//! This is the one place the host reaches out to a URL a caller supplied, which makes it an SSRF
-//! surface: without constraints, a caller could point it at instance metadata, at a private
-//! address, or at an endpoint chosen to exhaust the host. Every bound below exists for that
-//! reason, and the allowlist is the load-bearing one — the rest limit blast radius.
+//! The one place the host fetches a caller-supplied URL, which makes it an SSRF surface: instance
+//! metadata, private addresses, endpoints chosen to exhaust the host. The allowlist is the
+//! load-bearing bound; the rest limit blast radius.
 //!
-//! The bytes fetched are ciphertext the host cannot read. A substituted URL or a swapped blob
-//! therefore fails closed inside the enclave, where the challenge key lives.
+//! The bytes are ciphertext the host cannot read, so a substituted URL fails closed in the enclave,
+//! where the challenge key lives.
 
 use std::time::Duration;
 
@@ -23,10 +22,9 @@ const MAX_CHALLENGE_BYTES: usize = 4 * 1024 * 1024;
 
 /// Why a challenge image could not be fetched.
 ///
-/// Every arm is the RP's or the caller's problem, never the enclave's, so the route maps all of
-/// them outward. Keeping them distinct is what lets a dashboard tell a rejected URL from an
-/// unreachable bucket.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Never the enclave's fault, so the route maps all of them outward. Kept distinct because a
+/// rejected URL and an unreachable bucket need different people.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchError {
     /// The URL did not parse, was not HTTPS, carried credentials, or named a literal IP.
     Malformed,
@@ -40,9 +38,8 @@ pub enum FetchError {
 
 /// Where the host gets a challenge image.
 ///
-/// A trait so routes can be tested without reaching the network. That is not only convenience:
-/// the constraints below deliberately reject plain HTTP and IP literals, which makes a local test
-/// server unfetchable by construction, so the seam has to exist somewhere.
+/// A trait because the constraints below reject plain HTTP and IP literals, which makes a local
+/// test server unfetchable by construction — routes need some seam to be testable.
 #[async_trait]
 pub trait ChallengeSource: Send + Sync {
     /// Fetches the challenge ciphertext at `url`.
@@ -69,9 +66,7 @@ impl ChallengeFetcher {
     /// # Errors
     ///
     /// Returns an error when the allowlist is empty, when an entry is malformed, or when the HTTP
-    /// client cannot be built. An empty allowlist is refused rather than defaulted: a fetcher that
-    /// permits everything is an open proxy, and failing to start is the only safe reading of a
-    /// missing configuration.
+    /// client cannot be built. An empty allowlist would be an open proxy, so it fails startup.
     pub fn new(entries: &[String]) -> anyhow::Result<Self> {
         anyhow::ensure!(
             !entries.is_empty(),
@@ -98,8 +93,7 @@ impl ChallengeFetcher {
             .collect::<anyhow::Result<Vec<_>>>()?;
 
         let http = reqwest::Client::builder()
-            // No redirect following: a permitted URL that redirects elsewhere would otherwise
-            // walk straight past the allowlist.
+            // A permitted URL that redirects would otherwise walk past the allowlist.
             .redirect(Policy::none())
             .timeout(FETCH_TIMEOUT)
             .build()?;
@@ -114,14 +108,13 @@ impl ChallengeFetcher {
         if url.scheme() != "https" {
             return Err(FetchError::Malformed);
         }
-        // Credentials in the URL would be sent to the RP's bucket by this host, which has no
-        // business holding them.
+        // This host has no business holding credentials for the RP's bucket.
         if !url.username().is_empty() || url.password().is_some() {
             return Err(FetchError::Malformed);
         }
 
-        // A literal IP cannot be allowlisted by name, and accepting one is the classic route to
-        // link-local metadata endpoints.
+        // A literal IP cannot be allowlisted by name, and is the classic route to link-local
+        // metadata endpoints.
         let host = match url.host() {
             Some(Host::Domain(host)) => host.to_ascii_lowercase(),
             _ => return Err(FetchError::Malformed),
@@ -158,9 +151,8 @@ impl ChallengeSource for ChallengeFetcher {
             return Err(FetchError::Unreachable);
         }
 
-        // Streamed with a running budget rather than read whole: `Content-Length` is the RP's
-        // claim about its own response, so trusting it would let a lying or chunked response
-        // allocate without limit.
+        // Streamed against a running budget: `Content-Length` is the RP's own claim, so a lying
+        // or chunked response would otherwise allocate without limit.
         let mut stream = response.bytes_stream();
         let mut body = Vec::new();
         while let Some(chunk) = stream.next().await {

@@ -180,7 +180,6 @@ async fn matches_relays_the_sealed_request_and_the_fetched_challenge() {
             })),
             expected_body: Some(b"sealed".to_vec()),
             expected_challenge: Some(b"challenge-ciphertext".to_vec()),
-            ..StubEnclaveClient::default()
         },
         StubChallengeSource::returning(b"challenge-ciphertext"),
     );
@@ -275,7 +274,7 @@ async fn matches_attributes_fetch_failures_outward() {
     for (error, expected_status, expected_code, retryable) in cases {
         let state = state_with_source(
             StubEnclaveClient::default(),
-            StubChallengeSource::failing(error.clone()),
+            StubChallengeSource::failing(error),
         );
 
         let (status, body) = send(

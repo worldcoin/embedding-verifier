@@ -21,8 +21,7 @@ pub struct MatchRequestBody {
 
 /// A match response.
 ///
-/// Both fields are opaque to this host: it can read neither the sealed outcome nor, usefully, the
-/// attestation it relays alongside it.
+/// Both fields are opaque to this host.
 #[derive(Debug, Serialize)]
 pub struct MatchResponseBody {
     /// The sealed outcome, base64.
@@ -33,10 +32,9 @@ pub struct MatchResponseBody {
 
 /// Relays a sealed match request to the enclave.
 ///
-/// The host's whole job here is routing and one fetch. It cannot read the request, cannot read the
-/// response, and contributes only the HTTP status — derived from a coarse class the enclave
-/// supplies. Rewriting that class would not let it forge an outcome, since the authoritative one
-/// is sealed and a client compares the two.
+/// The host's whole job is routing and one fetch. It contributes only the HTTP status, derived from
+/// the coarse class the enclave supplies. Rewriting that class cannot forge an outcome: the
+/// authoritative one is sealed, and a client compares the two.
 ///
 /// # Errors
 ///
@@ -61,10 +59,8 @@ pub async fn handler(
         .await
         .map_err(AppError::challenge_fetch)?;
 
-    // Fetched before the enclave call and relayed unsealed: the attestation is public and
-    // self-verifying, and a client needs it to check the statement it is about to receive. Taking
-    // it from the host rather than the enclave keeps an NSM attestation off the per-match path;
-    // caching it is tracked separately.
+    // Public and self-verifying, and the client needs it to check the statement. Taken from the
+    // host rather than the enclave to keep an NSM call off the per-match path.
     let keys = state
         .enclave_client()
         .get_enclave_keys()
@@ -82,8 +78,7 @@ pub async fn handler(
 
     let status = match response.outcome {
         MatchOutcome::Statement => StatusCode::OK,
-        // Well-formed request, but the match did not hold. The reason is in the body, readable
-        // only by the client.
+        // Well-formed request, but the match did not hold. The reason is sealed in the body.
         MatchOutcome::Rejected => StatusCode::UNPROCESSABLE_ENTITY,
     };
 
@@ -99,9 +94,8 @@ pub async fn handler(
 impl AppError {
     /// Maps a challenge-image fetch failure.
     ///
-    /// The RP's bucket is an availability dependency of the match path, so its failures are
-    /// attributed outward as `502` and never reported as an enclave fault. A rejected URL is the
-    /// caller's problem instead, and is not retryable.
+    /// The RP's bucket is an availability dependency, so its failures are `502` and never an
+    /// enclave fault. A rejected URL is the caller's problem, and not retryable.
     #[must_use]
     pub fn challenge_fetch(error: FetchError) -> Self {
         match error {
