@@ -77,6 +77,52 @@ through the host, exercising the assignment route and the client together:
 VERIFIER_CONFIG=./client.json cargo run --bin e2e -- <credential> <live> <challenge>
 ```
 
+## Matches
+
+`POST /v1/matches` compares a credential image against a live frame and the RP's challenge
+frame. The host relays but cannot read either input:
+
+```json
+{ "challenge_image_url": "https://…", "ciphertext": "<base64 enc || ciphertext>" }
+```
+
+`ciphertext` is the match inputs sealed to the enclave's attested encryption key — both
+images, `hashes.json`, and the AES-256-GCM key and IV for the challenge image. The challenge
+image itself never travels: the RP uploads it encrypted, and the host fetches that blob from
+`challenge_image_url` holding no key for it. A substituted URL or swapped object therefore
+fails inside the enclave rather than changing the result.
+
+```json
+{ "response_ciphertext": "<base64 nonce || ciphertext>", "key_attestation": "<base64 COSE_Sign1>" }
+```
+
+The sealed response carries either a `COSE_Sign1` match statement or the reason no statement
+was issued; `key_attestation` is the signing key's attestation, so a client can verify the
+statement it just received. Only the requester can open either — a second channel to the same
+enclave key cannot.
+
+The HTTP status is derived from a coarse class the enclave returns in the clear, so the host can
+route and count without learning why a face failed:
+
+| Status | Meaning |
+| --- | --- |
+| `200` | Sealed statement |
+| `422` | Sealed rejection — the match did not hold. Carries `response_ciphertext`, not an error |
+| `422` `challenge_decrypt_failed` | The fetched blob did not decrypt under the sealed key |
+| `409` `reassign_required` | The request did not open; re-assign and re-seal, once |
+| `400` `invalid_challenge_url` | The URL was rejected before any request was made |
+| `400` `image_analysis_failed` | An input image was refused on quality grounds |
+| `502` `challenge_fetch_failed` | The challenge image could not be fetched |
+
+Note that `422` is both a successful sealed rejection and one error case; a client tells them
+apart by whether the body carries `response_ciphertext`. The class is only a hint — the sealed
+outcome is authoritative, and a client compares the two.
+
+> **No SSRF destination control.** `challenge_image_url` is only constrained in shape — HTTPS,
+> a domain rather than an IP literal, no credentials, no redirects, a 5s timeout and a 4 MiB
+> cap. Nothing pins *where* a fetch may go, so this endpoint must not take untrusted callers
+> as-is. See `TODO(SSRF)` in `host/src/challenge_fetch.rs`.
+
 ## Nitro-enabled development host
 
 Use an Amazon Linux 2023 EC2 instance type that supports Nitro Enclaves and launch it with
