@@ -259,7 +259,8 @@ mod tests {
     #[tokio::test]
     async fn seals_a_signed_statement_to_the_requester() {
         let state = state_with(MockFaceEngine::scoring(0.92, 0.87));
-        let signing_key = state.signing_public_key();
+        // Outlives the move into `handler`, so the statement can be checked against this boot's key.
+        let signer = Arc::clone(&state);
         let inputs = inputs(CREDENTIAL, 0.5);
         let (opener, request) = request_for(&state, &inputs);
 
@@ -274,7 +275,8 @@ mod tests {
             .expect("payload should hold a statement");
 
         // The statement verifies under the key this boot attests, and commits to every input.
-        let statement = match_token::verify(&token, &signing_key).expect("statement should verify");
+        let statement = match_token::verify(&token, signer.match_token_signer().public_key())
+            .expect("statement should verify");
         assert_eq!(statement.live_image_hash, Sha256::digest(LIVE).as_slice());
         assert_eq!(
             statement.credential_claim,
