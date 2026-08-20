@@ -1087,14 +1087,15 @@ checksum = "15401da73a9ed8c80e3b2d4dc05fe10e7b72d7243b9f614e516a44fa99986e88"
 name = "e2e"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
- "ciborium",
  "client",
+ "crypto",
  "enclave-types",
+ "getrandom 0.4.3",
  "hex",
  "pontifex",
- "serde",
- "serde_bytes",
+ "rand 0.8.7",
  "sha2 0.10.9",
  "tokio",
 ]

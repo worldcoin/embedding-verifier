@@ -10,7 +10,8 @@ use coset::{
     CborSerializable, CoseSign1, CoseSign1Builder, Header, RegisteredLabelWithPrivate,
     cbor::value::Value,
 };
-use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSAPublicKey};
+use eddsa_babyjubjub::EdDSAPrivateKey;
+pub use eddsa_babyjubjub::EdDSAPublicKey;
 
 /// COSE algorithm identifier for `BabyJubJub-EdDSA-Poseidon2`, as defined in WIP-106.
 pub const COSE_ALG_BABYJUBJUB_EDDSA_POSEIDON2: i64 = -65537;
