@@ -2,17 +2,17 @@
 
 use std::sync::Arc;
 
+use crypto::match_token::{MatchTokenSigner, SIGNING_KEY_LEN};
 use crypto::sealed_channel::{ENCRYPTION_KEY_LEN, Responder, UnwrapErr};
-use eddsa_babyjubjub::EdDSAPublicKey;
 use enclave_types::EnclaveError;
 use getrandom::SysRng;
 
-use crate::{attestation::Attestor, face_engine::FaceComparator, keys::SigningKey};
+use crate::{attestation::Attestor, face_engine::FaceComparator};
 
 /// Immutable state generated once during enclave boot.
 pub struct EnclaveState {
     responder: Responder,
-    signing_key: SigningKey,
+    match_token_signer: MatchTokenSigner,
     attestor: Arc<dyn Attestor>,
     face_engine: Arc<dyn FaceComparator>,
 }
@@ -21,14 +21,17 @@ impl EnclaveState {
     /// Generates fresh boot-scoped keys, with the provided attestor and Face Engine.
     #[must_use]
     pub fn generate(attestor: Arc<dyn Attestor>, face_engine: Arc<dyn FaceComparator>) -> Self {
-        let mut rng = UnwrapErr(SysRng);
-        let responder = Responder::generate(&mut rng);
-        let signing_key = SigningKey::generate();
+        let mut channel_rng = UnwrapErr(SysRng);
+        let responder = Responder::generate(&mut channel_rng);
+        // The signer draws from rand's OsRng rather than SysRng because eddsa-babyjubjub speaks
+        // the rand 0.8 trait family, not the rand_core 0.10 one hpke uses. Both name the same OS
+        // entropy source, which inside an enclave is the boot-verified Nitro hardware RNG.
+        let match_token_signer = MatchTokenSigner::generate(&mut rand::rngs::OsRng);
         tracing::info!("generated boot-scoped sealed channel and signing keys");
 
         Self {
             responder,
-            signing_key,
+            match_token_signer,
             attestor,
             face_engine,
         }
@@ -46,10 +49,16 @@ impl EnclaveState {
         self.responder.public_key()
     }
 
-    /// Returns the `BabyJubJub` public key that verifies this boot's statements.
+    /// Returns the match-token signer for this boot.
     #[must_use]
-    pub const fn signing_public_key(&self) -> &EdDSAPublicKey {
-        self.signing_key.public_key()
+    pub const fn match_token_signer(&self) -> &MatchTokenSigner {
+        &self.match_token_signer
+    }
+
+    /// Returns the compressed `BabyJubJub` public key that verifies this boot's match tokens.
+    #[must_use]
+    pub const fn signing_public_key(&self) -> [u8; SIGNING_KEY_LEN] {
+        self.match_token_signer.public_key()
     }
 
     /// Returns the Face Engine used for enclave match operations.
@@ -72,16 +81,10 @@ impl EnclaveState {
     ///
     /// # Errors
     ///
-    /// Propagates the [`Attestor`] failure.
+    /// Propagates the [`Attestor`] failure. Serializing the key cannot fail here: it is derived
+    /// once when the signer is generated, so a key that would not serialize fails the boot instead.
     pub fn attest_signing_key(&self) -> Result<Vec<u8>, EnclaveError> {
-        let public_key = self
-            .signing_public_key()
-            .to_compressed_bytes()
-            .map_err(|error| {
-                tracing::error!(%error, "failed to serialize the signing public key");
-                EnclaveError::AttestationFailed
-            })?;
-        self.attestor.attest_public_key(&public_key)
+        self.attestor.attest_public_key(&self.signing_public_key())
     }
 }
 
@@ -126,11 +129,7 @@ mod tests {
         );
         assert_eq!(
             state.attest_signing_key(),
-            Ok(state
-                .signing_public_key()
-                .to_compressed_bytes()
-                .expect("generated BabyJubJub public key serializes")
-                .to_vec())
+            Ok(state.signing_public_key().to_vec())
         );
     }
 }

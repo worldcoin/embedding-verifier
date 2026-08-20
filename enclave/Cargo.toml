@@ -12,17 +12,17 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-ark-babyjubjub.workspace = true
 ciborium.workspace = true
 crypto.workspace = true
-eddsa-babyjubjub.workspace = true
 enclave-types.workspace = true
 face-engine.workspace = true
 hex.workspace = true
 image.workspace = true
 getrandom.workspace = true
-pontifex = { workspace = true, features = ["nsm", "server"] }
+# rand 0.8's OsRng feeds the match-token signer; getrandom's SysRng feeds the sealed channel.
+# Same OS entropy source, two trait families -- see EnclaveState::generate.
 rand.workspace = true
+pontifex = { workspace = true, features = ["nsm", "server"] }
 serde = { workspace = true }
 serde_bytes.workspace = true
 serde_json.workspace = true

@@ -12,8 +12,6 @@
 pub mod attestation;
 /// Face embedding generation and comparison.
 pub mod face_engine;
-/// Boot-scoped key material.
-pub mod keys;
 /// PCP binding verification (transport-free).
 pub mod pcp;
 /// Nitro hardware RNG verification.
