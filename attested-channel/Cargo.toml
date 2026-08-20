@@ -7,10 +7,21 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+attestation = [
+    "dep:aws-nitro-enclaves-nsm-api",
+    "dep:base64",
+    "dep:ciborium",
+    "dep:coset",
+    "dep:hex",
+    "dep:p384",
+    "dep:serde",
+    "dep:thiserror",
+    "dep:webpki",
+    "dep:x509-cert",
+]
+
 [dependencies]
-# Named explicitly for the response half: RFC 9180 §9.8 exports a key and nonce from the request
-# context and hands them to a standalone AEAD, which `hpke` exposes no constructor for. Already
-# in the tree via `hpke`'s `aes` feature, so this is a manifest entry, not a new crate.
 aes-gcm.workspace = true
 hkdf.workspace = true
 getrandom.workspace = true
@@ -20,6 +31,17 @@ hpke.workspace = true
 # rather than two. Verify with `cargo tree -p attested-channel`.
 sha2 = "0.11"
 zeroize = { workspace = true, features = ["alloc"] }
+
+aws-nitro-enclaves-nsm-api = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+ciborium = { workspace = true, optional = true }
+coset = { workspace = true, optional = true }
+hex = { workspace = true, features = ["serde"], optional = true }
+p384 = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+webpki = { workspace = true, optional = true }
+x509-cert = { workspace = true, optional = true }
 
 [dev-dependencies]
 hex-literal.workspace = true

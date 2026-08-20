@@ -5,9 +5,11 @@ use std::time::SystemTime;
 use serde::Deserialize;
 
 use attested_channel::channel::Requester;
+use attested_channel::nitro::{
+    EnclaveAttestationError, EnclaveAttestationVerifier, VerifiedAttestation,
+};
 
 use crate::config::Config;
-use crate::nitro::{EnclaveAttestationError, EnclaveAttestationVerifier, VerifiedAttestation};
 
 /// Path of the assignment endpoint.
 const ASSIGNMENT_PATH: &str = "/v1/enclave-assignment";

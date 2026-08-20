@@ -15,8 +15,7 @@
 mod client;
 mod config;
 
-pub mod nitro;
-
 pub use attested_channel::channel::Requester;
+pub use attested_channel::nitro;
 pub use client::{ClientError, FaceVerifierClient, VerifiedAssignment};
 pub use config::{Config, ConfigError};

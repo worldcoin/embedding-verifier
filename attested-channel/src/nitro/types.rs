@@ -3,7 +3,7 @@
 //! Ported from `worldcoin/bedrock` (`bedrock/src/nitro_enclave/types.rs`), MIT © Tools for
 //! Humanity. Variant names are kept so the two can be diffed.
 //!
-//! Licence and copyright notice: see `client/NOTICE`.
+//! Licence and copyright notice: see `attested-channel/NOTICE`.
 
 use std::collections::BTreeMap;
 

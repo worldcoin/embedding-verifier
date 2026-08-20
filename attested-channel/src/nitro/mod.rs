@@ -7,7 +7,7 @@
 //!
 //! Follows <https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html#validation-process>
 //!
-//! Licence and copyright notice: see `client/NOTICE`.
+//! Licence and copyright notice: see `attested-channel/NOTICE`.
 
 use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};

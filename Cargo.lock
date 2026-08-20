@@ -331,11 +331,21 @@ name = "attested-channel"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "aws-nitro-enclaves-nsm-api",
+ "base64",
+ "ciborium",
+ "coset",
  "getrandom 0.4.3",
+ "hex",
  "hex-literal",
  "hkdf",
  "hpke",
+ "p384",
+ "serde",
  "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "webpki",
+ "x509-cert",
  "zeroize",
 ]
 
@@ -690,23 +700,14 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "attested-channel",
- "aws-nitro-enclaves-nsm-api",
  "axum",
- "base64",
- "ciborium",
- "coset",
- "hex",
  "hex-literal",
- "p384",
  "reqwest",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
  "url",
- "webpki",
- "x509-cert",
 ]
 
 [[package]]
