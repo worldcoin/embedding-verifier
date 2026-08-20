@@ -5,13 +5,17 @@ use crate::EnclaveError;
 
 /// Requests a 3-way face match.
 ///
-/// `sealed_payload` is the CBOR-framed match inputs. Request encryption is not
-/// applied in this change; the field name is unchanged to keep the wire type stable.
+/// Both fields are ciphertext the host cannot read. `body` is the sealed match request as the
+/// authenticator produced it; `challenge_ciphertext` is the blob the host fetched from the RP's
+/// bucket, encrypted under a key that travels sealed inside `body`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchRequest {
-    /// CBOR-framed match inputs.
+    /// The sealed request: `enc || ciphertext`, relayed verbatim.
     #[serde(with = "serde_bytes")]
-    pub sealed_payload: Vec<u8>,
+    pub body: Vec<u8>,
+    /// The RP's challenge image, AES-256-GCM ciphertext fetched by the host.
+    #[serde(with = "serde_bytes")]
+    pub challenge_ciphertext: Vec<u8>,
 }
 
 impl Request for MatchRequest {
@@ -19,41 +23,42 @@ impl Request for MatchRequest {
     type Response = Result<MatchResponse, EnclaveError>;
 }
 
-/// The match statement and its enclave signature.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The sealed outcome of a match.
+///
+/// `outcome` is cleartext so the host can pick a status code and count failures without learning
+/// why a face failed. It is a hint, not the authority: the real outcome is inside `ciphertext`,
+/// and a client compares the two rather than trusting the cleartext class.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchResponse {
-    /// The claims the enclave attests to.
-    pub statement: MatchStatement,
-    /// Signature over `statement`. **Placeholder** until output signing lands.
+    /// Coarse outcome class, readable by the host.
+    pub outcome: MatchOutcome,
+    /// The sealed payload: `response_nonce || ciphertext`, readable only by the requester.
     #[serde(with = "serde_bytes")]
-    pub signature: Vec<u8>,
+    pub ciphertext: Vec<u8>,
 }
 
-/// The claims a match statement commits to — the TEE-output CWT claims.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MatchStatement {
-    /// Statement format version.
-    pub version: u8,
-    /// SHA256 of the live image.
-    pub live_image_hash: [u8; 32],
-    /// PCP commitment `SHA256(hashes.json)`; a commitment, not a proof of enrollment.
-    /// The `DeepFace` circuit binds it to the credential's `claims`, which is what makes
-    /// the in-enclave image-to-`hashes.json` binding meaningful.
-    pub credential_claim: [u8; 32],
-    /// SHA256 of the challenge image.
-    pub challenger_image_hash: [u8; 32],
-    /// Credential-vs-live similarity score.
-    pub match_coefficient: f32,
+/// Coarse, cleartext class of a [`MatchResponse`]. The detail stays sealed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MatchOutcome {
+    /// The match held; the sealed payload carries a signed statement.
+    Statement,
+    /// The match did not hold; the sealed payload carries the reason.
+    Rejected,
 }
 
 #[cfg(test)]
 mod tests {
     use pontifex::Request;
 
-    use super::MatchRequest;
+    use super::{MatchOutcome, MatchRequest};
 
     #[test]
     fn matches_route_id_is_versioned_and_stable() {
         assert_eq!(MatchRequest::ROUTE_ID, "/v1/matches");
+    }
+
+    #[test]
+    fn outcome_classes_are_distinct() {
+        assert_ne!(MatchOutcome::Statement, MatchOutcome::Rejected);
     }
 }

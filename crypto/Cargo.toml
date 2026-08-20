@@ -15,6 +15,7 @@ ark-babyjubjub.workspace = true
 ark-ff.workspace = true
 coset.workspace = true
 eddsa-babyjubjub.workspace = true
+ciborium.workspace = true
 hkdf.workspace = true
 getrandom.workspace = true
 hpke.workspace = true
@@ -25,6 +26,8 @@ rand.workspace = true
 # Deliberately not the workspace `sha2` (0.10, which the image-hashing users are on): this must
 # match the generation `hpke` already resolves for HKDF-SHA256, so the enclave links one SHA-256
 # rather than two. Verify with `cargo tree -p crypto`.
+serde = { workspace = true }
+serde_bytes.workspace = true
 sha2 = "0.11"
 zeroize = { workspace = true, features = ["alloc"] }
 
