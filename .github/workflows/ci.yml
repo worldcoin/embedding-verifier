@@ -75,6 +75,22 @@ jobs:
           git config --global \
             url."https://x-access-token:${BIOMETRIC_ENGINES_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
             "https://github.com/worldcoin/biometric-engines"
+      - name: Assert the enclave links no attestation-verification crates
+        # `crypto`'s `attestation` feature is off by default so the enclave image never carries
+        # webpki (and through it ring), x509-cert or p384 — only a relying party verifying a
+        # document needs those. What makes the gate hold is that `enclave/Dockerfile` builds with
+        # `--package enclave`, so feature resolution never unifies with `client`'s. Asserted here
+        # so enabling the feature by default fails loudly instead of quietly growing the image.
+        run: |
+          tree="$(cargo tree --locked --package enclave --edges normal --prefix none)"
+          found=0
+          for crate in webpki ring x509-cert p384; do
+            if grep -qE "^${crate} v" <<<"$tree"; then
+              echo "::error::enclave links ${crate}, which only attestation verification needs"
+              found=1
+            fi
+          done
+          exit "$found"
       - name: Build debug
         run: cargo build --locked --verbose
       - name: Build release
@@ -103,7 +119,9 @@ jobs:
             url."https://x-access-token:${BIOMETRIC_ENGINES_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
             "https://github.com/worldcoin/biometric-engines"
       - name: Run tests
-        run: cargo test --locked --all --verbose
+        # `--all-features` so `crypto`'s attestation tests run because this asks for them, not
+        # because `client` happens to enable the feature and feature resolution unifies.
+        run: cargo test --locked --all --all-features --verbose
 
   deny:
     name: Cargo deny
