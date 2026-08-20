@@ -1,7 +1,7 @@
 //! Match-result tokens: CWTs (RFC 8392) carrying private claims.
 //! Note: This is a WIP module and will probably move to the `world-id-protocol` repo.
 //!
-//! The enclave signs the match claims. The DeepFace proof circuit verifies the signature.
+//! The enclave signs the match claims. The `DeepFace` proof circuit verifies the signature.
 //!
 
 use ark_babyjubjub::Fq;
@@ -193,6 +193,10 @@ impl MatchClaims {
 /// The enclave's side of the match-token flow: a boot-scoped `BabyJubJub` `EdDSA` keypair.
 ///
 /// Caches the compressed public key for convenience.
+#[expect(
+    clippy::struct_field_names,
+    reason = "all three are keys; dropping the postfix reads worse"
+)]
 pub struct MatchTokenSigner {
     private_key: EdDSAPrivateKey,
     public_key: EdDSAPublicKey,
