@@ -15,7 +15,11 @@
 mod client;
 mod config;
 
-pub mod nitro;
+/// The attestation verifier, re-exported from `crypto`.
+///
+/// Callers need [`nitro::PcrMeasurement`] to build a [`Config`], so it is reachable here
+/// rather than only through a second dependency.
+pub use crypto::nitro;
 
 pub use client::{ClientError, FaceVerifierClient, VerifiedAssignment};
 pub use config::{Config, ConfigError};

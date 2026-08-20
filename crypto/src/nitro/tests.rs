@@ -3,7 +3,7 @@
 //! Cases and the real attestation document are ported from `worldcoin/bedrock`
 //! (`bedrock/src/nitro_enclave/tests.rs`), MIT © Tools for Humanity.
 //!
-//! Licence and copyright notice: see `client/NOTICE`.
+//! Licence and copyright notice: see `crypto/NOTICE`.
 //!
 //! The fixture's certificate chain expired in September 2025, so tests pin `now` to the
 //! document's own timestamp, which falls inside its validity window.

@@ -10,8 +10,10 @@ use client::nitro::PcrMeasurement;
 use client::{ClientError, Config, FaceVerifierClient};
 use hex_literal::hex;
 
+/// Reaches into `crypto`'s fixtures rather than keeping a second copy: the document has to be a
+/// real signed one, and two copies would drift. A move breaks the build, not a test assertion.
 const REAL_ATTESTATION_DOC_BASE64: &str =
-    include_str!("../src/nitro/testdata/real_attestation_doc.b64");
+    include_str!("../../crypto/src/nitro/testdata/real_attestation_doc.b64");
 
 /// When the fixture was produced (2025-09-23T11:56:49.915Z). Its chain is valid only for a
 /// few hours around this instant, so tests pin the clock here.

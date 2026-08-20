@@ -12,7 +12,7 @@ embedding-verifier/
 ├── enclave/           # Nitro enclave workload — the trusted side
 ├── enclave-types/     # Wire contract carried over vsock between the two
 ├── crypto/            # Client↔enclave crypto; the host links none of it
-├── client/            # Attestation-verifying client
+├── client/            # HTTP client for the host
 └── e2e/               # End-to-end harness driving host and enclave together
 ```
 
@@ -48,9 +48,12 @@ else:
 The enclave's identity (`module_id`) and expiry (the leaf certificate's `notAfter`) are read
 from the document *after* verifying it, never from fields the untrusted host could set.
 
-`client` verifies the document — the COSE signature, the certificate chain up to the
-pinned AWS Nitro root, and the expected measurements. It is configured by a JSON file, in the
-shape `world-id-protocol` uses for an authenticator:
+`crypto::nitro` verifies the document — the COSE signature, the certificate chain up to the
+pinned AWS Nitro root, and the expected measurements. It sits behind `crypto`'s non-default
+`attestation` feature, so a relying party can verify a document without taking on an HTTP
+client, and the enclave image carries none of the certificate-path machinery. `client` enables
+the feature and re-exports the module; it is configured by a JSON file, in the shape
+`world-id-protocol` uses for an authenticator:
 
 ```json
 {

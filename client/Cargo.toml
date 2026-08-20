@@ -7,23 +7,17 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-aws-nitro-enclaves-nsm-api.workspace = true
-base64.workspace = true
-ciborium.workspace = true
-coset.workspace = true
-crypto.workspace = true
-hex = { workspace = true, features = ["serde"] }
-p384.workspace = true
+# `attestation` brings in `crypto::nitro`, which this crate re-exports: the attestation
+# verifier and its trust anchor live there so relying parties can verify a document without
+# taking on an HTTP client.
+crypto = { workspace = true, features = ["attestation"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 url.workspace = true
-webpki.workspace = true
-x509-cert.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
 hex-literal.workspace = true
-sha2.workspace = true
 tokio.workspace = true

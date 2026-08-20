@@ -6,6 +6,22 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Nitro attestation verification. Off by default because `enclave` links this crate, and this
+# path is the only thing in the workspace that needs webpki (and through it ring), x509-cert and
+# p384 — none of which are in the enclave image today. `enclave/Dockerfile` builds the image with
+# `--package enclave`, so feature resolution never unifies with `client`'s and the gate holds.
+# CI asserts the enclave's dependency tree stays clear of these; see `.github/workflows/ci.yml`.
+attestation = [
+    "dep:aws-nitro-enclaves-nsm-api",
+    "dep:base64",
+    "dep:hex",
+    "dep:p384",
+    "dep:thiserror",
+    "dep:webpki",
+    "dep:x509-cert",
+]
+
 [dependencies]
 # Named explicitly for the response half: RFC 9180 §9.8 exports a key and nonce from the request
 # context and hands them to a standalone AEAD, which `hpke` exposes no constructor for. Already
@@ -23,13 +39,22 @@ poseidon2.workspace = true
 # rand 0.8 for the match-token signer's RNG bounds: eddsa-babyjubjub speaks that trait family,
 # not the rand_core 0.10 one hpke re-exports. Two ecosystems until eddsa upgrades.
 rand.workspace = true
+serde = { workspace = true }
+serde_bytes.workspace = true
 # Deliberately not the workspace `sha2` (0.10, which the image-hashing users are on): this must
 # match the generation `hpke` already resolves for HKDF-SHA256, so the enclave links one SHA-256
 # rather than two. Verify with `cargo tree -p crypto`.
-serde = { workspace = true }
-serde_bytes.workspace = true
 sha2 = "0.11"
 zeroize = { workspace = true, features = ["alloc"] }
+
+# `attestation` only. Pinned to bedrock's versions so the two verifiers cannot drift.
+aws-nitro-enclaves-nsm-api = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+hex = { workspace = true, features = ["serde"], optional = true }
+p384 = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+webpki = { workspace = true, optional = true }
+x509-cert = { workspace = true, optional = true }
 
 [dev-dependencies]
 hex-literal.workspace = true

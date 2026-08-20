@@ -676,24 +676,15 @@ dependencies = [
 name = "client"
 version = "0.1.0"
 dependencies = [
- "aws-nitro-enclaves-nsm-api",
  "axum",
- "base64",
- "ciborium",
- "coset",
  "crypto",
- "hex",
  "hex-literal",
- "p384",
  "reqwest",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
  "url",
- "webpki",
- "x509-cert",
 ]
 
 [[package]]
@@ -824,12 +815,16 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "ark-ff",
+ "aws-nitro-enclaves-nsm-api",
+ "base64",
  "ciborium",
  "coset",
  "getrandom 0.4.3",
+ "hex",
  "hex-literal",
  "hkdf",
  "hpke",
+ "p384",
  "rand 0.8.7",
  "serde",
  "serde_bytes",
@@ -837,6 +832,9 @@ dependencies = [
  "taceo-ark-babyjubjub",
  "taceo-eddsa-babyjubjub",
  "taceo-poseidon2",
+ "thiserror 2.0.18",
+ "webpki",
+ "x509-cert",
  "zeroize",
 ]
 

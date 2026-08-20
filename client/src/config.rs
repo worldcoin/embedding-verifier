@@ -8,7 +8,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::nitro::{EnclaveAttestationVerifier, PcrMeasurement};
+use crypto::nitro::{EnclaveAttestationVerifier, PcrMeasurement};
 
 /// Default freshness bound, matching the few-hour lifetime of a Nitro certificate.
 const fn default_max_attestation_age_millis() -> u64 {
@@ -177,7 +177,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{Config, ConfigError};
-    use crate::nitro::PcrMeasurement;
+    use crypto::nitro::PcrMeasurement;
 
     fn pcrs() -> Vec<Vec<PcrMeasurement>> {
         vec![vec![PcrMeasurement::new(0, [0xabu8; 48])]]

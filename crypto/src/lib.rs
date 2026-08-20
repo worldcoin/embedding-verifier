@@ -12,5 +12,7 @@
 )]
 
 pub mod match_token;
+#[cfg(feature = "attestation")]
+pub mod nitro;
 pub mod payload;
 pub mod sealed_channel;
