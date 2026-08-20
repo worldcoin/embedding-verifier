@@ -11,9 +11,17 @@ publish.workspace = true
 # context and hands them to a standalone AEAD, which `hpke` exposes no constructor for. Already
 # in the tree via `hpke`'s `aes` feature, so this is a manifest entry, not a new crate.
 aes-gcm.workspace = true
+ark-babyjubjub.workspace = true
+ark-ff.workspace = true
+coset.workspace = true
+eddsa-babyjubjub.workspace = true
 hkdf.workspace = true
 getrandom.workspace = true
 hpke.workspace = true
+poseidon2.workspace = true
+# rand 0.8 for the match-token signer's RNG bounds: eddsa-babyjubjub speaks that trait family,
+# not the rand_core 0.10 one hpke re-exports. Two ecosystems until eddsa upgrades.
+rand.workspace = true
 # Deliberately not the workspace `sha2` (0.10, which the image-hashing users are on): this must
 # match the generation `hpke` already resolves for HKDF-SHA256, so the enclave links one SHA-256
 # rather than two. Verify with `cargo tree -p crypto`.

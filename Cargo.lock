@@ -823,11 +823,17 @@ name = "crypto"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "ark-ff",
+ "coset",
  "getrandom 0.4.3",
  "hex-literal",
  "hkdf",
  "hpke",
+ "rand 0.8.7",
  "sha2 0.11.0",
+ "taceo-ark-babyjubjub",
+ "taceo-eddsa-babyjubjub",
+ "taceo-poseidon2",
  "zeroize",
 ]
 
@@ -1157,8 +1163,6 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha2 0.10.9",
- "taceo-ark-babyjubjub",
- "taceo-eddsa-babyjubjub",
  "tokio",
  "tracing",
  "tracing-subscriber",

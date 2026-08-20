@@ -11,4 +11,5 @@
     dead_code
 )]
 
+pub mod match_token;
 pub mod sealed_channel;
