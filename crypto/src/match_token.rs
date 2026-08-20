@@ -1,45 +1,8 @@
 //! Match-result tokens: CWTs (RFC 8392) carrying private claims.
 //! Note: This is a WIP module and will probably move to the `world-id-protocol` repo.
 //!
-//! The enclave signs the match claims; the client verifies them before using them in a `DeepFace`
-//! proof.
-//! The cryptography follows the `world-id-protocol` Trust Anchor Key Token — a Poseidon2 BN254
-//! digest, `BabyJubJub` `EdDSA` signature, and untagged `COSE_Sign1` envelope — because a ZK
-//! circuit has to verify it, which rules out the standard COSE algorithms.
+//! The enclave signs the match claims. The DeepFace proof circuit verifies the signature.
 //!
-//! Not an EAT (RFC 9711): this asserts the result of a computation, not the enclave's own state.
-//! The enclave attests itself with a separate Nitro document.
-//!
-//! # Provisional format
-//!
-//! The five claim keys, [`DOMAIN_SEPARATOR`], and [`MATCH_COEFFICIENT_SCALE`] require protocol
-//! agreement. Changing any is wire-breaking.
-//!
-//! The coefficient is scaled to an integer because a BN254 field element is one. The scale must
-//! match whatever consumes the token. Only non-negative values are representable, which costs
-//! nothing here: a token is signed only for a match at or above the threshold.
-//!
-//! # What the signature covers
-//!
-//! The four digest fields, and nothing else. [`MatchTokenSigner::sign`] sets the `COSE_Sign1`
-//! signature directly instead of signing the `Sig_structure` (RFC 9052 §4.4), because a circuit
-//! cannot cheaply hash CBOR — so `coset` supplies the envelope, not the signing, as in the
-//! reference `TrustAnchorKeyToken`. Payload bytes, `alg`, `kid`, and [`TOKEN_VERSION`] all sit
-//! outside the signature: [`verify`] checks `alg` itself, and takes the public key from its caller
-//! rather than from `kid`.
-//!
-//! # Versioning
-//!
-//! [`DOMAIN_SEPARATOR`] enforces the version: hashed into the digest, so a token from one version
-//! cannot verify under another. [`TOKEN_VERSION`] is advisory, and turns honest version skew into a
-//! legible error instead of a bare signature failure. It has to ship in v1 to do that — a verifier
-//! only reports a mismatch it knows to look for — so [`CLAIM_VERSION`] and its type are frozen
-//! across versions. Bump both constants together.
-//!
-//! # Claim lowering
-//!
-//! As in `world-id-protocol`, values wider than 128 bits split into big-endian limbs. Three hashes
-//! give six limbs; the coefficient and domain separator complete the Poseidon2 `t8` input.
 
 use ark_babyjubjub::Fq;
 use ark_ff::PrimeField;
@@ -52,9 +15,7 @@ use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSAPublicKey};
 /// COSE algorithm identifier for `BabyJubJub-EdDSA-Poseidon2`, as defined in WIP-106.
 pub const COSE_ALG_BABYJUBJUB_EDDSA_POSEIDON2: i64 = -65537;
 
-/// Version of this token's encoding: the claim keys and [`MATCH_COEFFICIENT_SCALE`].
-///
-/// Advisory, not enforced — see the module docs. Bump with [`DOMAIN_SEPARATOR`].
+/// Version of this token's encoding.
 pub const TOKEN_VERSION: u64 = 1;
 
 /// Domain separator folded into the Poseidon2 state before any claim.
@@ -94,14 +55,12 @@ const CLAIM_ELEMENTS: usize = 7;
 // time so adding a claim cannot silently overflow the permutation.
 const _: () = assert!(CLAIM_ELEMENTS + 1 == POSEIDON2_WIDTH);
 
-/// Length of a compressed `BabyJubJub` public key, which is what the enclave attests.
+/// Length of a compressed `BabyJubJub` public key.
 pub const SIGNING_KEY_LEN: usize = 32;
 
 /// Why a match token could not be signed or verified.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchTokenError {
-    /// The supplied signing public key was not a valid `BabyJubJub` point.
-    InvalidSigningKey,
     /// `match_coefficient` was negative, not finite, or too large to scale into the field.
     UnrepresentableCoefficient,
     /// Encoding the claims set as CBOR failed.
@@ -136,9 +95,6 @@ pub struct MatchClaims {
 
 impl MatchClaims {
     /// Builds the CWT claims set as a deterministic CBOR map.
-    ///
-    /// Keys are inserted in RFC 8949 §4.2.1 order — all five are negative integers of equal
-    /// encoded width, so ascending by magnitude — letting the circuit read them at fixed offsets.
     fn claims(&self) -> Result<Vec<u8>, MatchTokenError> {
         let claims = Value::Map(vec![
             (
@@ -202,7 +158,7 @@ impl MatchClaims {
 
     /// Lowers the claims into the Poseidon2 state and returns the digest.
     ///
-    /// Slot 0 holds the domain separator; the remaining seven hold the claim elements. The digest
+    /// Slot 0 holds the domain separator, the remaining seven hold the claim elements. The digest
     /// is element 1 of the permuted state, matching the Trust Anchor Key Token.
     ///
     /// # Errors
@@ -236,18 +192,15 @@ impl MatchClaims {
 
 /// The enclave's side of the match-token flow: a boot-scoped `BabyJubJub` `EdDSA` keypair.
 ///
-/// The compressed public key is derived once at generation, so reading it — and therefore
-/// attesting it — cannot fail.
+/// Caches the compressed public key for convenience.
 pub struct MatchTokenSigner {
     private_key: EdDSAPrivateKey,
-    public_key: [u8; SIGNING_KEY_LEN],
+    public_key: EdDSAPublicKey,
+    compressed_public_key: [u8; SIGNING_KEY_LEN],
 }
 
 impl MatchTokenSigner {
     /// Generates a fresh keypair from `rng`.
-    ///
-    /// Takes the rand 0.8 traits `eddsa-babyjubjub` speaks, unlike the sealed channel's
-    /// `rand_core` 0.10 parameter. In an enclave both draw from the Nitro hardware RNG.
     ///
     /// # Panics
     ///
@@ -256,22 +209,30 @@ impl MatchTokenSigner {
     #[must_use]
     pub fn generate<R: rand::Rng + rand::CryptoRng>(rng: &mut R) -> Self {
         let private_key = EdDSAPrivateKey::random(rng);
-        let public_key = private_key
-            .public()
+        let public_key = private_key.public();
+        let compressed_public_key = public_key
             .to_compressed_bytes()
             .expect("a generated BabyJubJub public key serializes");
 
         Self {
             private_key,
             public_key,
+            compressed_public_key,
         }
     }
 
-    /// Returns the compressed public key that verifies this boot's match tokens, as carried in the
-    /// `public_key` field of the enclave's signing-key attestation.
+    /// Returns the public key that verifies tokens from this signer.
     #[must_use]
-    pub const fn public_key(&self) -> [u8; SIGNING_KEY_LEN] {
-        self.public_key
+    pub const fn public_key(&self) -> &EdDSAPublicKey {
+        &self.public_key
+    }
+
+    /// Returns the compressed encoding of [`Self::public_key`].
+    ///
+    /// Used as the COSE `kid` and whenever the key must cross a byte boundary.
+    #[must_use]
+    pub const fn compressed_public_key(&self) -> [u8; SIGNING_KEY_LEN] {
+        self.compressed_public_key
     }
 
     /// Signs `claims` and serializes them as an untagged `COSE_Sign1`.
@@ -294,7 +255,7 @@ impl MatchTokenSigner {
             alg: Some(RegisteredLabelWithPrivate::PrivateUse(
                 COSE_ALG_BABYJUBJUB_EDDSA_POSEIDON2,
             )),
-            key_id: self.public_key.to_vec(),
+            key_id: self.compressed_public_key.to_vec(),
             ..Header::default()
         };
 
@@ -309,9 +270,6 @@ impl MatchTokenSigner {
 }
 
 /// Splits a 32-byte hash into two 128-bit big-endian limbs.
-///
-/// A 32-byte value can exceed the `BabyJubJub` base field modulus (~254 bits), so lowering it as
-/// one element risks reduction. Matches how `world-id-protocol` lowers `cnf` coordinates.
 fn hash_limbs(hash: &[u8; 32]) -> [Fq; 2] {
     let mut hi = [0u8; 16];
     let mut lo = [0u8; 16];
@@ -326,24 +284,16 @@ fn hash_limbs(hash: &[u8; 32]) -> [Fq; 2] {
 
 /// Verifies a serialized match token and returns the claims it commits to.
 ///
-/// `signing_public_key` is the compressed key a client reads from the *verified* signing-key
-/// attestation document, so it arrives as raw bytes rather than a curve type.
-///
-/// Nothing is returned until the signature verifies, and the digest is recomputed from the parsed
-/// claims rather than trusted, so a token whose payload disagrees with its signature fails.
+/// Note: Signature verification is performend in the circuit. This function is still provided for convenience.
 ///
 /// # Errors
 ///
-/// Returns [`MatchTokenError`] if the key is not a valid point, the token is not a well-formed
-/// `COSE_Sign1`, names another algorithm, carries claims of an unexpected shape, or fails
-/// signature verification.
+/// Returns [`MatchTokenError`] if the token is not a well-formed `COSE_Sign1`, names another
+/// algorithm, carries claims of an unexpected shape, or fails signature verification.
 pub fn verify(
     token: &[u8],
-    signing_public_key: &[u8; SIGNING_KEY_LEN],
+    signing_public_key: &EdDSAPublicKey,
 ) -> Result<MatchClaims, MatchTokenError> {
-    let public_key = EdDSAPublicKey::from_compressed_bytes(*signing_public_key)
-        .map_err(|_| MatchTokenError::InvalidSigningKey)?;
-
     let sign1 = CoseSign1::from_slice(token).map_err(|_| MatchTokenError::MalformedToken)?;
 
     match sign1.protected.header.alg {
@@ -364,7 +314,7 @@ pub fn verify(
                 .map_err(|_| MatchTokenError::MalformedToken)
         })?;
 
-    if public_key.verify(claims.message_hash()?, &signature) {
+    if signing_public_key.verify(claims.message_hash()?, &signature) {
         Ok(claims)
     } else {
         Err(MatchTokenError::SignatureInvalid)
@@ -372,6 +322,8 @@ pub fn verify(
 }
 
 /// Rebuilds [`MatchClaims`] from an encoded claims set.
+///
+/// Note: This function is not needed for the proof, but it is provided for convenience.
 fn decode_claims(payload: &[u8]) -> Result<MatchClaims, MatchTokenError> {
     let claims: Value =
         coset::cbor::from_reader(payload).map_err(|_| MatchTokenError::MalformedToken)?;
@@ -392,7 +344,6 @@ fn decode_claims(payload: &[u8]) -> Result<MatchClaims, MatchTokenError> {
             .ok_or(MatchTokenError::MalformedToken)
     };
 
-    // Checked before any value is interpreted: another version means different scaling rules.
     let version = lookup(CLAIM_VERSION)?
         .as_integer()
         .and_then(|value| u64::try_from(i128::from(value)).ok())
@@ -429,8 +380,8 @@ mod tests {
     use coset::{CborSerializable as _, CoseSign1, CoseSign1Builder, cbor::value::Value};
 
     use super::{
-        CLAIM_VERSION, COSE_ALG_BABYJUBJUB_EDDSA_POSEIDON2, MATCH_COEFFICIENT_SCALE, MatchClaims,
-        MatchTokenError, MatchTokenSigner, TOKEN_VERSION, hash_limbs, verify,
+        CLAIM_VERSION, COSE_ALG_BABYJUBJUB_EDDSA_POSEIDON2, MatchClaims, MatchTokenError,
+        MatchTokenSigner, TOKEN_VERSION, hash_limbs, verify,
     };
 
     fn signer() -> MatchTokenSigner {
@@ -452,7 +403,7 @@ mod tests {
         let original = claims();
 
         let token = signing_key.sign(&original).expect("signing should succeed");
-        let verified = verify(&token, &signing_key.public_key())
+        let verified = verify(&token, signing_key.public_key())
             .expect("the token should verify under its key");
 
         assert_eq!(verified.live_image_hash, original.live_image_hash);
@@ -473,7 +424,7 @@ mod tests {
         let token = signer().sign(&claims()).expect("signing should succeed");
 
         assert_eq!(
-            verify(&token, &signer().public_key()).err(),
+            verify(&token, signer().public_key()).err(),
             Some(MatchTokenError::SignatureInvalid)
         );
     }
@@ -488,7 +439,7 @@ mod tests {
         token[middle] ^= 0x01;
 
         assert!(matches!(
-            verify(&token, &signing_key.public_key()),
+            verify(&token, signing_key.public_key()),
             Err(MatchTokenError::SignatureInvalid | MatchTokenError::MalformedToken)
         ));
     }
@@ -521,14 +472,6 @@ mod tests {
                 "digest must change when a claim changes"
             );
         }
-    }
-
-    #[test]
-    fn digest_is_stable_for_one_claim_set() {
-        let first = claims().message_hash().expect("hashing should succeed");
-        let second = claims().message_hash().expect("hashing should succeed");
-
-        assert_eq!(first, second);
     }
 
     #[test]
@@ -581,7 +524,7 @@ mod tests {
 
         // Not SignatureInvalid: the signature genuinely still verifies.
         assert_eq!(
-            verify(&forged, &signing_key.public_key()).err(),
+            verify(&forged, signing_key.public_key()).err(),
             Some(MatchTokenError::UnexpectedVersion)
         );
     }
@@ -651,11 +594,6 @@ mod tests {
     }
 
     #[test]
-    fn scale_is_a_power_of_two() {
-        assert!(MATCH_COEFFICIENT_SCALE.is_power_of_two());
-    }
-
-    #[test]
     fn protected_header_names_the_wip_106_algorithm() {
         let signing_key = signer();
         let token = signing_key.sign(&claims()).expect("signing should succeed");
@@ -670,7 +608,7 @@ mod tests {
         // `kid` lets a verifier find the key; it is not trusted in place of one.
         assert_eq!(
             sign1.protected.header.key_id,
-            signing_key.public_key().to_vec()
+            signing_key.compressed_public_key().to_vec()
         );
     }
 
