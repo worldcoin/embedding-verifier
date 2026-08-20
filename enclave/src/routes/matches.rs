@@ -12,15 +12,13 @@ use crate::{challenge, pcp, state::EnclaveState};
 
 /// Runs a 3-way face match: the credential image against both the live and challenge images.
 ///
-/// The request arrives sealed to this boot's encryption key and the outcome goes back sealed to the
-/// same channel, so the host learns only [`MatchOutcome`].
+/// Request and outcome are both sealed to this boot's channel, so the host learns only
+/// [`MatchOutcome`].
 ///
 /// # Errors
 ///
-/// Returns [`EnclaveError`] only for what the host may see: a request that could not be opened or
-/// parsed, a challenge blob that did not decrypt, an image rejected on quality grounds, or an
-/// internal failure. A face that did not match is *not* an error — it is a sealed
-/// [`RejectReason`] inside a successful response.
+/// Returns [`EnclaveError`] only for what the host may see. A face that did not match is *not* an
+/// error — it is a sealed [`RejectReason`] inside a successful response.
 pub async fn handler(
     state: Arc<EnclaveState>,
     request: MatchRequest,

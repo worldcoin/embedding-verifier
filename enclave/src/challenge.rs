@@ -1,11 +1,8 @@
 //! Decrypting the RP's challenge image.
 //!
-//! The RP encrypts the challenge frame, uploads the ciphertext to S3, and sends the key to the
-//! authenticator, which seals it into the match request. The host fetches the blob but holds no key
-//! for it, so a substituted URL or a swapped blob fails closed here.
-//!
-//! The format is fixed by what the RP already writes: AES-256-GCM, 32-byte key, 12-byte IV stored
-//! separately, over a blob of `ciphertext || tag`.
+//! The key travels sealed inside the match request, so a blob the host substituted fails closed
+//! here. Format fixed by what the RP writes: AES-256-GCM, 32-byte key, separate 12-byte IV, over
+//! `ciphertext || tag`.
 
 use aes_gcm::{
     Aes256Gcm, Key, KeyInit,
@@ -18,9 +15,8 @@ use enclave_types::EnclaveError;
 ///
 /// # Errors
 ///
-/// Returns [`EnclaveError::ChallengeDecryptFailed`] if the blob does not authenticate under the
-/// supplied key and IV. A wrong key, a truncated tag and a substituted blob are indistinguishable
-/// here, and none of them is a face failing.
+/// Returns [`EnclaveError::ChallengeDecryptFailed`] if the blob does not authenticate. None of the
+/// causes is a face failing.
 pub fn decrypt(
     ciphertext: &[u8],
     key: &[u8; CHALLENGE_KEY_LEN],
@@ -71,6 +67,7 @@ mod tests {
 
     #[test]
     fn rejects_the_wrong_key() {
+        // Also what a host swapping the fetched object looks like from in here.
         let blob = encrypt(b"challenge-frame", &KEY, &IV);
 
         assert_eq!(
@@ -93,17 +90,6 @@ mod tests {
     fn rejects_a_truncated_tag() {
         let mut blob = encrypt(b"challenge-frame", &KEY, &IV);
         blob.pop();
-
-        assert_eq!(
-            decrypt(&blob, &KEY, &IV).err(),
-            Some(EnclaveError::ChallengeDecryptFailed)
-        );
-    }
-
-    #[test]
-    fn rejects_a_substituted_blob() {
-        // What a host swapping the fetched object looks like from in here.
-        let blob = encrypt(b"a-different-frame", &[1u8; CHALLENGE_KEY_LEN], &IV);
 
         assert_eq!(
             decrypt(&blob, &KEY, &IV).err(),

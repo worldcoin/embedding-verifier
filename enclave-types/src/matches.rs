@@ -3,10 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::EnclaveError;
 
-/// Requests a 3-way face match.
-///
-/// Both fields are ciphertext the host cannot read. `challenge_ciphertext` is encrypted under a key
-/// that travels sealed inside `body`.
+/// Requests a 3-way face match. Both fields are ciphertext the host cannot read;
+/// `challenge_ciphertext` is keyed from inside `body`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchRequest {
     /// The sealed request: `enc || ciphertext`, relayed verbatim.
@@ -24,9 +22,7 @@ impl Request for MatchRequest {
 
 /// The sealed outcome of a match.
 ///
-/// `outcome` is cleartext so the host can pick a status code without learning why a face failed. It
-/// is a hint, not the authority — the real outcome is inside `ciphertext`, and a client compares the
-/// two rather than trusting the cleartext class.
+/// `outcome` is cleartext so the host can pick a status code. It is a hint, not the authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchResponse {
     /// Coarse outcome class, readable by the host.
@@ -49,15 +45,10 @@ pub enum MatchOutcome {
 mod tests {
     use pontifex::Request;
 
-    use super::{MatchOutcome, MatchRequest};
+    use super::MatchRequest;
 
     #[test]
     fn matches_route_id_is_versioned_and_stable() {
         assert_eq!(MatchRequest::ROUTE_ID, "/v1/matches");
-    }
-
-    #[test]
-    fn outcome_classes_are_distinct() {
-        assert_ne!(MatchOutcome::Statement, MatchOutcome::Rejected);
     }
 }

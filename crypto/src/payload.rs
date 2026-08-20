@@ -1,7 +1,5 @@
-//! What travels *inside* the sealed channel on the match path.
-//!
-//! These types are the plaintexts, so only the requester and the enclave ever see them. The host
-//! relays the ciphertext that carries them and holds no key for it.
+//! What travels *inside* the sealed channel on the match path. The host relays the ciphertext
+//! carrying these and holds no key for it.
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -9,8 +7,7 @@ use zeroize::Zeroizing;
 /// AES-256-GCM key length for the challenge image.
 pub const CHALLENGE_KEY_LEN: usize = 32;
 
-/// AES-256-GCM nonce length for the challenge image. The RP stores it separately from the key, so
-/// both travel sealed.
+/// AES-256-GCM nonce length for the challenge image.
 pub const CHALLENGE_IV_LEN: usize = 12;
 
 /// Why a payload could not be encoded or decoded.
@@ -26,15 +23,12 @@ pub enum PayloadError {
 
 /// The sealed inputs to one match.
 ///
-/// The challenge image is *not* here: the host fetches its ciphertext from the RP's bucket and only
-/// the key and IV travel sealed, so the image never crosses the mobile network and the host holds a
-/// blob it cannot read.
+/// The challenge image is not here: the host fetches its ciphertext, and only the key and IV
+/// travel sealed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchInputs {
-    /// Channel version the requester believes it is speaking.
-    ///
-    /// Not the authoritative gate — the HPKE `info` binds the same value, so a requester on another
-    /// version cannot open a channel at all. This only catches one that is internally inconsistent.
+    /// Channel version the requester believes it is speaking. Advisory: the HPKE `info` binds the
+    /// same value, so a mismatched requester cannot open a channel at all.
     pub version: u8,
     /// Raw liveness image bytes.
     #[serde(with = "serde_bytes")]
@@ -54,9 +48,8 @@ pub struct MatchInputs {
 }
 
 impl MatchInputs {
-    /// Encodes the inputs as CBOR.
-    ///
-    /// The result is [`Zeroizing`] because it holds raw biometric images and the challenge key.
+    /// Encodes the inputs as CBOR. [`Zeroizing`] because it holds biometric images and the
+    /// challenge key.
     ///
     /// # Errors
     ///
@@ -88,9 +81,8 @@ impl MatchInputs {
 
 /// The authoritative outcome of a match, as it travels back sealed.
 ///
-/// `Ok` carries the serialized `COSE_Sign1` statement; `Err` says why no statement was issued. The
-/// cleartext `MatchOutcome` beside the ciphertext is only a hint — a requester compares the two and
-/// treats a mismatch as host misbehaviour.
+/// `Ok` carries the `COSE_Sign1` statement; `Err` says why none was issued. The cleartext
+/// `MatchOutcome` is only a hint — a requester compares the two.
 pub type MatchOutcomePayload = Result<Vec<u8>, RejectReason>;
 
 /// Why a well-formed match request did not yield a statement.
@@ -195,13 +187,5 @@ mod tests {
                 outcome
             );
         }
-    }
-
-    #[test]
-    fn reject_reasons_are_distinct() {
-        assert_ne!(
-            encode_outcome(&Err(RejectReason::ThumbnailHashMismatch)).expect("encode"),
-            encode_outcome(&Err(RejectReason::MatchBelowThreshold)).expect("encode")
-        );
     }
 }

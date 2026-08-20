@@ -1,11 +1,8 @@
 //! Fetching the RP's challenge image.
 //!
-//! The one place the host fetches a caller-supplied URL, which makes it an SSRF surface: instance
-//! metadata, private addresses, endpoints chosen to exhaust the host. The allowlist is the
-//! load-bearing bound; the rest limit blast radius.
-//!
-//! The bytes are ciphertext the host cannot read, so a substituted URL fails closed in the enclave,
-//! where the challenge key lives.
+//! The one place the host fetches a caller-supplied URL, so an SSRF surface. The allowlist is the
+//! load-bearing bound; the rest limit blast radius. A substituted URL fails closed in the enclave,
+//! which holds the challenge key.
 
 use std::time::Duration;
 
@@ -22,8 +19,8 @@ const MAX_CHALLENGE_BYTES: usize = 4 * 1024 * 1024;
 
 /// Why a challenge image could not be fetched.
 ///
-/// Never the enclave's fault, so the route maps all of them outward. Kept distinct because a
-/// rejected URL and an unreachable bucket need different people.
+/// Never the enclave's fault. Kept distinct because a rejected URL and an unreachable bucket need
+/// different people.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchError {
     /// The URL did not parse, was not HTTPS, carried credentials, or named a literal IP.
@@ -38,8 +35,7 @@ pub enum FetchError {
 
 /// Where the host gets a challenge image.
 ///
-/// A trait because the constraints below reject plain HTTP and IP literals, which makes a local
-/// test server unfetchable by construction — routes need some seam to be testable.
+/// A trait because the constraints below make a local test server unfetchable by construction.
 #[async_trait]
 pub trait ChallengeSource: Send + Sync {
     /// Fetches the challenge ciphertext at `url`.
