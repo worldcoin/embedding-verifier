@@ -701,6 +701,9 @@ version = "0.1.0"
 dependencies = [
  "attested-channel",
  "axum",
+ "base64",
+ "deepface-protocol",
+ "getrandom 0.4.3",
  "hex-literal",
  "reqwest",
  "serde",

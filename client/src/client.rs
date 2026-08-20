@@ -2,17 +2,27 @@
 
 use std::time::SystemTime;
 
-use serde::Deserialize;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use serde::{Deserialize, Serialize};
 
-use attested_channel::channel::Requester;
+use attested_channel::channel::{ChannelError, Requester, SealedResponse, UnwrapErr};
 use attested_channel::nitro::{
     EnclaveAttestationError, EnclaveAttestationVerifier, VerifiedAttestation,
 };
+use deepface_protocol::match_token::{self, EdDSAPublicKey};
+use deepface_protocol::messages::{MatchInputs, MatchResult};
+use getrandom::SysRng;
 
 use crate::config::Config;
 
 /// Path of the assignment endpoint.
 const ASSIGNMENT_PATH: &str = "/v1/enclave-assignment";
+
+/// Path of the match endpoint.
+const MATCHES_PATH: &str = "/v1/matches";
+
+/// Error code the host uses for a request that did not open.
+const REASSIGN_REQUIRED: &str = "reassign_required";
 
 /// Failures while calling the host.
 #[derive(Debug, thiserror::Error)]
@@ -40,6 +50,69 @@ pub enum ClientError {
     /// The attested encryption public key was absent or not exactly 32 bytes.
     #[error("attested encryption public key was invalid")]
     InvalidEncryptionKey,
+
+    /// The host answered with an error envelope.
+    #[error("host returned HTTP {status} ({code})")]
+    Api {
+        /// HTTP status the host chose.
+        status: u16,
+        /// Machine-readable code from the envelope.
+        code: String,
+        /// Whether the host says the request may be retried.
+        allow_retry: bool,
+    },
+
+    /// The assignment is stale: re-assign, re-seal, and retry once.
+    #[error("the request was not sealed to the enclave's current key; re-assign and retry once")]
+    ReassignRequired,
+
+    /// Sealing the request or opening the response failed.
+    #[error("sealed channel failure: {0:?}")]
+    Channel(ChannelError),
+
+    /// The response ciphertext was not valid base64.
+    #[error("response ciphertext was not valid base64")]
+    MalformedCiphertext,
+
+    /// The sealed plaintext was not a match result.
+    #[error("sealed response was not a match result")]
+    MalformedResult,
+
+    /// The attested signing public key was not a valid `BabyJubJub` point.
+    #[error("attested signing public key was invalid")]
+    InvalidSigningKey,
+
+    /// The statement did not verify under the attested signing key.
+    #[error("match statement did not verify under the attested signing key")]
+    StatementInvalid,
+}
+
+/// The host's error envelope.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApiErrorBody {
+    allow_retry: bool,
+    error: ApiErrorCode,
+}
+
+/// The `error` object inside [`ApiErrorBody`].
+#[derive(Debug, Deserialize)]
+struct ApiErrorCode {
+    code: String,
+}
+
+/// A match request, as the host reads it.
+#[derive(Debug, Serialize)]
+struct MatchRequestBody {
+    challenge_image_url: String,
+    ciphertext: String,
+}
+
+/// The host's match response.
+#[derive(Debug, Deserialize)]
+struct MatchResponseBody {
+    response_ciphertext: String,
+    key_attestation: String,
 }
 
 /// The host's assignment response.
@@ -132,5 +205,99 @@ impl FaceVerifierClient {
             attestation,
             requester,
         })
+    }
+
+    /// Runs a match against the enclave `assignment` names.
+    ///
+    /// [`MatchResult::Failed`] is a normal return, not an error. A statement is verified against the
+    /// attested signing key first; call [`match_token::verify`] again to read its claims.
+    ///
+    /// The image at `challenge_image_url` must be encrypted under the key and IV in `inputs`.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::ReassignRequired`] on a stale assignment — retry once with a fresh one.
+    pub async fn request_match(
+        &self,
+        assignment: &VerifiedAssignment,
+        inputs: &MatchInputs,
+        challenge_image_url: &str,
+        now: SystemTime,
+    ) -> Result<MatchResult, ClientError> {
+        let plaintext = inputs.to_cbor().map_err(|_| ClientError::MalformedResult)?;
+        let (sealed, opener) = assignment
+            .requester
+            .seal(&plaintext, &mut UnwrapErr(SysRng))
+            .map_err(ClientError::Channel)?;
+
+        let url = format!(
+            "{}{MATCHES_PATH}",
+            self.config.host_url().as_str().trim_end_matches('/')
+        );
+        let response = self
+            .http
+            .post(url)
+            .json(&MatchRequestBody {
+                challenge_image_url: challenge_image_url.to_owned(),
+                ciphertext: STANDARD.encode(sealed.into_bytes()),
+            })
+            .send()
+            .await
+            .map_err(ClientError::Request)?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.ok();
+            return Err(Self::api_error(status.as_u16(), body.as_deref()));
+        }
+
+        let body: MatchResponseBody = response
+            .json()
+            .await
+            .map_err(ClientError::MalformedResponse)?;
+
+        let ciphertext = STANDARD
+            .decode(body.response_ciphertext.trim())
+            .map_err(|_| ClientError::MalformedCiphertext)?;
+        let plaintext = opener
+            .open(&SealedResponse::from_bytes(ciphertext))
+            .map_err(ClientError::Channel)?;
+        let result =
+            MatchResult::from_cbor(&plaintext).map_err(|_| ClientError::MalformedResult)?;
+
+        // Only a statement needs the key, so a rejection skips the attestation entirely.
+        if let MatchResult::Success(token) = &result {
+            let attested = self
+                .verifier
+                .verify_base64(body.key_attestation.trim(), now)?;
+            let signing_key = <[u8; 32]>::try_from(attested.enclave_public_key.as_slice())
+                .map_err(|_| ClientError::InvalidSigningKey)
+                .and_then(|bytes| {
+                    EdDSAPublicKey::from_compressed_bytes(bytes)
+                        .map_err(|_| ClientError::InvalidSigningKey)
+                })?;
+
+            match_token::verify(token, &signing_key).map_err(|_| ClientError::StatementInvalid)?;
+        }
+
+        Ok(result)
+    }
+
+    /// Classifies a non-success response, reading the error envelope when there is one.
+    fn api_error(status: u16, body: Option<&str>) -> ClientError {
+        let Some(envelope) = body.and_then(|body| serde_json::from_str::<ApiErrorBody>(body).ok())
+        else {
+            return ClientError::Status(status);
+        };
+
+        if envelope.error.code == REASSIGN_REQUIRED {
+            return ClientError::ReassignRequired;
+        }
+
+        ClientError::Api {
+            status,
+            code: envelope.error.code,
+            allow_retry: envelope.allow_retry,
+        }
     }
 }
