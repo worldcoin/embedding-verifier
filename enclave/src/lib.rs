@@ -10,8 +10,6 @@
 
 /// Nitro Secure Module attestation.
 pub mod attestation;
-/// Challenge-image decryption.
-pub mod challenge;
 /// Face embedding generation and comparison.
 pub mod face_engine;
 /// Boot-scoped key material.

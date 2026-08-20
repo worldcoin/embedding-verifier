@@ -22,23 +22,13 @@ impl Request for MatchRequest {
 
 /// The sealed outcome of a match.
 ///
-/// `outcome` is cleartext so the host can pick a status code. It is a hint, not the authority.
+/// Ciphertext and nothing else. There is deliberately no cleartext class: whether a match held is
+/// itself a fact about the request, so the host learns only that the enclave answered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchResponse {
-    /// Coarse outcome class, readable by the host.
-    pub outcome: MatchOutcome,
     /// The sealed payload: `response_nonce || ciphertext`, readable only by the requester.
     #[serde(with = "serde_bytes")]
     pub ciphertext: Vec<u8>,
-}
-
-/// Coarse, cleartext class of a [`MatchResponse`]. The detail stays sealed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MatchOutcome {
-    /// The match held; the sealed payload carries a signed statement.
-    Statement,
-    /// The match did not hold; the sealed payload carries the reason.
-    Rejected,
 }
 
 #[cfg(test)]

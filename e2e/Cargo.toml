@@ -7,7 +7,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-aes-gcm.workspace = true
 anyhow.workspace = true
 attested-channel.workspace = true
 deepface-protocol.workspace = true

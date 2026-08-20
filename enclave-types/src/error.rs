@@ -11,15 +11,11 @@ pub enum EnclaveError {
     SecureModuleNotInitialized,
     /// The Nitro Secure Module could not produce an attestation document.
     AttestationFailed,
-    /// The sealed request could not be opened, or its plaintext was unusable. Merged because a
-    /// request that cannot be opened has no channel to carry detail back through.
-    BadRequest,
-    /// The challenge image did not decrypt. Separate from [`Self::BadRequest`] because the
-    /// ciphertext came from the *host*.
-    ChallengeDecryptFailed,
-    /// The Face Engine rejected an image on quality grounds. In the clear because it describes the
-    /// photograph, not the person. The match verdict never travels this way.
-    ImageAnalysisFailed,
+    /// The sealed request could not be opened.
+    ///
+    /// The only input failure the host may see: with no channel there is nothing to seal a reply
+    /// into. Everything the enclave learns *after* opening travels sealed instead.
+    RequestNotOpened,
     /// The enclave failed while producing a response. Detail stays in the enclave log.
     Internal,
 }

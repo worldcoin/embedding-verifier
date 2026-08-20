@@ -96,27 +96,27 @@ fails inside the enclave rather than changing the result.
 { "response_ciphertext": "<base64 nonce || ciphertext>", "key_attestation": "<base64 COSE_Sign1>" }
 ```
 
-The sealed response carries either a `COSE_Sign1` match statement or the reason no statement
-was issued; `key_attestation` is the signing key's attestation, so a client can verify the
-statement it just received. Only the requester can open either — a second channel to the same
-enclave key cannot.
+The sealed response carries either a `COSE_Sign1` match statement or the reason no statement was
+issued; `key_attestation` is the signing key's attestation, so a client can verify the statement it
+just received. Only the requester can open it — a second channel to the same enclave key cannot.
 
-The HTTP status is derived from a coarse class the enclave returns in the clear, so the host can
-route and count without learning why a face failed:
+The host learns only that the enclave answered. Once a request has been opened there is a sealed
+channel to reply on, so everything the enclave discovers from that point — a malformed payload, an
+unusable `hashes.json`, an image refused on quality grounds, a below-threshold score, a challenge
+blob that would not decrypt — travels inside `response_ciphertext`. None of it reaches the status
+code.
 
 | Status | Meaning |
 | --- | --- |
-| `200` | Sealed statement |
-| `422` | Sealed rejection — the match did not hold. Carries `response_ciphertext`, not an error |
-| `422` `challenge_decrypt_failed` | The fetched blob did not decrypt under the sealed key |
-| `409` `reassign_required` | The request did not open; re-assign and re-seal, once |
+| `200` | The enclave answered; the sealed payload holds the outcome |
+| `409` `reassign_required` | The request did not open, so there was no channel to reply on; re-assign and re-seal, once |
 | `400` `invalid_challenge_url` | The URL was rejected before any request was made |
-| `400` `image_analysis_failed` | An input image was refused on quality grounds |
 | `502` `challenge_fetch_failed` | The challenge image could not be fetched |
+| `500` `internal_error` | Enclave fault |
 
-Note that `422` is both a successful sealed rejection and one error case; a client tells them
-apart by whether the body carries `response_ciphertext`. The class is only a hint — the sealed
-outcome is authoritative, and a client compares the two.
+`409` is the only input failure with a status of its own, because with no channel open there is
+nothing to seal a reply into. Everything else the host might want — how often matches fail, how often
+the RP's objects are stale — has to come from enclave-side metrics rather than from status codes.
 
 > **No SSRF destination control.** `challenge_image_url` is only constrained in shape — HTTPS,
 > a domain rather than an IP literal, no credentials, no redirects, a 5s timeout and a 4 MiB

@@ -5,10 +5,11 @@
 //! channel endpoint lives in [`attested_channel::channel::Responder`] and is owned by
 //! [`crate::state::EnclaveState`].
 
-use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSAPublicKey, EdDSASignature};
+use deepface_protocol::match_token::{MatchClaims, MatchToken, build_token};
+use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSAPublicKey};
 
 /// The field element a `BabyJubJub` `EdDSA` signature commits to.
-pub type SigningMessage = ark_babyjubjub::Fq;
+type SigningMessage = ark_babyjubjub::Fq;
 
 /// The `BabyJubJub` `EdDSA` keypair that signs match statements.
 pub struct SigningKey {
@@ -35,12 +36,28 @@ impl SigningKey {
         &self.public_key
     }
 
-    /// Signs one field element.
+    /// Signs `claims` and returns the finished token.
     ///
-    /// Encoding a match statement into that element is deliberately not decided here —
-    /// it is part of the statement format, which lands with the matches work.
-    #[must_use]
-    pub fn sign(&self, message: SigningMessage) -> EdDSASignature {
+    /// Takes the claims rather than a digest, and hands back a whole token rather than a bare
+    /// signature, so neither mistake is expressible: the signature always covers the claims it
+    /// ships with, and this key cannot be used to sign anything outside the token's domain
+    /// separator.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`deepface_protocol::Error`] if the claims cannot be lowered to a digest or the
+    /// token cannot be encoded.
+    pub fn sign_claims(
+        &self,
+        claims: &MatchClaims,
+    ) -> Result<MatchToken, deepface_protocol::Error> {
+        let signature = self.sign(claims.message_hash()?);
+
+        build_token(claims, &signature, &self.public_key)
+    }
+
+    /// Signs one field element. Private on purpose — see [`Self::sign_claims`].
+    fn sign(&self, message: SigningMessage) -> eddsa_babyjubjub::EdDSASignature {
         self.private_key.sign(message)
     }
 }

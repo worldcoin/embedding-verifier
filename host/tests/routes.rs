@@ -145,7 +145,7 @@ async fn assignment_surfaces_enclave_failures_as_structured_errors() {
             true,
         ),
         (
-            EnclaveClientError::Operation(EnclaveError::BadRequest),
+            EnclaveClientError::Operation(EnclaveError::RequestNotOpened),
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
             false,
@@ -175,7 +175,6 @@ async fn matches_relays_the_sealed_request_and_the_fetched_challenge() {
                 signing_key_attestation: vec![4, 5, 6],
             })),
             match_result: Some(Ok(enclave_types::MatchResponse {
-                outcome: enclave_types::MatchOutcome::Statement,
                 ciphertext: vec![9u8; 48],
             })),
             expected_body: Some(b"sealed".to_vec()),
@@ -194,31 +193,6 @@ async fn matches_relays_the_sealed_request_and_the_fetched_challenge() {
     // Both fields are relayed opaquely: the host encodes, it does not interpret.
     assert_eq!(body["response_ciphertext"], STANDARD.encode([9u8; 48]));
     assert_eq!(body["key_attestation"], STANDARD.encode([4, 5, 6]));
-}
-
-#[tokio::test]
-async fn matches_maps_a_sealed_rejection_to_unprocessable_entity() {
-    let state = state_with(StubEnclaveClient {
-        keys: Some(Ok(GetEnclaveKeysResponse {
-            encryption_key_attestation: vec![1],
-            signing_key_attestation: vec![2],
-        })),
-        match_result: Some(Ok(enclave_types::MatchResponse {
-            outcome: enclave_types::MatchOutcome::Rejected,
-            ciphertext: vec![9u8; 48],
-        })),
-        ..StubEnclaveClient::default()
-    });
-
-    let (status, body) = send(
-        state,
-        match_request("https://bucket.example.com/challenge-images/a"),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    // The reason is inside the ciphertext, unreadable here; the host adds nothing to it.
-    assert_eq!(body["response_ciphertext"], STANDARD.encode([9u8; 48]));
 }
 
 #[tokio::test]
@@ -292,7 +266,9 @@ async fn matches_maps_an_unopenable_request_to_conflict() {
             encryption_key_attestation: vec![1],
             signing_key_attestation: vec![2],
         })),
-        match_result: Some(Err(EnclaveClientError::Operation(EnclaveError::BadRequest))),
+        match_result: Some(Err(EnclaveClientError::Operation(
+            EnclaveError::RequestNotOpened,
+        ))),
         ..StubEnclaveClient::default()
     });
 
@@ -307,15 +283,17 @@ async fn matches_maps_an_unopenable_request_to_conflict() {
 }
 
 #[tokio::test]
-async fn matches_surfaces_a_quality_failure_as_a_client_error() {
+async fn matches_answers_200_whatever_the_sealed_result_says() {
+    // A quality failure, a below-threshold match and a malformed payload are all sealed now, so
+    // the host cannot distinguish them from a statement -- and must not try.
     let state = state_with(StubEnclaveClient {
         keys: Some(Ok(GetEnclaveKeysResponse {
             encryption_key_attestation: vec![1],
             signing_key_attestation: vec![2],
         })),
-        match_result: Some(Err(EnclaveClientError::Operation(
-            EnclaveError::ImageAnalysisFailed,
-        ))),
+        match_result: Some(Ok(enclave_types::MatchResponse {
+            ciphertext: vec![9u8; 48],
+        })),
         ..StubEnclaveClient::default()
     });
 
@@ -325,6 +303,11 @@ async fn matches_surfaces_a_quality_failure_as_a_client_error() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["error"]["code"], "image_analysis_failed");
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["response_ciphertext"], STANDARD.encode([9u8; 48]));
+    assert_eq!(
+        body.as_object().map(serde_json::Map::len),
+        Some(2),
+        "the relay exposes the ciphertext and the attestation, nothing else"
+    );
 }

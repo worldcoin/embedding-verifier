@@ -1097,7 +1097,6 @@ checksum = "15401da73a9ed8c80e3b2d4dc05fe10e7b72d7243b9f614e516a44fa99986e88"
 name = "e2e"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "anyhow",
  "attested-channel",
  "client",
@@ -1164,7 +1163,6 @@ dependencies = [
 name = "enclave"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "anyhow",
  "attested-channel",
  "ciborium",

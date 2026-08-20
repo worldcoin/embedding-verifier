@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use deepface_protocol::messages::FailureReason;
 use enclave_types::EnclaveError;
 
 use crate::{
@@ -36,7 +37,7 @@ impl FaceComparator for UnusedFaceEngine {
         _: &[u8],
         _: &[u8],
         _: &[u8],
-    ) -> Result<ComparisonScores, EnclaveError> {
+    ) -> Result<ComparisonScores, FailureReason> {
         panic!("Face Engine was called unexpectedly")
     }
 }

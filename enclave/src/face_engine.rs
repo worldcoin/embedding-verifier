@@ -2,7 +2,7 @@
 
 use std::{io::Cursor, sync::Arc};
 
-use enclave_types::EnclaveError;
+use deepface_protocol::messages::FailureReason;
 use face_engine::{
     components::{
         captured_image_analyzer::CapturedImageAnalyzer, template_generator::TemplateGenerator,
@@ -40,7 +40,7 @@ pub trait FaceComparator: Send + Sync {
         credential_image: &[u8],
         live_image: &[u8],
         challenge_image: &[u8],
-    ) -> Result<ComparisonScores, EnclaveError>;
+    ) -> Result<ComparisonScores, FailureReason>;
 }
 
 /// Face Engine implementation backed by the configured ONNX models.
@@ -63,17 +63,17 @@ impl Default for FaceEngine {
 }
 
 impl FaceEngine {
-    fn generate_embedding(&self, image_bytes: &[u8]) -> Result<EmbeddingVector, EnclaveError> {
+    fn generate_embedding(&self, image_bytes: &[u8]) -> Result<EmbeddingVector, FailureReason> {
         let dynamic_image = ImageReader::new(Cursor::new(image_bytes))
             .with_guessed_format()
             .map_err(|error| {
                 tracing::warn!(%error, "could not determine image format");
-                EnclaveError::ImageAnalysisFailed
+                FailureReason::ImageAnalysisFailed
             })?
             .decode()
             .map_err(|error| {
                 tracing::warn!(%error, "could not decode face image");
-                EnclaveError::ImageAnalysisFailed
+                FailureReason::ImageAnalysisFailed
             })?;
 
         let rgb_image = RgbImage::new(
@@ -84,7 +84,7 @@ impl FaceEngine {
         )
         .map_err(|error| {
             tracing::warn!(%error, "could not construct Face Engine RGB image");
-            EnclaveError::ImageAnalysisFailed
+            FailureReason::ImageAnalysisFailed
         })?;
 
         let analysis = self
@@ -92,16 +92,16 @@ impl FaceEngine {
             .run_inference_rgb(&rgb_image)
             .map_err(|error| {
                 tracing::error!(%error, "Face Engine image analysis failed");
-                EnclaveError::ImageAnalysisFailed
+                FailureReason::ImageAnalysisFailed
             })?;
         if let Some(error) = analysis.error {
             tracing::warn!(?error, "Face Engine image analysis failed");
-            return Err(EnclaveError::ImageAnalysisFailed);
+            return Err(FailureReason::ImageAnalysisFailed);
         }
 
         let subject_metadata = analysis.subject_face_extracted.ok_or_else(|| {
             tracing::warn!("Face Engine did not extract a subject");
-            EnclaveError::ImageAnalysisFailed
+            FailureReason::ImageAnalysisFailed
         })?;
         let subject = SubjectFace {
             input_image: Arc::new(rgb_image),
@@ -113,17 +113,17 @@ impl FaceEngine {
             .run_inference(&subject)
             .map_err(|error| {
                 tracing::error!(%error, "Face Engine template inference failed");
-                EnclaveError::ImageAnalysisFailed
+                FailureReason::ImageAnalysisFailed
             })?;
 
         if let Some(error) = output.metadata.error {
             tracing::warn!(?error, "Face Engine rejected the generated template");
-            return Err(EnclaveError::ImageAnalysisFailed);
+            return Err(FailureReason::ImageAnalysisFailed);
         }
 
         output.embedding_vector.ok_or_else(|| {
             tracing::error!("Face Engine returned no embedding");
-            EnclaveError::ImageAnalysisFailed
+            FailureReason::ImageAnalysisFailed
         })
     }
 
@@ -131,12 +131,12 @@ impl FaceEngine {
         &self,
         probe: &EmbeddingVector,
         reference: &EmbeddingVector,
-    ) -> Result<f32, EnclaveError> {
+    ) -> Result<f32, FailureReason> {
         self.matcher
             .compute_score(probe, reference)
             .map_err(|error| {
                 tracing::error!(%error, "Face Engine embedding comparison failed");
-                EnclaveError::Internal
+                FailureReason::ImageAnalysisFailed
             })
     }
 }
@@ -147,7 +147,7 @@ impl FaceComparator for FaceEngine {
         credential_image: &[u8],
         live_image: &[u8],
         challenge_image: &[u8],
-    ) -> Result<ComparisonScores, EnclaveError> {
+    ) -> Result<ComparisonScores, FailureReason> {
         let reference = self.generate_embedding(credential_image)?;
         let live = self.generate_embedding(live_image)?;
         let challenge = self.generate_embedding(challenge_image)?;

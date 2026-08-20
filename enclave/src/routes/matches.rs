@@ -2,25 +2,25 @@ use std::sync::Arc;
 
 use attested_channel::channel::{SealedRequest, SealedResponse, UnwrapErr};
 use deepface_protocol::Error as ProtocolError;
-use deepface_protocol::match_token::{self, MatchClaims, MatchToken};
-use deepface_protocol::messages::MatchInputs;
-use deepface_protocol::messages::{MatchResult, RejectReason};
-use enclave_types::{EnclaveError, MatchOutcome, MatchRequest, MatchResponse};
+use deepface_protocol::match_token::MatchClaims;
+use deepface_protocol::messages::{FailureReason, MatchInputs, MatchResult, decrypt_challenge};
+use enclave_types::{EnclaveError, MatchRequest, MatchResponse};
 use getrandom::SysRng;
 use pontifex::Request;
 use sha2::{Digest, Sha256};
 
-use crate::{challenge, pcp, state::EnclaveState};
+use crate::{pcp, state::EnclaveState};
 
 /// Runs a 3-way face match: the credential image against both the live and challenge images.
 ///
-/// Request and outcome are both sealed to this boot's channel, so the host learns only
-/// [`MatchOutcome`].
+/// Everything the enclave learns after opening the request goes back sealed, so a successful return
+/// tells the host only that the enclave answered.
 ///
 /// # Errors
 ///
-/// Returns [`EnclaveError`] only for what the host may see. A face that did not match is *not* an
-/// error — it is a sealed [`RejectReason`] inside a successful response.
+/// Returns [`EnclaveError`] for the only two things the host may see: a request that would not open
+/// (no channel exists, so nothing can be sealed) and an enclave fault. Every other failure is a
+/// sealed [`FailureReason`].
 pub async fn handler(
     state: Arc<EnclaveState>,
     request: MatchRequest,
@@ -34,66 +34,85 @@ pub async fn handler(
                 route = MatchRequest::ROUTE_ID,
                 "failed to open sealed request"
             );
-            EnclaveError::BadRequest
+            EnclaveError::RequestNotOpened
         })?;
 
-    let inputs = MatchInputs::from_cbor(&plaintext).map_err(|error| {
-        tracing::warn!(
-            ?error,
-            route = MatchRequest::ROUTE_ID,
-            "unusable match payload"
-        );
-        match error {
-            // The only two decoding can produce. The crate error covers the whole protocol, so
-            // anything else here is a bug rather than a bad request.
-            ProtocolError::Malformed | ProtocolError::UnsupportedChannelVersion => {
-                EnclaveError::BadRequest
-            }
-            _ => EnclaveError::Internal,
-        }
-    })?;
-
-    let challenge_image = challenge::decrypt(
-        &request.challenge_ciphertext,
-        &inputs.challenge_image_key,
-        &inputs.challenge_image_iv,
-    )?;
-
-    let (outcome, result) = match evaluate(&state, &inputs, &challenge_image)? {
-        Ok(statement) => (
-            MatchOutcome::Statement,
-            MatchResult::Statement(sign(&state, &statement)?),
-        ),
-        Err(reason) => (MatchOutcome::Rejected, MatchResult::Rejected(reason)),
-    };
+    // Past this point there is a channel to answer on, so every input-derived failure is sealed.
+    let result = run(&state, &request.challenge_ciphertext, &plaintext)?;
 
     Ok(MatchResponse {
-        outcome,
         ciphertext: seal(sealer, &result)?.into_bytes(),
     })
 }
 
-/// Evaluates the opened inputs.
+/// Decodes the opened plaintext and runs the match.
 ///
-/// The nesting is the confidentiality split: the outer `Err` is what the host sees, the inner
-/// `Err` is a [`RejectReason`] only the requester sees.
+/// # Errors
+///
+/// Only for an enclave fault. Anything the request itself caused comes back as
+/// [`MatchResult::Failed`].
+fn run(
+    state: &EnclaveState,
+    challenge_ciphertext: &[u8],
+    plaintext: &[u8],
+) -> Result<MatchResult, EnclaveError> {
+    let inputs = match MatchInputs::from_cbor(plaintext) {
+        Ok(inputs) => inputs,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                route = MatchRequest::ROUTE_ID,
+                "unusable match payload"
+            );
+            return match error {
+                ProtocolError::Malformed => Ok(MatchResult::Failed(FailureReason::MalformedInputs)),
+                ProtocolError::UnsupportedChannelVersion => {
+                    Ok(MatchResult::Failed(FailureReason::UnsupportedVersion))
+                }
+                // Decoding produces no other variant; anything else is a bug in this crate.
+                _ => Err(EnclaveError::Internal),
+            };
+        }
+    };
+
+    // Sealed like the rest: it says the key inside this payload disagrees with the object the host
+    // fetched, which is a fact about the plaintext. The host sees a success.
+    let Ok(challenge_image) = decrypt_challenge(
+        challenge_ciphertext,
+        &inputs.challenge_image_key,
+        &inputs.challenge_image_iv,
+    ) else {
+        tracing::warn!(
+            route = MatchRequest::ROUTE_ID,
+            "challenge image failed to decrypt"
+        );
+        return Ok(MatchResult::Failed(FailureReason::ChallengeDecryptFailed));
+    };
+
+    match evaluate(state, &inputs, &challenge_image) {
+        Ok(claims) => Ok(MatchResult::Success(sign(state, &claims)?)),
+        Err(reason) => Ok(MatchResult::Failed(reason)),
+    }
+}
+
+/// Evaluates the opened inputs. Every failure here is a fact about the plaintext, so it is sealed.
 fn evaluate(
     state: &EnclaveState,
     inputs: &MatchInputs,
     challenge_image: &[u8],
-) -> Result<Result<MatchClaims, RejectReason>, EnclaveError> {
+) -> Result<MatchClaims, FailureReason> {
     // Binds the credential image to the hash its PCP commits. A commitment, not proof of
     // enrollment — nothing here checks who issued the PCP.
     let credential_claim =
         match pcp::bind_credential_claim(&inputs.credential_image, &inputs.hashes_json) {
             Ok(claim) => claim,
-            Err(pcp::PcpError::InvalidHashesJson) => {
-                tracing::warn!(route = MatchRequest::ROUTE_ID, "malformed hashes.json");
-                return Err(EnclaveError::BadRequest);
-            }
-            Err(pcp::PcpError::ThumbnailHashMismatch) => {
-                tracing::warn!(route = MatchRequest::ROUTE_ID, "pcp binding rejected");
-                return Ok(Err(RejectReason::ThumbnailHashMismatch));
+            Err(reason) => {
+                tracing::warn!(
+                    ?reason,
+                    route = MatchRequest::ROUTE_ID,
+                    "pcp binding failed"
+                );
+                return Err(reason);
             }
         };
 
@@ -111,30 +130,24 @@ fn evaluate(
             route = MatchRequest::ROUTE_ID,
             "match scored below threshold"
         );
-        return Ok(Err(RejectReason::MatchBelowThreshold));
+        return Err(FailureReason::MatchBelowThreshold);
     }
 
-    Ok(Ok(MatchClaims {
+    Ok(MatchClaims {
         live_image_hash: Sha256::digest(&inputs.live_image).into(),
         credential_claim,
         challenger_image_hash: Sha256::digest(challenge_image).into(),
         // Only the credential-vs-live score is surfaced; the challenge comparison is a gate.
         match_coefficient: scores.live_similarity,
-    }))
+    })
 }
 
 /// Signs a statement with this boot's signing key.
-///
-/// The digest and the token encoding come from `deepface-protocol`; the signature comes from the
-/// enclave's own key, which never leaves this crate.
-fn sign(state: &EnclaveState, statement: &MatchClaims) -> Result<MatchToken, EnclaveError> {
-    let digest = statement.message_hash().map_err(|error| {
-        tracing::error!(?error, "match claims could not be lowered to a digest");
-        EnclaveError::Internal
-    })?;
-    let signature = state.signing_key().sign(digest);
-
-    match_token::build_token(statement, &signature, state.signing_public_key()).map_err(|error| {
+fn sign(
+    state: &EnclaveState,
+    claims: &MatchClaims,
+) -> Result<deepface_protocol::match_token::MatchToken, EnclaveError> {
+    state.signing_key().sign_claims(claims).map_err(|error| {
         tracing::error!(?error, "failed to build the match statement");
         EnclaveError::Internal
     })
@@ -160,19 +173,17 @@ fn seal(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock};
 
-    use aes_gcm::{
-        Aes256Gcm, Key, KeyInit,
-        aead::{Aead, Nonce},
-    };
     use attested_channel::channel::{
         CHANNEL_VERSION, Requester, ResponseOpener, SealedResponse, UnwrapErr,
     };
     use deepface_protocol::match_token;
-    use deepface_protocol::messages::{CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, MatchInputs};
-    use deepface_protocol::messages::{MatchResult, RejectReason};
-    use enclave_types::{EnclaveError, MatchOutcome, MatchRequest};
+    use deepface_protocol::messages::{
+        CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, FailureReason, MatchInputs, MatchResult,
+        encrypt_challenge,
+    };
+    use enclave_types::{EnclaveError, MatchRequest};
     use getrandom::SysRng;
     use sha2::{Digest, Sha256};
 
@@ -183,14 +194,20 @@ mod tests {
         test_support::FailingAttestor,
     };
 
-    const KEY: [u8; CHALLENGE_KEY_LEN] = [7u8; CHALLENGE_KEY_LEN];
-    const IV: [u8; CHALLENGE_IV_LEN] = [9u8; CHALLENGE_IV_LEN];
+    /// One random pair per test run: `inputs` and `challenge_blob` have to agree on it, and a
+    /// literal IV in the tree is both a scanner finding and a bad example to copy.
+    fn key_and_iv() -> &'static ([u8; CHALLENGE_KEY_LEN], [u8; CHALLENGE_IV_LEN]) {
+        static PAIR: OnceLock<([u8; CHALLENGE_KEY_LEN], [u8; CHALLENGE_IV_LEN])> = OnceLock::new();
+
+        PAIR.get_or_init(|| (rand::random(), rand::random()))
+    }
+
     const CREDENTIAL: &[u8] = b"credential-thumbnail";
     const LIVE: &[u8] = b"liveness-frame";
     const CHALLENGE: &[u8] = b"challenge-frame";
 
     struct MockFaceEngine {
-        result: Result<ComparisonScores, EnclaveError>,
+        result: Result<ComparisonScores, FailureReason>,
     }
 
     impl MockFaceEngine {
@@ -203,8 +220,10 @@ mod tests {
             }
         }
 
-        const fn failing(error: EnclaveError) -> Self {
-            Self { result: Err(error) }
+        const fn failing(reason: FailureReason) -> Self {
+            Self {
+                result: Err(reason),
+            }
         }
     }
 
@@ -214,7 +233,7 @@ mod tests {
             credential_image: &[u8],
             live_image: &[u8],
             challenge_image: &[u8],
-        ) -> Result<ComparisonScores, EnclaveError> {
+        ) -> Result<ComparisonScores, FailureReason> {
             // The challenge image must arrive decrypted.
             assert_eq!(credential_image, CREDENTIAL);
             assert_eq!(live_image, LIVE);
@@ -241,17 +260,15 @@ mod tests {
             live_image: LIVE.to_vec(),
             credential_image: credential.to_vec(),
             hashes_json: hashes_json_for(credential),
-            challenge_image_key: KEY,
-            challenge_image_iv: IV,
+            challenge_image_key: key_and_iv().0,
+            challenge_image_iv: key_and_iv().1,
             match_threshold: threshold,
         }
     }
 
     /// Encrypts the challenge the way the RP does.
     fn challenge_blob(key: &[u8; CHALLENGE_KEY_LEN]) -> Vec<u8> {
-        Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key))
-            .encrypt(&Nonce::<Aes256Gcm>::from(IV), CHALLENGE)
-            .expect("encryption should succeed")
+        encrypt_challenge(CHALLENGE, key, &key_and_iv().1).expect("encryption should succeed")
     }
 
     /// Seals `inputs` to `state` and pairs the request with a freshly encrypted challenge blob.
@@ -266,7 +283,7 @@ mod tests {
             opener,
             MatchRequest {
                 body: sealed.into_bytes(),
-                challenge_ciphertext: challenge_blob(&KEY),
+                challenge_ciphertext: challenge_blob(&key_and_iv().0),
             },
         )
     }
@@ -281,11 +298,10 @@ mod tests {
 
         let response = handler(state, request).await.expect("match should succeed");
 
-        assert_eq!(response.outcome, MatchOutcome::Statement);
         let plaintext = opener
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("the requester should open its own response");
-        let MatchResult::Statement(token) =
+        let MatchResult::Success(token) =
             MatchResult::from_cbor(&plaintext).expect("result should decode")
         else {
             panic!("a held match should carry a statement");
@@ -315,20 +331,19 @@ mod tests {
             .expect("a rejection is still a successful response");
 
         // The host sees only the coarse class...
-        assert_eq!(response.outcome, MatchOutcome::Rejected);
         // ...while the reason travels sealed.
         let plaintext = opener
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         assert_eq!(
             MatchResult::from_cbor(&plaintext).expect("should decode"),
-            MatchResult::Rejected(RejectReason::MatchBelowThreshold)
+            MatchResult::Failed(FailureReason::MatchBelowThreshold)
         );
     }
 
     #[tokio::test]
     async fn a_thumbnail_mismatch_is_a_sealed_rejection() {
-        let state = state_with(MockFaceEngine::failing(EnclaveError::NotReady));
+        let state = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
         let mut inputs = inputs(b"the-enrolled-image", 0.5);
         inputs.credential_image = b"a-different-image".to_vec();
         let (opener, request) = request_for(&state, &inputs);
@@ -337,13 +352,12 @@ mod tests {
             .await
             .expect("should seal a rejection");
 
-        assert_eq!(response.outcome, MatchOutcome::Rejected);
         let plaintext = opener
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         assert_eq!(
             MatchResult::from_cbor(&plaintext).expect("should decode"),
-            MatchResult::Rejected(RejectReason::ThumbnailHashMismatch)
+            MatchResult::Failed(FailureReason::ThumbnailHashMismatch)
         );
     }
 
@@ -366,71 +380,120 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_a_request_sealed_to_another_boot() {
-        let state = state_with(MockFaceEngine::failing(EnclaveError::NotReady));
-        let other = state_with(MockFaceEngine::failing(EnclaveError::NotReady));
+        let state = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
+        let other = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
         let (_, request) = request_for(&other, &inputs(CREDENTIAL, 0.5));
 
         assert_eq!(
             handler(state, request).await.err(),
-            Some(EnclaveError::BadRequest)
+            Some(EnclaveError::RequestNotOpened)
         );
     }
 
     #[tokio::test]
-    async fn rejects_a_non_cbor_plaintext() {
-        let state = state_with(MockFaceEngine::failing(EnclaveError::NotReady));
+    async fn a_non_cbor_plaintext_is_a_sealed_failure() {
+        let state = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
         let requester = Requester::new(state.encryption_public_key()).expect("valid key");
-        let (sealed, _) = requester
+        let (sealed, opener) = requester
             .seal(b"not cbor framing", &mut UnwrapErr(SysRng))
             .expect("sealing should succeed");
 
-        let result = handler(
+        let response = handler(
             state,
             MatchRequest {
                 body: sealed.into_bytes(),
-                challenge_ciphertext: challenge_blob(&KEY),
+                challenge_ciphertext: challenge_blob(&key_and_iv().0),
             },
         )
-        .await;
+        .await
+        .expect("a malformed plaintext is answered, not errored");
 
-        assert_eq!(result.err(), Some(EnclaveError::BadRequest));
+        let plaintext = opener
+            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .expect("should open");
+        assert_eq!(
+            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::Failed(FailureReason::MalformedInputs)
+        );
     }
 
     #[tokio::test]
-    async fn rejects_an_unsupported_payload_version() {
-        let state = state_with(MockFaceEngine::failing(EnclaveError::NotReady));
+    async fn an_unsupported_payload_version_is_a_sealed_failure() {
+        let state = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
         let mut inputs = inputs(CREDENTIAL, 0.5);
         inputs.version = CHANNEL_VERSION + 1;
-        let (_, request) = request_for(&state, &inputs);
+        let (opener, request) = request_for(&state, &inputs);
 
+        let response = handler(state, request)
+            .await
+            .expect("a bad version is answered, not errored");
+
+        let plaintext = opener
+            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .expect("should open");
         assert_eq!(
-            handler(state, request).await.err(),
-            Some(EnclaveError::BadRequest)
+            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::Failed(FailureReason::UnsupportedVersion)
         );
     }
 
     #[tokio::test]
-    async fn attributes_a_bad_challenge_blob_separately() {
-        // The blob is the one input the host supplied, so it must not read as a client error.
-        let state = state_with(MockFaceEngine::failing(EnclaveError::NotReady));
-        let (_, mut request) = request_for(&state, &inputs(CREDENTIAL, 0.5));
-        request.challenge_ciphertext = challenge_blob(&[1u8; CHALLENGE_KEY_LEN]);
+    async fn a_bad_challenge_blob_is_a_sealed_failure() {
+        let state = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
+        let (opener, mut request) = request_for(&state, &inputs(CREDENTIAL, 0.5));
+        request.challenge_ciphertext = challenge_blob(&rand::random());
 
+        let response = handler(state, request)
+            .await
+            .expect("a bad blob is answered, not errored");
+
+        let plaintext = opener
+            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .expect("should open");
         assert_eq!(
-            handler(state, request).await.err(),
-            Some(EnclaveError::ChallengeDecryptFailed)
+            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::Failed(FailureReason::ChallengeDecryptFailed)
         );
     }
 
     #[tokio::test]
-    async fn surfaces_an_image_quality_failure_in_the_clear() {
-        // A client has to know to retake the photo, so this one is not sealed.
-        let state = state_with(MockFaceEngine::failing(EnclaveError::ImageAnalysisFailed));
-        let (_, request) = request_for(&state, &inputs(CREDENTIAL, 0.5));
+    async fn an_image_quality_failure_is_a_sealed_failure() {
+        // The client needs this, the host must not have it: it says the photo was unusable.
+        let state = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
+        let (opener, request) = request_for(&state, &inputs(CREDENTIAL, 0.5));
 
+        let response = handler(state, request)
+            .await
+            .expect("a quality failure is answered, not errored");
+
+        let plaintext = opener
+            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .expect("should open");
         assert_eq!(
-            handler(state, request).await.err(),
-            Some(EnclaveError::ImageAnalysisFailed)
+            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::Failed(FailureReason::ImageAnalysisFailed)
+        );
+    }
+
+    /// The whole point of the redesign: a malformed `hashes.json` is a fact about the sealed
+    /// plaintext, so the host is told the request succeeded.
+    #[tokio::test]
+    async fn an_invalid_hashes_json_is_a_sealed_failure() {
+        let state = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
+        let mut inputs = inputs(CREDENTIAL, 0.5);
+        inputs.hashes_json = b"not json".to_vec();
+        let (opener, request) = request_for(&state, &inputs);
+
+        let response = handler(state, request)
+            .await
+            .expect("bad hashes.json is answered, not errored");
+
+        let plaintext = opener
+            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .expect("should open");
+        assert_eq!(
+            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::Failed(FailureReason::InvalidHashesJson)
         );
     }
 

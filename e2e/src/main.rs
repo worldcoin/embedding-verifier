@@ -1,15 +1,13 @@
 use std::{env, fs, path::PathBuf, time::SystemTime};
 
-use aes_gcm::{
-    Aes256Gcm, Key, KeyInit,
-    aead::{Aead, Nonce},
-};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use attested_channel::channel::{CHANNEL_VERSION, SealedResponse, UnwrapErr};
 use client::{Config, FaceVerifierClient};
 use deepface_protocol::match_token::{self, EdDSAPublicKey};
-use deepface_protocol::messages::{CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, MatchInputs, MatchResult};
-use enclave_types::{GetEnclaveKeysRequest, MatchOutcome, MatchRequest};
+use deepface_protocol::messages::{
+    CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, MatchInputs, MatchResult, encrypt_challenge,
+};
+use enclave_types::{GetEnclaveKeysRequest, MatchRequest};
 use pontifex::client::ConnectionDetails;
 use sha2::{Digest, Sha256};
 
@@ -54,12 +52,9 @@ async fn main() -> Result<()> {
     // Stands in for the RP: encrypt the challenge frame, keep the key for the sealed payload.
     let challenge_image_key: [u8; CHALLENGE_KEY_LEN] = rand::random();
     let challenge_image_iv: [u8; CHALLENGE_IV_LEN] = rand::random();
-    let challenge_ciphertext = Aes256Gcm::new(&Key::<Aes256Gcm>::from(challenge_image_key))
-        .encrypt(
-            &Nonce::<Aes256Gcm>::from(challenge_image_iv),
-            challenge_image.as_slice(),
-        )
-        .map_err(|_| anyhow!("failed to encrypt the challenge image"))?;
+    let challenge_ciphertext =
+        encrypt_challenge(&challenge_image, &challenge_image_key, &challenge_image_iv)
+            .map_err(|error| anyhow!("failed to encrypt the challenge image: {error:?}"))?;
 
     let hashes_json = hashes_json_for(&credential_image);
     let inputs = MatchInputs {
@@ -95,18 +90,10 @@ async fn main() -> Result<()> {
     let result = MatchResult::from_cbor(&sealed_outcome)
         .map_err(|error| anyhow!("failed to decode the sealed result: {error:?}"))?;
 
-    // The cleartext class is the host's hint; the sealed result is the authority. A disagreement
-    // between them is host misbehaviour, not a failed match.
+    // The sealed result is the only account of what happened; the host reported nothing but success.
     let token = match result {
-        MatchResult::Statement(token) => {
-            ensure!(
-                response.outcome == MatchOutcome::Statement,
-                "enclave sealed a statement but reported {:?}",
-                response.outcome
-            );
-            token
-        }
-        MatchResult::Rejected(reason) => bail!("match was rejected: {reason:?}"),
+        MatchResult::Success(token) => token,
+        MatchResult::Failed(reason) => bail!("no statement was issued: {reason:?}"),
     };
 
     let statement = match_token::verify(&token, &signing_key)

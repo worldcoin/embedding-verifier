@@ -1,10 +1,9 @@
 use axum::{Json, extract::State, http::StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use enclave_types::{self as enclave, MatchOutcome};
+use enclave_types::{self as enclave};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
-use crate::challenge_fetch::FetchError;
 use crate::error::AppError;
 
 /// A match request.
@@ -76,48 +75,13 @@ pub async fn handler(
         .await
         .map_err(|error| AppError::enclave_match(&error))?;
 
-    let status = match response.outcome {
-        MatchOutcome::Statement => StatusCode::OK,
-        // Well-formed request, but the match did not hold. The reason is sealed in the body.
-        MatchOutcome::Rejected => StatusCode::UNPROCESSABLE_ENTITY,
-    };
-
+    // Always 200 when the enclave answered. Whether the match held is inside the ciphertext: it is
+    // a fact about the request, so the status code must not carry it.
     Ok((
-        status,
+        StatusCode::OK,
         Json(MatchResponseBody {
             response_ciphertext: STANDARD.encode(response.ciphertext),
             key_attestation: STANDARD.encode(keys.signing_key_attestation),
         }),
     ))
-}
-
-impl AppError {
-    /// Maps a challenge-image fetch failure.
-    ///
-    /// The RP's bucket is an availability dependency, so its failures are `502` and never an
-    /// enclave fault. A rejected URL is the caller's problem, and not retryable.
-    #[must_use]
-    pub fn challenge_fetch(error: FetchError) -> Self {
-        match error {
-            FetchError::Malformed => Self::new(
-                StatusCode::BAD_REQUEST,
-                "invalid_challenge_url",
-                "The challenge image URL was rejected",
-                false,
-            ),
-            FetchError::TooLarge => Self::new(
-                StatusCode::BAD_GATEWAY,
-                "challenge_fetch_failed",
-                "The challenge image was too large",
-                false,
-            ),
-            FetchError::Unreachable => Self::new(
-                StatusCode::BAD_GATEWAY,
-                "challenge_fetch_failed",
-                "The challenge image could not be fetched",
-                true,
-            ),
-        }
-        .with_detail(format!("{error:?}"))
-    }
 }

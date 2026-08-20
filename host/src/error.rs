@@ -13,6 +13,7 @@ use axum::{
 use enclave_types::EnclaveError;
 use serde::Serialize;
 
+use crate::challenge_fetch::FetchError;
 use crate::enclave::EnclaveClientError;
 
 /// Error envelope returned to clients.
@@ -82,6 +83,35 @@ impl AppError {
         self.code
     }
 
+    /// Maps a challenge-image fetch failure.
+    ///
+    /// The RP's bucket is an availability dependency, so its failures are `502` and never an
+    /// enclave fault. A rejected URL is the caller's problem, and not retryable.
+    #[must_use]
+    pub fn challenge_fetch(error: FetchError) -> Self {
+        match error {
+            FetchError::Malformed => Self::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_challenge_url",
+                "The challenge image URL was rejected",
+                false,
+            ),
+            FetchError::TooLarge => Self::new(
+                StatusCode::BAD_GATEWAY,
+                "challenge_fetch_failed",
+                "The challenge image was too large",
+                false,
+            ),
+            FetchError::Unreachable => Self::new(
+                StatusCode::BAD_GATEWAY,
+                "challenge_fetch_failed",
+                "The challenge image could not be fetched",
+                true,
+            ),
+        }
+        .with_detail(format!("{error:?}"))
+    }
+
     /// Maps an enclave failure on the assignment route.
     ///
     /// Match-path errors cannot arise from an attestation request, so reaching one means the
@@ -97,10 +127,7 @@ impl AppError {
                 EnclaveError::NotReady
                 | EnclaveError::SecureModuleNotInitialized
                 | EnclaveError::AttestationFailed => Self::enclave_not_ready(*operation),
-                EnclaveError::BadRequest
-                | EnclaveError::ChallengeDecryptFailed
-                | EnclaveError::ImageAnalysisFailed
-                | EnclaveError::Internal => Self::new(
+                EnclaveError::RequestNotOpened | EnclaveError::Internal => Self::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal_error",
                     "Internal server error",
@@ -124,28 +151,11 @@ impl AppError {
                 // The request did not open. Indistinguishable from a corrupt ciphertext here, so
                 // the client is told to re-assign and re-seal -- once. See the spec's §6 note on
                 // bounding this retry: an unbounded one would loop on a genuine sealing bug.
-                EnclaveError::BadRequest => Self::new(
+                EnclaveError::RequestNotOpened => Self::new(
                     StatusCode::CONFLICT,
                     "reassign_required",
                     "The request was not sealed to this enclave's current encryption key",
                     true,
-                )
-                .with_detail(format!("{operation:?}")),
-                // The one input the host supplied, so it is attributed outward rather than to the
-                // caller or the enclave.
-                EnclaveError::ChallengeDecryptFailed => Self::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "challenge_decrypt_failed",
-                    "The challenge image could not be decrypted",
-                    false,
-                )
-                .with_detail(format!("{operation:?}")),
-                // About the photograph, not the person, so the client must see it to retake.
-                EnclaveError::ImageAnalysisFailed => Self::new(
-                    StatusCode::BAD_REQUEST,
-                    "image_analysis_failed",
-                    "An input image was rejected",
-                    false,
                 )
                 .with_detail(format!("{operation:?}")),
                 EnclaveError::Internal => Self::new(
@@ -278,7 +288,7 @@ mod tests {
     /// why the mapping is per route rather than a blanket `From` impl.
     #[test]
     fn an_unopenable_request_is_retryable_on_matches_and_a_host_bug_on_assignment() {
-        let error = EnclaveClientError::Operation(EnclaveError::BadRequest);
+        let error = EnclaveClientError::Operation(EnclaveError::RequestNotOpened);
 
         // On the match path the client should re-assign and re-seal.
         let mapped = AppError::enclave_match(&error);
@@ -292,22 +302,52 @@ mod tests {
         assert!(!mapped.allow_retry);
     }
 
-    /// The challenge blob is the host's input and the image is the caller's, so neither may be
-    /// reported as an enclave fault.
+    /// Pins the whole per-route matrix in one place. The two paths deliberately disagree on
+    /// `RequestNotOpened` -- impossible on assignment, so a host bug; expected on the match path,
+    /// so a retryable `409`. Nothing else fails if one side is changed alone, hence this test.
     #[test]
-    fn match_inputs_are_attributed_to_whoever_supplied_them() {
-        let mapped = AppError::enclave_match(&EnclaveClientError::Operation(
-            EnclaveError::ChallengeDecryptFailed,
-        ));
-        assert_eq!(mapped.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(mapped.code(), "challenge_decrypt_failed");
-        assert!(!mapped.allow_retry);
+    fn each_enclave_error_maps_per_route() {
+        let cases = [
+            (
+                EnclaveError::NotReady,
+                StatusCode::SERVICE_UNAVAILABLE,
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                EnclaveError::SecureModuleNotInitialized,
+                StatusCode::SERVICE_UNAVAILABLE,
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                EnclaveError::AttestationFailed,
+                StatusCode::SERVICE_UNAVAILABLE,
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                EnclaveError::RequestNotOpened,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::CONFLICT,
+            ),
+            (
+                EnclaveError::Internal,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+        ];
 
-        let mapped = AppError::enclave_match(&EnclaveClientError::Operation(
-            EnclaveError::ImageAnalysisFailed,
-        ));
-        assert_eq!(mapped.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(mapped.code(), "image_analysis_failed");
-        assert!(!mapped.allow_retry);
+        for (error, on_assignment, on_match) in cases {
+            let wrapped = EnclaveClientError::Operation(error);
+
+            assert_eq!(
+                AppError::enclave_assignment(&wrapped).status(),
+                on_assignment,
+                "assignment path for {error:?}"
+            );
+            assert_eq!(
+                AppError::enclave_match(&wrapped).status(),
+                on_match,
+                "match path for {error:?}"
+            );
+        }
     }
 }
