@@ -2,19 +2,16 @@
 
 use std::sync::Arc;
 
-use crypto_box::PublicKey;
+use crypto::sealed_channel::{ENCRYPTION_KEY_LEN, Responder, UnwrapErr};
 use eddsa_babyjubjub::EdDSAPublicKey;
 use enclave_types::EnclaveError;
+use getrandom::SysRng;
 
-use crate::{
-    attestation::Attestor,
-    face_engine::FaceComparator,
-    keys::{EncryptionKey, SigningKey},
-};
+use crate::{attestation::Attestor, face_engine::FaceComparator, keys::SigningKey};
 
 /// Immutable state generated once during enclave boot.
 pub struct EnclaveState {
-    encryption_key: EncryptionKey,
+    responder: Responder,
     signing_key: SigningKey,
     attestor: Arc<dyn Attestor>,
     face_engine: Arc<dyn FaceComparator>,
@@ -24,22 +21,29 @@ impl EnclaveState {
     /// Generates fresh boot-scoped keys, with the provided attestor and Face Engine.
     #[must_use]
     pub fn generate(attestor: Arc<dyn Attestor>, face_engine: Arc<dyn FaceComparator>) -> Self {
-        let encryption_key = EncryptionKey::generate();
+        let mut rng = UnwrapErr(SysRng);
+        let responder = Responder::generate(&mut rng);
         let signing_key = SigningKey::generate();
-        tracing::info!("generated boot-scoped encryption and signing keys");
+        tracing::info!("generated boot-scoped sealed channel and signing keys");
 
         Self {
-            encryption_key,
+            responder,
             signing_key,
             attestor,
             face_engine,
         }
     }
 
+    /// Returns the responder that opens sealed requests for this boot.
+    #[must_use]
+    pub const fn responder(&self) -> &Responder {
+        &self.responder
+    }
+
     /// Returns the X25519 public key attested for this enclave boot.
     #[must_use]
-    pub fn encryption_public_key(&self) -> PublicKey {
-        self.encryption_key.public_key()
+    pub const fn encryption_public_key(&self) -> [u8; ENCRYPTION_KEY_LEN] {
+        self.responder.public_key()
     }
 
     /// Returns the `BabyJubJub` public key that verifies this boot's statements.
@@ -60,8 +64,8 @@ impl EnclaveState {
     ///
     /// Propagates the [`Attestor`] failure.
     pub fn attest_encryption_key(&self) -> Result<Vec<u8>, EnclaveError> {
-        let public_key = self.encryption_public_key().to_bytes();
-        self.attestor.attest_public_key(&public_key)
+        self.attestor
+            .attest_public_key(&self.encryption_public_key())
     }
 
     /// Attests the signing public key.
@@ -118,7 +122,7 @@ mod tests {
 
         assert_eq!(
             state.attest_encryption_key(),
-            Ok(state.encryption_public_key().to_bytes().to_vec())
+            Ok(state.encryption_public_key().to_vec())
         );
         assert_eq!(
             state.attest_signing_key(),

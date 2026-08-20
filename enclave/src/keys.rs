@@ -1,34 +1,14 @@
-//! Boot-scoped key material.
+//! Boot-scoped signing key material.
 //!
-//! Both keypairs are generated in memory at boot and never persisted, sealed, or
-//! shared across enclaves. There is deliberately no KMS-, disk-, or leader-derived key path.
+//! The keypair is generated in memory at boot and never persisted, sealed, or shared across
+//! enclaves. There is deliberately no KMS-, disk-, or leader-derived key path. The sealed
+//! channel endpoint lives in [`crypto::sealed_channel::Responder`] and is owned by
+//! [`crate::state::EnclaveState`].
 
-use crypto_box::{PublicKey, SecretKey, aead::OsRng};
 use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSAPublicKey, EdDSASignature};
 
 /// The field element a `BabyJubJub` `EdDSA` signature commits to.
 pub type SigningMessage = ark_babyjubjub::Fq;
-
-/// The X25519 keypair whose public key is attested for this enclave boot.
-pub struct EncryptionKey {
-    secret_key: SecretKey,
-}
-
-impl EncryptionKey {
-    /// Generates a fresh X25519 keypair.
-    #[must_use]
-    pub fn generate() -> Self {
-        Self {
-            secret_key: SecretKey::generate(&mut OsRng),
-        }
-    }
-
-    /// Returns the public key placed in the encryption-key attestation document.
-    #[must_use]
-    pub fn public_key(&self) -> PublicKey {
-        self.secret_key.public_key()
-    }
-}
 
 /// The `BabyJubJub` `EdDSA` keypair that signs match statements.
 pub struct SigningKey {
@@ -69,15 +49,7 @@ impl SigningKey {
 mod tests {
     use ark_babyjubjub::Fq;
 
-    use super::{EncryptionKey, SigningKey};
-
-    #[test]
-    fn separate_encryption_keys_are_distinct() {
-        assert_ne!(
-            EncryptionKey::generate().public_key(),
-            EncryptionKey::generate().public_key()
-        );
-    }
+    use super::SigningKey;
 
     #[test]
     fn separate_signing_keys_are_distinct() {
