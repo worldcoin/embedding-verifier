@@ -38,11 +38,6 @@ impl SigningKey {
 
     /// Signs `claims` and returns the finished token.
     ///
-    /// Takes the claims rather than a digest, and hands back a whole token rather than a bare
-    /// signature, so neither mistake is expressible: the signature always covers the claims it
-    /// ships with, and this key cannot be used to sign anything outside the token's domain
-    /// separator.
-    ///
     /// # Errors
     ///
     /// Propagates [`deepface_protocol::Error`] if the claims cannot be lowered to a digest or the

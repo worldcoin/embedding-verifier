@@ -26,14 +26,12 @@ pub struct MatchResponseBody {
     /// The sealed outcome, base64.
     response_ciphertext: String,
     /// The signing-key attestation, base64, so a client can verify the statement it just received.
+    ///
+    /// TODO: Probably should be removed once we implement the key registry.
     key_attestation: String,
 }
 
 /// Relays a sealed match request to the enclave.
-///
-/// The host's whole job is routing and one fetch. It contributes only the HTTP status, derived from
-/// the coarse class the enclave supplies. Rewriting that class cannot forge an outcome: the
-/// authoritative one is sealed, and a client compares the two.
 ///
 /// # Errors
 ///
@@ -58,8 +56,6 @@ pub async fn handler(
         .await
         .map_err(AppError::challenge_fetch)?;
 
-    // Public and self-verifying, and the client needs it to check the statement. Taken from the
-    // host rather than the enclave to keep an NSM call off the per-match path.
     let keys = state
         .enclave_client()
         .get_enclave_keys()
@@ -75,8 +71,7 @@ pub async fn handler(
         .await
         .map_err(|error| AppError::enclave_match(&error))?;
 
-    // Always 200 when the enclave answered. Whether the match held is inside the ciphertext: it is
-    // a fact about the request, so the status code must not carry it.
+    // Always 200 when the enclave answered. Whether the match results (failure or success) must not be leaked to host.
     Ok((
         StatusCode::OK,
         Json(MatchResponseBody {

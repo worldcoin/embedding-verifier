@@ -1,19 +1,12 @@
 //! Fetching the RP's challenge image.
 //!
-//! The one place the host fetches a caller-supplied URL, so an SSRF surface. A substituted URL
-//! fails closed in the enclave, which holds the challenge key.
+//! The one place the host fetches a caller-supplied URL (SSRF surface). A substituted URL fails
+//! closed in the enclave, which holds the challenge key.
 //!
-//! TODO(SSRF): there is no destination allowlist. This host will fetch any HTTPS URL naming a
-//! domain that a caller puts in `challenge_image_url`, which makes the match endpoint a request
-//! forgery primitive against anything the host can reach -- internal services on private DNS,
-//! and outbound scanning or amplification. The bounds kept below (HTTPS only, no IP literals, no
-//! userinfo, no redirect following, a 5s timeout, a 4 MiB streamed cap) block the link-local
-//! metadata class and limit blast radius, but they do not pin *where* a fetch may go.
-//!
-//! The removed control was a `host/path-prefix` allowlist from `CHALLENGE_IMAGE_ALLOWLIST`. It was
-//! dropped because it needs a config entry per relying party. Before this endpoint takes untrusted
-//! callers, pin destinations one of these ways: re-add the allowlist, require RPs to upload to a
-//! bucket we own (one permanent entry), or accept presigned URLs and verify the signature.
+//! TODO(SSRF): no destination allowlist — any HTTPS domain in `challenge_image_url` is fetched.
+//! Bounds below (HTTPS, no IP literals/userinfo/redirects, 5s/4 MiB caps) limit blast radius but
+//! do not pin where a fetch may go. Before untrusted callers: re-add `CHALLENGE_IMAGE_ALLOWLIST`,
+//! force uploads to a bucket we own, or verify presigned URLs.
 
 use std::time::Duration;
 
