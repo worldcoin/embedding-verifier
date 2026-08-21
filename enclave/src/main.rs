@@ -3,7 +3,6 @@ use std::sync::Arc;
 use anyhow::{Context, anyhow};
 use enclave::{
     attestation::{self, NsmAttestor},
-    attestation_refresh,
     face_engine::FaceEngine,
     rng, server,
     state::EnclaveState,
@@ -38,13 +37,11 @@ async fn main() -> anyhow::Result<()> {
 
     let attestation = state
         .encryption_key_attestation()
+        .await
         .map_err(|error| anyhow!("failed to read the boot attestation document: {error:?}"))?;
     let document = SecureModule::parse_raw_attestation_doc(&attestation)
         .map_err(|error| anyhow!("failed to parse the boot attestation document: {error:?}"))?;
     attestation::log_boot_measurements(&document);
-
-    // Detached: if it stops, the documents age out and requests fail closed.
-    let _refresh = attestation_refresh::spawn(Arc::clone(&state));
 
     info!(port = PONTIFEX_PORT, "starting enclave Pontifex server");
 

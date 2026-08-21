@@ -1,27 +1,24 @@
 //! A public key and its cached attestation document.
 //!
 //! Attesting is a blocking NSM ioctl, and the assignment route is nothing but that call — which is
-//! where a restart-driven re-assignment burst lands. So documents are cached and refreshed ahead of
-//! use by [`crate::attestation_refresh`]. The cache is boot-scoped by construction, so a restart
-//! takes it along and there is nothing to invalidate; what a document outlives is the freshness
-//! window clients enforce, hence the age bound.
+//! where a restart-driven re-assignment burst lands. Caching it takes the ioctl off all but one
+//! request per interval. The cache is boot-scoped by construction, so a restart takes it along and
+//! there is nothing to invalidate; what a document outlives is the freshness window clients
+//! enforce, hence the age bound.
 
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use enclave_types::EnclaveError;
+use tokio::sync::Mutex;
 
 use crate::attestation::Attestor;
 
-/// How often each key is re-attested.
-pub const REFRESH_INTERVAL: Duration = Duration::from_mins(10);
-
-/// Oldest document still handed out.
+/// How long a document is served before the next read re-attests.
 ///
-/// Three refresh intervals, so two failed refreshes are absorbed. Serving past it would hand a
-/// client a document its own freshness check rejects, turning an NSM outage into a client-side
-/// verification failure. Also a floor on client `max_attestation_age_millis`.
-pub const MAX_SERVED_AGE: Duration = Duration::from_mins(30);
+/// Well inside the hour that `client`'s default `max_attestation_age_millis` allows, so a document
+/// is never close to stale when a client verifies it.
+pub const MAX_CACHED_AGE: Duration = Duration::from_mins(10);
 
 struct Cached {
     document: Vec<u8>,
@@ -32,8 +29,8 @@ struct Cached {
 pub struct AttestedKey {
     attestor: Arc<dyn Attestor>,
     public_key: Vec<u8>,
-    max_served_age: Duration,
-    cached: RwLock<Cached>,
+    max_age: Duration,
+    cached: Mutex<Cached>,
 }
 
 impl AttestedKey {
@@ -45,66 +42,39 @@ impl AttestedKey {
     pub fn attest_now(
         attestor: Arc<dyn Attestor>,
         public_key: Vec<u8>,
-        max_served_age: Duration,
+        max_age: Duration,
     ) -> Result<Self, EnclaveError> {
         let document = attestor.attest_public_key(&public_key)?;
 
         Ok(Self {
             attestor,
             public_key,
-            max_served_age,
-            cached: RwLock::new(Cached {
+            max_age,
+            cached: Mutex::new(Cached {
                 document,
                 attested_at: Instant::now(),
             }),
         })
     }
 
-    /// The cached document, if still young enough to hand out.
+    /// A document no older than `max_age`, re-attesting first if the cached one has expired.
+    ///
+    /// The lock spans check-and-attest, so a burst arriving on an expired document costs one
+    /// attestation rather than one per caller. A failure leaves the previous document in place for
+    /// the next read to retry.
     ///
     /// # Errors
     ///
-    /// [`EnclaveError::NotReady`] past `max_served_age`.
-    pub fn document(&self) -> Result<Vec<u8>, EnclaveError> {
-        let cached = self.cached.read().unwrap_or_else(PoisonError::into_inner);
+    /// Propagates the [`Attestor`] failure.
+    pub async fn document(&self) -> Result<Vec<u8>, EnclaveError> {
+        let mut cached = self.cached.lock().await;
 
-        if cached.attested_at.elapsed() >= self.max_served_age {
-            return Err(EnclaveError::NotReady);
+        if cached.attested_at.elapsed() >= self.max_age {
+            cached.document = self.attestor.attest_public_key(&self.public_key)?;
+            cached.attested_at = Instant::now();
         }
 
         Ok(cached.document.clone())
-    }
-
-    /// Re-attests and replaces the cached document.
-    ///
-    /// Attests outside the lock, so readers never wait on the ioctl.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the [`Attestor`] failure, leaving the previous document in place.
-    pub fn refresh(&self) -> Result<(), EnclaveError> {
-        let document = self.attestor.attest_public_key(&self.public_key)?;
-        let attested_at = Instant::now();
-
-        let mut cached = self.cached.write().unwrap_or_else(PoisonError::into_inner);
-        *cached = Cached {
-            document,
-            attested_at,
-        };
-        drop(cached);
-
-        Ok(())
-    }
-
-    /// Whether the cached document is still young enough to hand out.
-    #[must_use]
-    pub fn is_servable(&self) -> bool {
-        self.cached
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .attested_at
-            .elapsed()
-            < self.max_served_age
     }
 }
 
@@ -113,42 +83,29 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use enclave_types::EnclaveError;
-
     use super::AttestedKey;
     use crate::attestation::Attestor;
-    use crate::test_support::{CountingAttestor, EchoAttestor};
+    use crate::test_support::CountingAttestor;
 
-    fn key(attestor: Arc<dyn Attestor>, max_served_age: Duration) -> AttestedKey {
-        AttestedKey::attest_now(attestor, b"a-public-key".to_vec(), max_served_age)
-            .expect("should attest")
+    fn key(attestor: Arc<dyn Attestor>, max_age: Duration) -> AttestedKey {
+        AttestedKey::attest_now(attestor, b"a-public-key".to_vec(), max_age).expect("should attest")
     }
 
-    #[test]
-    fn reads_do_not_reach_the_attestor() {
+    #[tokio::test]
+    async fn reads_inside_the_window_do_not_reach_the_attestor() {
         let attestor = Arc::new(CountingAttestor::new());
         let cached = key(attestor.clone(), Duration::from_hours(1));
 
-        assert_eq!(cached.document(), cached.document());
+        assert_eq!(cached.document().await, cached.document().await);
         assert_eq!(attestor.calls(), 1, "only the one at construction");
     }
 
-    #[test]
-    fn refresh_replaces_the_document() {
-        let cached = key(Arc::new(CountingAttestor::new()), Duration::from_hours(1));
-        let before = cached.document();
+    #[tokio::test]
+    async fn an_expired_document_is_re_attested_before_it_is_served() {
+        let attestor = Arc::new(CountingAttestor::new());
+        let cached = key(attestor.clone(), Duration::ZERO);
 
-        cached.refresh().expect("should refresh");
-
-        assert_ne!(cached.document(), before);
-    }
-
-    /// The ceiling is what keeps an NSM outage from surfacing as a client-side verification failure.
-    #[test]
-    fn a_document_past_the_ceiling_is_withheld() {
-        let cached = key(Arc::new(EchoAttestor), Duration::ZERO);
-
-        assert!(!cached.is_servable());
-        assert_eq!(cached.document(), Err(EnclaveError::NotReady));
+        assert_ne!(cached.document().await, cached.document().await);
+        assert_eq!(attestor.calls(), 3, "construction plus one per read");
     }
 }

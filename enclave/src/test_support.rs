@@ -80,11 +80,3 @@ pub fn state_with(attestor: Arc<dyn Attestor>) -> Arc<EnclaveState> {
             .expect("boot state should generate"),
     )
 }
-
-/// Builds state whose cached documents have already aged out.
-pub fn stale_state_with(attestor: Arc<dyn Attestor>) -> Arc<EnclaveState> {
-    Arc::new(
-        EnclaveState::generate_stale(attestor, Arc::new(UnusedFaceEngine))
-            .expect("boot state should generate"),
-    )
-}

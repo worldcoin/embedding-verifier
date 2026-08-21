@@ -1,7 +1,6 @@
 //! Boot-scoped state owned by the enclave.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use attested_channel::channel::{ENCRYPTION_KEY_LEN, Responder, UnwrapErr};
 use eddsa_babyjubjub::EdDSAPublicKey;
@@ -10,7 +9,7 @@ use getrandom::SysRng;
 
 use crate::{
     attestation::Attestor,
-    attested_key::{AttestedKey, MAX_SERVED_AGE},
+    attested_key::{AttestedKey, MAX_CACHED_AGE},
     face_engine::FaceComparator,
     keys::SigningKey,
 };
@@ -38,27 +37,6 @@ impl EnclaveState {
         attestor: Arc<dyn Attestor>,
         face_engine: Arc<dyn FaceComparator>,
     ) -> Result<Self, EnclaveError> {
-        Self::generate_with(attestor, face_engine, MAX_SERVED_AGE)
-    }
-
-    /// Builds state whose cached documents have already aged out. Test-only.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::generate`].
-    #[cfg(test)]
-    pub(crate) fn generate_stale(
-        attestor: Arc<dyn Attestor>,
-        face_engine: Arc<dyn FaceComparator>,
-    ) -> Result<Self, EnclaveError> {
-        Self::generate_with(attestor, face_engine, Duration::ZERO)
-    }
-
-    fn generate_with(
-        attestor: Arc<dyn Attestor>,
-        face_engine: Arc<dyn FaceComparator>,
-        max_served_age: Duration,
-    ) -> Result<Self, EnclaveError> {
         let mut rng = UnwrapErr(SysRng);
         let responder = Responder::generate(&mut rng);
         let signing_key = SigningKey::generate();
@@ -77,10 +55,10 @@ impl EnclaveState {
         let attested_encryption_key = AttestedKey::attest_now(
             Arc::clone(&attestor),
             responder.public_key().to_vec(),
-            max_served_age,
+            MAX_CACHED_AGE,
         )?;
         let attested_signing_key =
-            AttestedKey::attest_now(attestor, signing_public_key.to_vec(), max_served_age)?;
+            AttestedKey::attest_now(attestor, signing_public_key.to_vec(), MAX_CACHED_AGE)?;
 
         Ok(Self {
             responder,
@@ -121,40 +99,22 @@ impl EnclaveState {
         self.face_engine.as_ref()
     }
 
-    /// The cached attestation document for the encryption public key.
+    /// The attestation document for the encryption public key.
     ///
     /// # Errors
     ///
-    /// [`EnclaveError::NotReady`] once the document has aged out.
-    pub fn encryption_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
-        self.attested_encryption_key.document()
+    /// Propagates the attestation failure if the cached document expired and could not be renewed.
+    pub async fn encryption_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
+        self.attested_encryption_key.document().await
     }
 
-    /// The cached attestation document for the signing public key.
+    /// The attestation document for the signing public key.
     ///
     /// # Errors
     ///
-    /// [`EnclaveError::NotReady`] once the document has aged out.
-    pub fn signing_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
-        self.attested_signing_key.document()
-    }
-
-    /// Whether both cached documents are still young enough to hand out.
-    ///
-    /// Readiness rests on this: an enclave that cannot attest cannot serve assignments.
-    #[must_use]
-    pub fn attestations_are_servable(&self) -> bool {
-        self.attested_encryption_key.is_servable() && self.attested_signing_key.is_servable()
-    }
-
-    /// Re-attests both keys. Blocking, so async callers need `spawn_blocking`.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the first attestation failure, leaving that key's previous document in place.
-    pub fn refresh_attestations(&self) -> Result<(), EnclaveError> {
-        self.attested_encryption_key.refresh()?;
-        self.attested_signing_key.refresh()
+    /// Propagates the attestation failure if the cached document expired and could not be renewed.
+    pub async fn signing_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
+        self.attested_signing_key.document().await
     }
 }
 
@@ -191,16 +151,16 @@ mod tests {
         assert_ne!(first.signing_public_key(), second.signing_public_key());
     }
 
-    #[test]
-    fn each_key_is_attested_in_its_own_document() {
+    #[tokio::test]
+    async fn each_key_is_attested_in_its_own_document() {
         let state = state();
 
         assert_eq!(
-            state.encryption_key_attestation(),
+            state.encryption_key_attestation().await,
             Ok(state.encryption_public_key().to_vec())
         );
         assert_eq!(
-            state.signing_key_attestation(),
+            state.signing_key_attestation().await,
             Ok(state
                 .signing_public_key()
                 .to_compressed_bytes()
