@@ -56,16 +56,32 @@ pub fn has_zeroed_measurements(document: &AttestationDoc) -> bool {
 ///
 /// Emitted once at boot so the running image is identifiable from logs alone, without
 /// an attestation fetch.
+///
+/// Clients pin `pcr0`, which is a hash of the whole image. `pcr1` (kernel and boot ramfs) and
+/// `pcr2` (application) are logged for introspection.
 pub fn log_boot_measurements(document: &AttestationDoc) {
-    let pcr0 = document.pcrs.get(&0).map(hex::encode).unwrap_or_default();
-
     if has_zeroed_measurements(document) {
         tracing::warn!(
             module_id = %document.module_id,
             "enclave is running in debug mode: measurements are zeroed and attestations \
              are not verifiable against a released image"
         );
-    } else {
-        tracing::info!(module_id = %document.module_id, pcr0 = %pcr0, "attested enclave measurements");
+        return;
     }
+
+    let measurement = |index: usize| {
+        document
+            .pcrs
+            .get(&index)
+            .map(hex::encode)
+            .unwrap_or_default()
+    };
+
+    tracing::info!(
+        module_id = %document.module_id,
+        pcr0 = %measurement(0),
+        pcr1 = %measurement(1),
+        pcr2 = %measurement(2),
+        "attested enclave measurements"
+    );
 }
