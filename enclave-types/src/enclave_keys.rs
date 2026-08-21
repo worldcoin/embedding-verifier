@@ -3,48 +3,45 @@ use serde::{Deserialize, Serialize};
 
 use crate::EnclaveError;
 
-/// Requests attestation documents for the enclave's boot-scoped public keys.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct GetEnclaveKeysRequest;
-
-impl Request for GetEnclaveKeysRequest {
-    const ROUTE_ID: &'static str = "/v1/enclave-keys";
-    type Response = Result<GetEnclaveKeysResponse, EnclaveError>;
+/// One NSM attestation document, for whichever key was asked for.
+///
+/// An attestation carries a single `public_key` field, so each key needs its own document. Both are
+/// public and relay unsealed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyAttestation {
+    /// Raw COSE-encoded document.
+    #[serde(with = "serde_bytes")]
+    pub document: Vec<u8>,
 }
 
-/// One NSM attestation document per boot-scoped public key.
-///
-/// Each key gets its own document because an attestation carries a single
-/// `public_key` field. Both documents are public and relay unsealed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GetEnclaveKeysResponse {
-    /// Raw COSE-encoded document attesting the encryption public key.
-    #[serde(with = "serde_bytes")]
-    pub encryption_key_attestation: Vec<u8>,
-    /// Raw COSE-encoded document attesting the `BabyJubJub` `EdDSA` public key.
-    #[serde(with = "serde_bytes")]
-    pub signing_key_attestation: Vec<u8>,
+/// Requests the attestation for this boot's encryption key.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct GetEncryptionKeyRequest;
+
+impl Request for GetEncryptionKeyRequest {
+    const ROUTE_ID: &'static str = "/v1/encryption-key";
+    type Response = Result<KeyAttestation, EnclaveError>;
+}
+
+/// Requests the attestation for this boot's `BabyJubJub` signing key.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct GetSigningKeyRequest;
+
+impl Request for GetSigningKeyRequest {
+    const ROUTE_ID: &'static str = "/v1/signing-key";
+    type Response = Result<KeyAttestation, EnclaveError>;
 }
 
 #[cfg(test)]
 mod tests {
     use pontifex::Request;
 
-    use super::{GetEnclaveKeysRequest, GetEnclaveKeysResponse};
+    use super::{GetEncryptionKeyRequest, GetSigningKeyRequest};
 
+    /// One route per key, because every caller wants exactly one of the two.
     #[test]
-    fn enclave_keys_route_id_is_versioned_and_stable() {
-        assert_eq!(GetEnclaveKeysRequest::ROUTE_ID, "/v1/enclave-keys");
-    }
-
-    #[test]
-    fn response_preserves_both_attestations() {
-        let response = GetEnclaveKeysResponse {
-            encryption_key_attestation: vec![1, 2, 3],
-            signing_key_attestation: vec![4, 5, 6],
-        };
-
-        assert_eq!(response.encryption_key_attestation, vec![1, 2, 3]);
-        assert_eq!(response.signing_key_attestation, vec![4, 5, 6]);
+    fn key_route_ids_are_versioned_and_distinct() {
+        assert_eq!(GetEncryptionKeyRequest::ROUTE_ID, "/v1/encryption-key");
+        assert_eq!(GetSigningKeyRequest::ROUTE_ID, "/v1/signing-key");
     }
 }

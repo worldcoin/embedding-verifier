@@ -24,13 +24,13 @@ pub async fn handler(
 ) -> Result<Json<EnclaveAssignmentResponse>, AppError> {
     // Cached and refreshed ahead of use in the enclave, so this is a vsock round trip rather than
     // an NSM attestation. Caching it here would need a boot identifier and invalidation.
-    let response = state
+    let attestation = state
         .enclave_client()
-        .get_enclave_keys()
+        .encryption_key_attestation()
         .await
         .map_err(|error| AppError::enclave_assignment(&error))?;
 
     Ok(Json(EnclaveAssignmentResponse {
-        attestation: STANDARD.encode(response.encryption_key_attestation),
+        attestation: STANDARD.encode(attestation),
     }))
 }

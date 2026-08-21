@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use enclave_types::{GetEnclaveKeysRequest, HealthRequest, MatchRequest};
+use enclave_types::{GetEncryptionKeyRequest, GetSigningKeyRequest, HealthRequest, MatchRequest};
 use pontifex::Router;
 
 mod enclave_keys;
@@ -15,7 +15,8 @@ use crate::state::EnclaveState;
 pub(crate) fn router(state: Arc<EnclaveState>) -> Router<Arc<EnclaveState>> {
     Router::with_state(state)
         .route::<HealthRequest, _, _>(health::handler)
-        .route::<GetEnclaveKeysRequest, _, _>(enclave_keys::handler)
+        .route::<GetEncryptionKeyRequest, _, _>(enclave_keys::encryption_key)
+        .route::<GetSigningKeyRequest, _, _>(enclave_keys::signing_key)
         .route::<MatchRequest, _, _>(matches::handler)
 }
 

@@ -7,7 +7,7 @@ use deepface_protocol::match_token::{self, EdDSAPublicKey};
 use deepface_protocol::messages::{
     CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, MatchInputs, MatchResult, encrypt_challenge,
 };
-use enclave_types::{GetEnclaveKeysRequest, MatchRequest};
+use enclave_types::{GetSigningKeyRequest, MatchRequest};
 use pontifex::client::ConnectionDetails;
 use sha2::{Digest, Sha256};
 
@@ -29,10 +29,10 @@ async fn main() -> Result<()> {
     let config = load_config()?;
     let verifier = config.verifier();
 
-    let keys_response = pontifex::client::send(connection, &GetEnclaveKeysRequest)
+    let signing_key_attestation = pontifex::client::send(connection, &GetSigningKeyRequest)
         .await
-        .context("failed to call the enclave keys route")?
-        .map_err(|error| anyhow!("enclave rejected the enclave-keys request: {error:?}"))?;
+        .context("failed to call the enclave signing-key route")?
+        .map_err(|error| anyhow!("enclave rejected the signing-key request: {error:?}"))?;
 
     let assignment = FaceVerifierClient::new(config)
         .context("failed to build the assignment client")?
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
         .context("enclave assignment did not verify")?;
     let requester = assignment.requester;
     let signing_key = verifier
-        .verify(&keys_response.signing_key_attestation, SystemTime::now())
+        .verify(&signing_key_attestation.document, SystemTime::now())
         .context("the signing-key attestation document did not verify")?
         .enclave_public_key;
     let signing_key = <[u8; 32]>::try_from(signing_key.as_slice())
