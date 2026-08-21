@@ -1,6 +1,7 @@
 //! Test doubles shared across the enclave's unit tests.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use deepface_protocol::messages::FailureReason;
 use enclave_types::EnclaveError;
@@ -28,6 +29,36 @@ impl Attestor for FailingAttestor {
     }
 }
 
+/// Counts attestations and makes every document distinct, so a cached document is distinguishable
+/// from a re-attested one.
+#[derive(Default)]
+pub struct CountingAttestor {
+    calls: AtomicUsize,
+}
+
+impl CountingAttestor {
+    pub const fn new() -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::Relaxed)
+    }
+}
+
+impl Attestor for CountingAttestor {
+    fn attest_public_key(&self, public_key: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+        let call = self.calls.fetch_add(1, Ordering::Relaxed);
+
+        let mut document = public_key.to_vec();
+        document.push(u8::try_from(call % 256).unwrap_or_default());
+
+        Ok(document)
+    }
+}
+
 /// Panics if a test reaches it, for paths that must reject before comparing faces.
 pub struct UnusedFaceEngine;
 
@@ -44,5 +75,8 @@ impl FaceComparator for UnusedFaceEngine {
 
 /// Builds state whose Face Engine must not be called.
 pub fn state_with(attestor: Arc<dyn Attestor>) -> Arc<EnclaveState> {
-    Arc::new(EnclaveState::generate(attestor, Arc::new(UnusedFaceEngine)))
+    Arc::new(
+        EnclaveState::generate(attestor, Arc::new(UnusedFaceEngine))
+            .expect("boot state should generate"),
+    )
 }

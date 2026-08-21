@@ -191,7 +191,7 @@ mod tests {
     use crate::{
         face_engine::{ComparisonScores, FaceComparator},
         state::EnclaveState,
-        test_support::FailingAttestor,
+        test_support::EchoAttestor,
     };
 
     /// One random pair per test run: `inputs` and `challenge_blob` have to agree on it, and a
@@ -243,10 +243,10 @@ mod tests {
     }
 
     fn state_with(face_engine: MockFaceEngine) -> Arc<EnclaveState> {
-        Arc::new(EnclaveState::generate(
-            Arc::new(FailingAttestor),
-            Arc::new(face_engine),
-        ))
+        Arc::new(
+            EnclaveState::generate(Arc::new(EchoAttestor), Arc::new(face_engine))
+                .expect("boot state should generate"),
+        )
     }
 
     fn hashes_json_for(image: &[u8]) -> Vec<u8> {

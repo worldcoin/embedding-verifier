@@ -7,31 +7,65 @@ use eddsa_babyjubjub::EdDSAPublicKey;
 use enclave_types::EnclaveError;
 use getrandom::SysRng;
 
-use crate::{attestation::Attestor, face_engine::FaceComparator, keys::SigningKey};
+use crate::{
+    attestation::{AttestedKey, Attestor, MAX_CACHED_AGE},
+    face_engine::FaceComparator,
+    keys::SigningKey,
+};
 
 /// Immutable state generated once during enclave boot.
 pub struct EnclaveState {
     responder: Responder,
     signing_key: SigningKey,
-    attestor: Arc<dyn Attestor>,
+    attested_encryption_key: AttestedKey,
+    attested_signing_key: AttestedKey,
     face_engine: Arc<dyn FaceComparator>,
 }
 
 impl EnclaveState {
-    /// Generates fresh boot-scoped keys, with the provided attestor and Face Engine.
-    #[must_use]
-    pub fn generate(attestor: Arc<dyn Attestor>, face_engine: Arc<dyn FaceComparator>) -> Self {
+    /// Generates fresh boot-scoped keys and attests both.
+    ///
+    /// Attesting here rather than per request fails the boot on a broken NSM, and leaves both
+    /// caches populated before the server accepts anything.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EnclaveError`] if the signing public key cannot be serialized, or if either key
+    /// cannot be attested.
+    pub fn generate(
+        attestor: Arc<dyn Attestor>,
+        face_engine: Arc<dyn FaceComparator>,
+    ) -> Result<Self, EnclaveError> {
         let mut rng = UnwrapErr(SysRng);
         let responder = Responder::generate(&mut rng);
         let signing_key = SigningKey::generate();
         tracing::info!("generated boot-scoped sealed channel and signing keys");
 
-        Self {
+        // Serialized once here rather than on every attestation.
+        let signing_public_key =
+            signing_key
+                .public_key()
+                .to_compressed_bytes()
+                .map_err(|error| {
+                    tracing::error!(%error, "failed to serialize the signing public key");
+                    EnclaveError::AttestationFailed
+                })?;
+
+        let attested_encryption_key = AttestedKey::attest_now(
+            Arc::clone(&attestor),
+            responder.public_key().to_vec(),
+            MAX_CACHED_AGE,
+        )?;
+        let attested_signing_key =
+            AttestedKey::attest_now(attestor, signing_public_key.to_vec(), MAX_CACHED_AGE)?;
+
+        Ok(Self {
             responder,
             signing_key,
-            attestor,
+            attested_encryption_key,
+            attested_signing_key,
             face_engine,
-        }
+        })
     }
 
     /// Returns the responder that opens sealed requests for this boot.
@@ -64,30 +98,22 @@ impl EnclaveState {
         self.face_engine.as_ref()
     }
 
-    /// Attests the encryption public key.
+    /// The attestation document for the encryption public key.
     ///
     /// # Errors
     ///
-    /// Propagates the [`Attestor`] failure.
-    pub fn attest_encryption_key(&self) -> Result<Vec<u8>, EnclaveError> {
-        self.attestor
-            .attest_public_key(&self.encryption_public_key())
+    /// Propagates the attestation failure if the cached document expired and could not be renewed.
+    pub async fn encryption_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
+        self.attested_encryption_key.document().await
     }
 
-    /// Attests the signing public key.
+    /// The attestation document for the signing public key.
     ///
     /// # Errors
     ///
-    /// Propagates the [`Attestor`] failure.
-    pub fn attest_signing_key(&self) -> Result<Vec<u8>, EnclaveError> {
-        let public_key = self
-            .signing_public_key()
-            .to_compressed_bytes()
-            .map_err(|error| {
-                tracing::error!(%error, "failed to serialize the signing public key");
-                EnclaveError::AttestationFailed
-            })?;
-        self.attestor.attest_public_key(&public_key)
+    /// Propagates the attestation failure if the cached document expired and could not be renewed.
+    pub async fn signing_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
+        self.attested_signing_key.document().await
     }
 }
 
@@ -95,8 +121,10 @@ impl EnclaveState {
 mod tests {
     use std::sync::Arc;
 
+    use enclave_types::EnclaveError;
+
     use super::EnclaveState;
-    use crate::test_support::{EchoAttestor, state_with};
+    use crate::test_support::{EchoAttestor, FailingAttestor, UnusedFaceEngine, state_with};
 
     fn state() -> Arc<EnclaveState> {
         state_with(Arc::new(EchoAttestor))
@@ -122,21 +150,30 @@ mod tests {
         assert_ne!(first.signing_public_key(), second.signing_public_key());
     }
 
-    #[test]
-    fn each_key_is_attested_in_its_own_document() {
+    #[tokio::test]
+    async fn each_key_is_attested_in_its_own_document() {
         let state = state();
 
         assert_eq!(
-            state.attest_encryption_key(),
+            state.encryption_key_attestation().await,
             Ok(state.encryption_public_key().to_vec())
         );
         assert_eq!(
-            state.attest_signing_key(),
+            state.signing_key_attestation().await,
             Ok(state
                 .signing_public_key()
                 .to_compressed_bytes()
                 .expect("generated BabyJubJub public key serializes")
                 .to_vec())
         );
+    }
+
+    /// An enclave that cannot prove its own identity must not reach the point of serving.
+    #[test]
+    fn an_attestor_that_fails_fails_the_boot() {
+        let error =
+            EnclaveState::generate(Arc::new(FailingAttestor), Arc::new(UnusedFaceEngine)).err();
+
+        assert_eq!(error, Some(EnclaveError::AttestationFailed));
     }
 }

@@ -56,9 +56,9 @@ pub async fn handler(
         .await
         .map_err(AppError::challenge_fetch)?;
 
-    let keys = state
+    let key_attestation = state
         .enclave_client()
-        .get_enclave_keys()
+        .signing_key_attestation()
         .await
         .map_err(|error| AppError::enclave_match(&error))?;
 
@@ -76,7 +76,7 @@ pub async fn handler(
         StatusCode::OK,
         Json(MatchResponseBody {
             response_ciphertext: STANDARD.encode(response.ciphertext),
-            key_attestation: STANDARD.encode(keys.signing_key_attestation),
+            key_attestation: STANDARD.encode(key_attestation),
         }),
     ))
 }
