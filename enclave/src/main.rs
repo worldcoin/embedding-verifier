@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::{Context, anyhow};
 use enclave::{
     attestation::{self, NsmAttestor},
+    attestation_refresh,
     face_engine::FaceEngine,
     rng, server,
     state::EnclaveState,
@@ -29,14 +30,22 @@ async fn main() -> anyhow::Result<()> {
 
     let face_engine = Arc::new(FaceEngine::default());
     info!("initialized Face Engine");
-    let state = Arc::new(EnclaveState::generate(Arc::new(NsmAttestor), face_engine));
+    // Attests both boot keys, so a broken NSM stops the boot here and both caches start populated.
+    let state = Arc::new(
+        EnclaveState::generate(Arc::new(NsmAttestor), face_engine)
+            .map_err(|error| anyhow!("failed to generate and attest the boot keys: {error:?}"))?,
+    );
 
     let attestation = state
-        .attest_encryption_key()
-        .map_err(|error| anyhow!("failed to attest the encryption key at boot: {error:?}"))?;
+        .encryption_key_attestation()
+        .map_err(|error| anyhow!("failed to read the boot attestation document: {error:?}"))?;
     let document = SecureModule::parse_raw_attestation_doc(&attestation)
         .map_err(|error| anyhow!("failed to parse the boot attestation document: {error:?}"))?;
     attestation::log_boot_measurements(&document);
+
+    // Detached for the life of the enclave. If it stops, the cached documents age out and requests
+    // fail closed rather than serving a document a client would reject.
+    let _refresh = attestation_refresh::spawn(Arc::clone(&state));
 
     info!(port = PONTIFEX_PORT, "starting enclave Pontifex server");
 

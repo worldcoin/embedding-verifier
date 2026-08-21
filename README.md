@@ -49,6 +49,17 @@ else:
 The enclave's identity (`module_id`) and expiry (the leaf certificate's `notAfter`) are read
 from the document *after* verifying it, never from fields the untrusted host could set.
 
+Attestation documents are cached **inside the enclave** and re-attested every 10 minutes by a
+background task, so no NSM call sits on a request path. The cache is boot-scoped by construction —
+it holds documents binding keys generated at boot, in the process that generated them — so an
+enclave restart takes it along and there is nothing for the host to invalidate.
+
+A cached document is withheld once it is older than 30 minutes (`MAX_SERVED_AGE`), which absorbs two
+failed refreshes and then fails closed with `NotReady`; the enclave's health check falls with it, so
+readiness drops rather than the host continuing to route to an enclave whose assignment route is
+failing. That 30 minutes is a **floor on client configuration**: a `max_attestation_age_millis`
+below it can reject a document this enclave still considers servable.
+
 `client` verifies the document — the COSE signature, the certificate chain up to the
 pinned AWS Nitro root, and the expected measurements. It is configured by a JSON file, in the
 shape `world-id-protocol` uses for an authenticator:

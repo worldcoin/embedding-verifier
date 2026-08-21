@@ -24,10 +24,10 @@ mod tests {
     use std::sync::Arc;
 
     use super::router;
-    use crate::test_support::{FailingAttestor, state_with};
+    use crate::test_support::{EchoAttestor, state_with};
 
     #[test]
     fn router_registers_enclave_operations() {
-        let _router = router(state_with(Arc::new(FailingAttestor)));
+        let _router = router(state_with(Arc::new(EchoAttestor)));
     }
 }

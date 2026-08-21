@@ -22,9 +22,9 @@ pub struct EnclaveAssignmentResponse {
 pub async fn handler(
     State(state): State<AppState>,
 ) -> Result<Json<EnclaveAssignmentResponse>, AppError> {
-    // TODO: Cache the attestation document, invalidating on enclave reconnect, and bound the
-    // entry's lifetime by the document certificate's validity. Until then every request costs
-    // an NSM attestation, so this route must not carry production traffic uncapped.
+    // The enclave caches this document and refreshes it ahead of use, so the call costs a vsock
+    // round trip rather than an NSM attestation. Caching it here instead would need a boot
+    // identifier and invalidation; caching it there cannot outlive the keys it describes.
     let response = state
         .enclave_client()
         .get_enclave_keys()

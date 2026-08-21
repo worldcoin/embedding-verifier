@@ -10,6 +10,10 @@
 
 /// Nitro Secure Module attestation.
 pub mod attestation;
+/// Background refresh of the cached attestation documents.
+pub mod attestation_refresh;
+/// Public keys and their cached attestation documents.
+pub mod attested_key;
 /// Face embedding generation and comparison.
 pub mod face_engine;
 /// Boot-scoped key material.
