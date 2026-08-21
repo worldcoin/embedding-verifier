@@ -58,8 +58,7 @@ pub fn has_zeroed_measurements(document: &AttestationDoc) -> bool {
 /// an attestation fetch.
 ///
 /// Clients pin `pcr0`, which is a hash of the whole image. `pcr1` (kernel and boot ramfs) and
-/// `pcr2` (application) are logged because they are what tells you *which part* changed when a
-/// client rejects a `pcr0` it does not recognise.
+/// `pcr2` (application) are logged for introspection.
 pub fn log_boot_measurements(document: &AttestationDoc) {
     if has_zeroed_measurements(document) {
         tracing::warn!(
