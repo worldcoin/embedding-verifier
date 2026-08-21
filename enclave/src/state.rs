@@ -8,8 +8,7 @@ use enclave_types::EnclaveError;
 use getrandom::SysRng;
 
 use crate::{
-    attestation::Attestor,
-    attested_key::{AttestedKey, MAX_CACHED_AGE},
+    attestation::{AttestedKey, Attestor, MAX_CACHED_AGE},
     face_engine::FaceComparator,
     keys::SigningKey,
 };

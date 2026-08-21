@@ -8,10 +8,8 @@
     dead_code
 )]
 
-/// Nitro Secure Module attestation.
+/// Nitro Secure Module attestation, and the cache in front of it.
 pub mod attestation;
-/// Public keys and their cached attestation documents.
-pub mod attested_key;
 /// Face embedding generation and comparison.
 pub mod face_engine;
 /// Boot-scoped key material.
