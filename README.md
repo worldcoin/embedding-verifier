@@ -77,6 +77,52 @@ through the host, exercising the assignment route and the client together:
 VERIFIER_CONFIG=./client.json cargo run --bin e2e -- <credential> <live> <challenge>
 ```
 
+## Matches
+
+`POST /v1/matches` compares a credential image against a live frame and the RP's challenge
+frame. The host relays but cannot read either input:
+
+```json
+{ "challenge_image_url": "https://…", "ciphertext": "<base64 enc || ciphertext>" }
+```
+
+`ciphertext` is the match inputs sealed to the enclave's attested encryption key — both
+images, `hashes.json`, and the AES-256-GCM key and IV for the challenge image. The challenge
+image itself never travels: the RP uploads it encrypted, and the host fetches that blob from
+`challenge_image_url` holding no key for it. A substituted URL or swapped object therefore
+fails inside the enclave rather than changing the result.
+
+```json
+{ "response_ciphertext": "<base64 nonce || ciphertext>", "key_attestation": "<base64 COSE_Sign1>" }
+```
+
+The sealed response carries either a `COSE_Sign1` match statement or the reason no statement was
+issued; `key_attestation` is the signing key's attestation, so a client can verify the statement it
+just received. Only the requester can open it — a second channel to the same enclave key cannot.
+
+The host learns only that the enclave answered. Once a request has been opened there is a sealed
+channel to reply on, so everything the enclave discovers from that point — a malformed payload, an
+unusable `hashes.json`, an image refused on quality grounds, a below-threshold score, a challenge
+blob that would not decrypt — travels inside `response_ciphertext`. None of it reaches the status
+code.
+
+| Status | Meaning |
+| --- | --- |
+| `200` | The enclave answered; the sealed payload holds the outcome |
+| `409` `reassign_required` | The request did not open, so there was no channel to reply on; re-assign and re-seal, once |
+| `400` `invalid_challenge_url` | The URL was rejected before any request was made |
+| `502` `challenge_fetch_failed` | The challenge image could not be fetched |
+| `500` `internal_error` | Enclave fault |
+
+`409` is the only input failure with a status of its own, because with no channel open there is
+nothing to seal a reply into. Everything else the host might want — how often matches fail, how often
+the RP's objects are stale — has to come from enclave-side metrics rather than from status codes.
+
+> **No SSRF destination control.** `challenge_image_url` is only constrained in shape — HTTPS,
+> a domain rather than an IP literal, no credentials, no redirects, a 5s timeout and a 4 MiB
+> cap. Nothing pins *where* a fetch may go, so this endpoint must not take untrusted callers
+> as-is. See `TODO(SSRF)` in `host/src/challenge_fetch.rs`.
+
 ## Nitro-enabled development host
 
 Use an Amazon Linux 2023 EC2 instance type that supports Nitro Enclaves and launch it with

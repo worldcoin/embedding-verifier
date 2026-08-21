@@ -3,15 +3,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::EnclaveError;
 
-/// Requests a 3-way face match.
-///
-/// `sealed_payload` is the CBOR-framed match inputs. Request encryption is not
-/// applied in this change; the field name is unchanged to keep the wire type stable.
+/// Requests a 3-way face match. Both fields are ciphertext the host cannot read;
+/// `challenge_ciphertext` is keyed from inside `body`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchRequest {
-    /// CBOR-framed match inputs.
+    /// The sealed request: `enc || ciphertext`, relayed verbatim.
     #[serde(with = "serde_bytes")]
-    pub sealed_payload: Vec<u8>,
+    pub body: Vec<u8>,
+    /// The RP's challenge image, AES-256-GCM ciphertext fetched by the host.
+    #[serde(with = "serde_bytes")]
+    pub challenge_ciphertext: Vec<u8>,
 }
 
 impl Request for MatchRequest {
@@ -19,31 +20,15 @@ impl Request for MatchRequest {
     type Response = Result<MatchResponse, EnclaveError>;
 }
 
-/// The match statement and its enclave signature.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The sealed outcome of a match.
+///
+/// Ciphertext and nothing else. There is deliberately no cleartext class: whether a match held is
+/// itself a fact about the request, so the host learns only that the enclave answered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchResponse {
-    /// The claims the enclave attests to.
-    pub statement: MatchStatement,
-    /// Signature over `statement`. **Placeholder** until output signing lands.
+    /// The sealed payload: `response_nonce || ciphertext`, readable only by the requester.
     #[serde(with = "serde_bytes")]
-    pub signature: Vec<u8>,
-}
-
-/// The claims a match statement commits to — the TEE-output CWT claims.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MatchStatement {
-    /// Statement format version.
-    pub version: u8,
-    /// SHA256 of the live image.
-    pub live_image_hash: [u8; 32],
-    /// PCP commitment `SHA256(hashes.json)`; a commitment, not a proof of enrollment.
-    /// The `DeepFace` circuit binds it to the credential's `claims`, which is what makes
-    /// the in-enclave image-to-`hashes.json` binding meaningful.
-    pub credential_claim: [u8; 32],
-    /// SHA256 of the challenge image.
-    pub challenger_image_hash: [u8; 32],
-    /// Credential-vs-live similarity score.
-    pub match_coefficient: f32,
+    pub ciphertext: Vec<u8>,
 }
 
 #[cfg(test)]

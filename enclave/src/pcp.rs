@@ -14,7 +14,7 @@
 //! signature chain. The credential commits `H(hashes.json)`, and the circuit only
 //! checks `claims == credential_claim`.
 
-use enclave_types::EnclaveError;
+use deepface_protocol::messages::FailureReason;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -34,21 +34,21 @@ struct HashesJson {
 pub(crate) fn bind_credential_claim(
     credential_image: &[u8],
     hashes_json: &[u8],
-) -> Result<[u8; 32], EnclaveError> {
+) -> Result<[u8; 32], FailureReason> {
     // Commitment is over the raw bytes, taken before parsing.
     let credential_claim: [u8; 32] = Sha256::digest(hashes_json).into();
 
     let parsed: HashesJson =
-        serde_json::from_slice(hashes_json).map_err(|_| EnclaveError::InvalidHashesJson)?;
+        serde_json::from_slice(hashes_json).map_err(|_| FailureReason::InvalidHashesJson)?;
 
     let committed: [u8; 32] = hex::decode(&parsed.thumbnail_png)
-        .map_err(|_| EnclaveError::InvalidHashesJson)?
+        .map_err(|_| FailureReason::InvalidHashesJson)?
         .try_into()
-        .map_err(|_| EnclaveError::InvalidHashesJson)?;
+        .map_err(|_| FailureReason::InvalidHashesJson)?;
 
     let observed: [u8; 32] = Sha256::digest(credential_image).into();
     if observed != committed {
-        return Err(EnclaveError::ThumbnailHashMismatch);
+        return Err(FailureReason::ThumbnailHashMismatch);
     }
 
     Ok(credential_claim)
@@ -56,10 +56,9 @@ pub(crate) fn bind_credential_claim(
 
 #[cfg(test)]
 mod tests {
-    use enclave_types::EnclaveError;
     use sha2::{Digest, Sha256};
 
-    use super::bind_credential_claim;
+    use super::{FailureReason, bind_credential_claim};
 
     fn hashes_json_for(image: &[u8]) -> Vec<u8> {
         let hash = hex::encode(Sha256::digest(image));
@@ -95,14 +94,14 @@ mod tests {
 
         let result = bind_credential_claim(b"a-different-image", &hashes_json);
 
-        assert_eq!(result, Err(EnclaveError::ThumbnailHashMismatch));
+        assert_eq!(result, Err(FailureReason::ThumbnailHashMismatch));
     }
 
     #[test]
     fn rejects_malformed_hashes_json() {
         let result = bind_credential_claim(b"image", b"not valid json");
 
-        assert_eq!(result, Err(EnclaveError::InvalidHashesJson));
+        assert_eq!(result, Err(FailureReason::InvalidHashesJson));
     }
 
     #[test]
@@ -110,14 +109,14 @@ mod tests {
         // Absent `thumbnail.png` is now a deserialization failure (required field).
         let result = bind_credential_claim(b"image", br#"{"version":"1"}"#);
 
-        assert_eq!(result, Err(EnclaveError::InvalidHashesJson));
+        assert_eq!(result, Err(FailureReason::InvalidHashesJson));
     }
 
     #[test]
     fn rejects_bad_thumbnail_hex() {
         let result = bind_credential_claim(b"image", br#"{"thumbnail.png":"zz"}"#);
 
-        assert_eq!(result, Err(EnclaveError::InvalidHashesJson));
+        assert_eq!(result, Err(FailureReason::InvalidHashesJson));
     }
 
     #[test]
@@ -125,6 +124,6 @@ mod tests {
         // Valid hex, but only 2 bytes instead of 32.
         let result = bind_credential_claim(b"image", br#"{"thumbnail.png":"abcd"}"#);
 
-        assert_eq!(result, Err(EnclaveError::InvalidHashesJson));
+        assert_eq!(result, Err(FailureReason::InvalidHashesJson));
     }
 }

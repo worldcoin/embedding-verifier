@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use enclave_types::{GetEnclaveKeysResponse, MatchRequest, MatchResponse};
+use host::challenge_fetcher::{ChallengeSource, FetchError};
 use host::enclave::{EnclaveClient, EnclaveClientError};
 use host::{AppState, Environment};
 
@@ -14,7 +15,10 @@ use host::{AppState, Environment};
 pub struct StubEnclaveClient {
     pub keys: Option<Result<GetEnclaveKeysResponse, EnclaveClientError>>,
     pub match_result: Option<Result<MatchResponse, EnclaveClientError>>,
-    pub expected_sealed_payload: Option<Vec<u8>>,
+    /// Asserted against the sealed body the route forwards, if set.
+    pub expected_body: Option<Vec<u8>>,
+    /// Asserted against the fetched challenge blob the route forwards, if set.
+    pub expected_challenge: Option<Vec<u8>>,
 }
 
 #[async_trait]
@@ -30,8 +34,11 @@ impl EnclaveClient for StubEnclaveClient {
     }
 
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError> {
-        if let Some(expected) = &self.expected_sealed_payload {
-            assert_eq!(&request.sealed_payload, expected);
+        if let Some(expected) = &self.expected_body {
+            assert_eq!(&request.body, expected);
+        }
+        if let Some(expected) = &self.expected_challenge {
+            assert_eq!(&request.challenge_ciphertext, expected);
         }
 
         self.match_result
@@ -40,7 +47,45 @@ impl EnclaveClient for StubEnclaveClient {
     }
 }
 
-/// Builds an [`AppState`] backed by `client`.
+/// A [`ChallengeSource`] answering from a fixed result.
+///
+/// The real fetcher rejects plain HTTP and IP literals by design, so a local test server could
+/// not be fetched from; stubbing at this seam is what keeps the route testable.
+pub struct StubChallengeSource {
+    pub result: Result<Vec<u8>, FetchError>,
+}
+
+impl StubChallengeSource {
+    pub fn returning(bytes: &[u8]) -> Self {
+        Self {
+            result: Ok(bytes.to_vec()),
+        }
+    }
+
+    pub const fn failing(error: FetchError) -> Self {
+        Self { result: Err(error) }
+    }
+}
+
+impl Default for StubChallengeSource {
+    fn default() -> Self {
+        Self::returning(b"challenge-ciphertext")
+    }
+}
+
+#[async_trait]
+impl ChallengeSource for StubChallengeSource {
+    async fn fetch(&self, _url: &str) -> Result<Vec<u8>, FetchError> {
+        self.result.clone()
+    }
+}
+
+/// Builds an [`AppState`] backed by `client` and a challenge source that always succeeds.
 pub fn state_with(client: StubEnclaveClient) -> AppState {
-    AppState::new(Environment::Development, Arc::new(client))
+    state_with_source(client, StubChallengeSource::default())
+}
+
+/// Builds an [`AppState`] with both doubles chosen explicitly.
+pub fn state_with_source(client: StubEnclaveClient, source: StubChallengeSource) -> AppState {
+    AppState::new(Environment::Development, Arc::new(client), Arc::new(source))
 }

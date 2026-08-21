@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use host::{AppState, Environment, enclave::PontifexEnclaveClient};
+use host::{
+    AppState, Environment, challenge_fetcher::ChallengeFetcher, enclave::PontifexEnclaveClient,
+};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -16,7 +18,8 @@ async fn main() -> anyhow::Result<()> {
         environment.enclave_cid(),
         environment.enclave_port(),
     ));
-    let state = AppState::new(environment, enclave_client);
+    let challenge_source = Arc::new(ChallengeFetcher::new()?);
+    let state = AppState::new(environment, enclave_client, challenge_source);
 
     host::server::start(state).await
 }

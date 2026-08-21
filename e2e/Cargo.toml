@@ -8,12 +8,13 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-ciborium.workspace = true
+attested-channel.workspace = true
+deepface-protocol.workspace = true
 enclave-types.workspace = true
+getrandom.workspace = true
 hex.workspace = true
 pontifex = { workspace = true, features = ["client", "nsm"] }
-serde.workspace = true
-serde_bytes.workspace = true
+rand.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 client.workspace = true

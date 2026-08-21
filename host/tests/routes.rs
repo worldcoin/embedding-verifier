@@ -7,9 +7,11 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
-use common::{StubEnclaveClient, state_with};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use common::{StubChallengeSource, StubEnclaveClient, state_with, state_with_source};
 use enclave_types::{EnclaveError, GetEnclaveKeysResponse};
 use host::AppState;
+use host::challenge_fetcher::FetchError;
 use host::enclave::EnclaveClientError;
 use host::routes;
 use http_body_util::BodyExt as _;
@@ -46,6 +48,21 @@ fn assignment_request() -> Request<Body> {
         .method(Method::POST)
         .uri("/v1/enclave-assignment")
         .body(Body::empty())
+        .expect("request should be valid")
+}
+
+/// Builds a match request with a well-formed challenge URL.
+fn match_request(url: &str) -> Request<Body> {
+    let body = format!(
+        r#"{{"challenge_image_url":"{url}","ciphertext":"{}"}}"#,
+        STANDARD.encode("sealed")
+    );
+
+    Request::builder()
+        .method(Method::POST)
+        .uri("/v1/matches")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
         .expect("request should be valid")
 }
 
@@ -128,7 +145,7 @@ async fn assignment_surfaces_enclave_failures_as_structured_errors() {
             true,
         ),
         (
-            EnclaveClientError::Operation(EnclaveError::DecryptFailed),
+            EnclaveClientError::Operation(EnclaveError::RequestNotOpened),
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
             false,
@@ -150,44 +167,45 @@ async fn assignment_surfaces_enclave_failures_as_structured_errors() {
 }
 
 #[tokio::test]
-async fn matches_forwards_the_sealed_payload_and_returns_hex_fields() {
-    let state = state_with(StubEnclaveClient {
-        match_result: Some(Ok(enclave_types::MatchResponse {
-            statement: enclave_types::MatchStatement {
-                version: 1,
-                live_image_hash: [1u8; 32],
-                credential_claim: [2u8; 32],
-                challenger_image_hash: [3u8; 32],
-                match_coefficient: 1.0,
-            },
-            signature: vec![7u8; 64],
-        })),
-        expected_sealed_payload: Some(b"sealed".to_vec()),
-        ..StubEnclaveClient::default()
-    });
+async fn matches_relays_the_sealed_request_and_the_fetched_challenge() {
+    let state = state_with_source(
+        StubEnclaveClient {
+            keys: Some(Ok(GetEnclaveKeysResponse {
+                encryption_key_attestation: vec![1, 2, 3],
+                signing_key_attestation: vec![4, 5, 6],
+            })),
+            match_result: Some(Ok(enclave_types::MatchResponse {
+                ciphertext: vec![9u8; 48],
+            })),
+            expected_body: Some(b"sealed".to_vec()),
+            expected_challenge: Some(b"challenge-ciphertext".to_vec()),
+        },
+        StubChallengeSource::returning(b"challenge-ciphertext"),
+    );
 
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/matches")
-        .body(Body::from("sealed"))
-        .expect("request should be valid");
-
-    let (status, body) = send(state, request).await;
+    let (status, body) = send(
+        state,
+        match_request("https://bucket.example.com/challenge-images/a"),
+    )
+    .await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["statement"]["version"], 1);
-    assert_eq!(body["statement"]["live_image_hash"], hex::encode([1u8; 32]));
-    assert_eq!(body["signature"], hex::encode([7u8; 64]));
+    // Both fields are relayed opaquely: the host encodes, it does not interpret.
+    assert_eq!(body["response_ciphertext"], STANDARD.encode([9u8; 48]));
+    assert_eq!(body["key_attestation"], STANDARD.encode([4, 5, 6]));
 }
 
 #[tokio::test]
-async fn matches_rejects_an_empty_body() {
+async fn matches_rejects_a_non_base64_ciphertext() {
     let state = state_with(StubEnclaveClient::default());
 
     let request = Request::builder()
         .method(Method::POST)
         .uri("/v1/matches")
-        .body(Body::empty())
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"challenge_image_url":"https://bucket.example.com/challenge-images/a","ciphertext":"not base64!"}"#,
+        ))
         .expect("request should be valid");
 
     let (status, body) = send(state, request).await;
@@ -196,24 +214,100 @@ async fn matches_rejects_an_empty_body() {
     assert_eq!(body["error"]["code"], "invalid_request");
 }
 
-/// The same enclave error is a client error here and a host bug on assignment.
 #[tokio::test]
-async fn matches_treats_a_decrypt_failure_as_a_client_error() {
+async fn matches_attributes_fetch_failures_outward() {
+    // The RP's bucket is an availability dependency of this path, so its failures are a 502 and
+    // never an enclave fault.
+    let cases = [
+        (
+            FetchError::Unreachable,
+            StatusCode::BAD_GATEWAY,
+            "challenge_fetch_failed",
+            true,
+        ),
+        (
+            FetchError::TooLarge,
+            StatusCode::BAD_GATEWAY,
+            "challenge_fetch_failed",
+            false,
+        ),
+        (
+            FetchError::Malformed,
+            StatusCode::BAD_REQUEST,
+            "invalid_challenge_url",
+            false,
+        ),
+    ];
+
+    for (error, expected_status, expected_code, retryable) in cases {
+        let state = state_with_source(
+            StubEnclaveClient::default(),
+            StubChallengeSource::failing(error),
+        );
+
+        let (status, body) = send(
+            state,
+            match_request("https://bucket.example.com/challenge-images/a"),
+        )
+        .await;
+
+        assert_eq!(status, expected_status, "for {error:?}");
+        assert_eq!(body["error"]["code"], expected_code, "for {error:?}");
+        assert_eq!(body["allowRetry"], retryable, "for {error:?}");
+    }
+}
+
+#[tokio::test]
+async fn matches_maps_an_unopenable_request_to_conflict() {
+    // Re-assign and re-seal: the client cannot tell this from a corrupt ciphertext, which is why
+    // the retry has to be bounded client-side.
     let state = state_with(StubEnclaveClient {
+        keys: Some(Ok(GetEnclaveKeysResponse {
+            encryption_key_attestation: vec![1],
+            signing_key_attestation: vec![2],
+        })),
         match_result: Some(Err(EnclaveClientError::Operation(
-            EnclaveError::DecryptFailed,
+            EnclaveError::RequestNotOpened,
         ))),
         ..StubEnclaveClient::default()
     });
 
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/matches")
-        .body(Body::from("sealed"))
-        .expect("request should be valid");
+    let (status, body) = send(
+        state,
+        match_request("https://bucket.example.com/challenge-images/a"),
+    )
+    .await;
 
-    let (status, body) = send(state, request).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "reassign_required");
+}
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["error"]["code"], "invalid_request");
+#[tokio::test]
+async fn matches_answers_200_whatever_the_sealed_result_says() {
+    // A quality failure, a below-threshold match and a malformed payload are all sealed now, so
+    // the host cannot distinguish them from a statement -- and must not try.
+    let state = state_with(StubEnclaveClient {
+        keys: Some(Ok(GetEnclaveKeysResponse {
+            encryption_key_attestation: vec![1],
+            signing_key_attestation: vec![2],
+        })),
+        match_result: Some(Ok(enclave_types::MatchResponse {
+            ciphertext: vec![9u8; 48],
+        })),
+        ..StubEnclaveClient::default()
+    });
+
+    let (status, body) = send(
+        state,
+        match_request("https://bucket.example.com/challenge-images/a"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["response_ciphertext"], STANDARD.encode([9u8; 48]));
+    assert_eq!(
+        body.as_object().map(serde_json::Map::len),
+        Some(2),
+        "the relay exposes the ciphertext and the attestation, nothing else"
+    );
 }

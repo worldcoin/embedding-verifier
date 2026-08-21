@@ -55,7 +55,7 @@ p384 = { version = "0.13", default-features = false, features = ["ecdsa", "sha38
 getrandom = { version = "0.4", features = ["sys_rng"] }
 pontifex = { version = "1.1.2", default-features = false }
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 poseidon2 = { package = "taceo-poseidon2", version = "0.2" }
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"

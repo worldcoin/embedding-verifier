@@ -15,6 +15,7 @@ anyhow.workspace = true
 ark-babyjubjub.workspace = true
 ciborium.workspace = true
 attested-channel.workspace = true
+deepface-protocol.workspace = true
 eddsa-babyjubjub.workspace = true
 enclave-types.workspace = true
 face-engine.workspace = true
