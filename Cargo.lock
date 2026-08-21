@@ -964,6 +964,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "deepface-protocol"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "ark-ff",
+ "attested-channel",
+ "ciborium",
+ "coset",
+ "rand 0.8.7",
+ "serde",
+ "serde_bytes",
+ "taceo-ark-babyjubjub",
+ "taceo-eddsa-babyjubjub",
+ "taceo-poseidon2",
+ "zeroize",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
