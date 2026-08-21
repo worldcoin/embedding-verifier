@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     let face_engine = Arc::new(FaceEngine::default());
     info!("initialized Face Engine");
-    // Attests both boot keys, so a broken NSM stops the boot here and both caches start populated.
+    // Attests both boot keys, so a broken NSM stops the boot and both caches start populated.
     let state = Arc::new(
         EnclaveState::generate(Arc::new(NsmAttestor), face_engine)
             .map_err(|error| anyhow!("failed to generate and attest the boot keys: {error:?}"))?,
@@ -43,8 +43,7 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|error| anyhow!("failed to parse the boot attestation document: {error:?}"))?;
     attestation::log_boot_measurements(&document);
 
-    // Detached for the life of the enclave. If it stops, the cached documents age out and requests
-    // fail closed rather than serving a document a client would reject.
+    // Detached: if it stops, the documents age out and requests fail closed.
     let _refresh = attestation_refresh::spawn(Arc::clone(&state));
 
     info!(port = PONTIFEX_PORT, "starting enclave Pontifex server");

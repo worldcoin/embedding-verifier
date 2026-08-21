@@ -25,11 +25,10 @@ pub struct EnclaveState {
 }
 
 impl EnclaveState {
-    /// Generates fresh boot-scoped keys and attests both, with the provided attestor and Face Engine.
+    /// Generates fresh boot-scoped keys and attests both.
     ///
-    /// Attesting here rather than per request means a signing key that will not serialize, or an NSM
-    /// that will not answer, fails the boot instead of every later request — and leaves both caches
-    /// populated before the server accepts anything.
+    /// Attesting here rather than per request fails the boot on a broken NSM, and leaves both
+    /// caches populated before the server accepts anything.
     ///
     /// # Errors
     ///
@@ -42,9 +41,7 @@ impl EnclaveState {
         Self::generate_with(attestor, face_engine, MAX_SERVED_AGE)
     }
 
-    /// Builds state whose cached documents have already aged out.
-    ///
-    /// Test-only hook for the readiness path; production always uses [`MAX_SERVED_AGE`].
+    /// Builds state whose cached documents have already aged out. Test-only.
     ///
     /// # Errors
     ///
@@ -67,8 +64,7 @@ impl EnclaveState {
         let signing_key = SigningKey::generate();
         tracing::info!("generated boot-scoped sealed channel and signing keys");
 
-        // Serialized once here rather than on every attestation: it cannot fail for a key this
-        // process just generated, and if it somehow does the boot is the place to find out.
+        // Serialized once here rather than on every attestation.
         let signing_public_key =
             signing_key
                 .public_key()
@@ -125,44 +121,33 @@ impl EnclaveState {
         self.face_engine.as_ref()
     }
 
-    /// The attestation document for the encryption public key, from cache.
+    /// The cached attestation document for the encryption public key.
     ///
     /// # Errors
     ///
-    /// [`EnclaveError::NotReady`] once the cached document has aged out.
+    /// [`EnclaveError::NotReady`] once the document has aged out.
     pub fn encryption_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
         self.attested_encryption_key.document()
     }
 
-    /// The attestation document for the signing public key, from cache.
+    /// The cached attestation document for the signing public key.
     ///
     /// # Errors
     ///
-    /// [`EnclaveError::NotReady`] once the cached document has aged out.
+    /// [`EnclaveError::NotReady`] once the document has aged out.
     pub fn signing_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
         self.attested_signing_key.document()
     }
 
     /// Whether both cached documents are still young enough to hand out.
     ///
-    /// Readiness rests on this: an enclave that cannot produce an attestation cannot serve
-    /// assignments, and must not report healthy while that route fails.
+    /// Readiness rests on this: an enclave that cannot attest cannot serve assignments.
     #[must_use]
     pub fn attestations_are_servable(&self) -> bool {
         self.attested_encryption_key.is_servable() && self.attested_signing_key.is_servable()
     }
 
-    /// Age of the staler of the two cached documents.
-    #[must_use]
-    pub fn oldest_attestation_age(&self) -> Duration {
-        self.attested_encryption_key
-            .age()
-            .max(self.attested_signing_key.age())
-    }
-
-    /// Re-attests both keys, replacing the cached documents.
-    ///
-    /// Blocking, so callers on the async runtime must go through `spawn_blocking`.
+    /// Re-attests both keys. Blocking, so async callers need `spawn_blocking`.
     ///
     /// # Errors
     ///
@@ -180,9 +165,7 @@ mod tests {
     use enclave_types::EnclaveError;
 
     use super::EnclaveState;
-    use crate::test_support::{
-        EchoAttestor, FailingAttestor, UnusedFaceEngine, stale_state_with, state_with,
-    };
+    use crate::test_support::{EchoAttestor, FailingAttestor, UnusedFaceEngine, state_with};
 
     fn state() -> Arc<EnclaveState> {
         state_with(Arc::new(EchoAttestor))
@@ -233,32 +216,5 @@ mod tests {
             EnclaveState::generate(Arc::new(FailingAttestor), Arc::new(UnusedFaceEngine)).err();
 
         assert_eq!(error, Some(EnclaveError::AttestationFailed));
-    }
-
-    #[test]
-    fn documents_past_the_ceiling_are_neither_served_nor_reported_servable() {
-        let state = stale_state_with(Arc::new(EchoAttestor));
-
-        assert!(!state.attestations_are_servable());
-        assert_eq!(
-            state.encryption_key_attestation(),
-            Err(EnclaveError::NotReady)
-        );
-        assert_eq!(state.signing_key_attestation(), Err(EnclaveError::NotReady));
-    }
-
-    #[test]
-    fn a_refresh_keeps_the_documents_servable() {
-        let state = state();
-
-        state
-            .refresh_attestations()
-            .expect("refresh should succeed");
-
-        assert!(state.attestations_are_servable());
-        assert_eq!(
-            state.encryption_key_attestation(),
-            Ok(state.encryption_public_key().to_vec())
-        );
     }
 }

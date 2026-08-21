@@ -22,9 +22,8 @@ pub struct EnclaveAssignmentResponse {
 pub async fn handler(
     State(state): State<AppState>,
 ) -> Result<Json<EnclaveAssignmentResponse>, AppError> {
-    // The enclave caches this document and refreshes it ahead of use, so the call costs a vsock
-    // round trip rather than an NSM attestation. Caching it here instead would need a boot
-    // identifier and invalidation; caching it there cannot outlive the keys it describes.
+    // Cached and refreshed ahead of use in the enclave, so this is a vsock round trip rather than
+    // an NSM attestation. Caching it here would need a boot identifier and invalidation.
     let response = state
         .enclave_client()
         .get_enclave_keys()

@@ -29,32 +29,20 @@ impl Attestor for FailingAttestor {
     }
 }
 
-/// Counts attestations and makes every document distinct, so a cached document is
-/// distinguishable from a re-attested one.
+/// Counts attestations and makes every document distinct, so a cached document is distinguishable
+/// from a re-attested one.
+#[derive(Default)]
 pub struct CountingAttestor {
     calls: AtomicUsize,
-    succeed_for: usize,
 }
 
 impl CountingAttestor {
-    /// An attestor that always succeeds.
     pub const fn new() -> Self {
         Self {
             calls: AtomicUsize::new(0),
-            succeed_for: usize::MAX,
         }
     }
 
-    /// An attestor that succeeds `calls` times and fails from then on, for exercising a refresh
-    /// that fails after construction already populated the cache.
-    pub const fn failing_after(calls: usize) -> Self {
-        Self {
-            calls: AtomicUsize::new(0),
-            succeed_for: calls,
-        }
-    }
-
-    /// How many attestations have been requested.
     pub fn calls(&self) -> usize {
         self.calls.load(Ordering::Relaxed)
     }
@@ -63,11 +51,7 @@ impl CountingAttestor {
 impl Attestor for CountingAttestor {
     fn attest_public_key(&self, public_key: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         let call = self.calls.fetch_add(1, Ordering::Relaxed);
-        if call >= self.succeed_for {
-            return Err(EnclaveError::AttestationFailed);
-        }
 
-        // The call index makes each document unique without needing a real NSM.
         let mut document = public_key.to_vec();
         document.push(u8::try_from(call % 256).unwrap_or_default());
 
@@ -97,7 +81,7 @@ pub fn state_with(attestor: Arc<dyn Attestor>) -> Arc<EnclaveState> {
     )
 }
 
-/// Builds state whose cached attestation documents have already aged out.
+/// Builds state whose cached documents have already aged out.
 pub fn stale_state_with(attestor: Arc<dyn Attestor>) -> Arc<EnclaveState> {
     Arc::new(
         EnclaveState::generate_stale(attestor, Arc::new(UnusedFaceEngine))

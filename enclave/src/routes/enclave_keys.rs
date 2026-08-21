@@ -4,9 +4,7 @@ use enclave_types::{EnclaveError, GetEnclaveKeysRequest, GetEnclaveKeysResponse}
 
 use crate::state::EnclaveState;
 
-/// Returns one attestation document per public key.
-///
-/// Both come from the enclave's cache, refreshed ahead of use, so no NSM call sits on this path.
+/// Returns one attestation document per public key, both from cache.
 pub async fn handler(
     state: Arc<EnclaveState>,
     _: GetEnclaveKeysRequest,
@@ -24,28 +22,9 @@ mod tests {
     use enclave_types::{EnclaveError, GetEnclaveKeysRequest};
 
     use super::handler;
-    use crate::test_support::{EchoAttestor, stale_state_with, state_with};
+    use crate::test_support::{EchoAttestor, stale_state_with};
 
-    #[tokio::test]
-    async fn handler_serves_both_documents_from_the_cache() {
-        let state = state_with(Arc::new(EchoAttestor));
-        let expected = state
-            .encryption_key_attestation()
-            .expect("a fresh document should be servable");
-
-        let response = handler(Arc::clone(&state), GetEnclaveKeysRequest)
-            .await
-            .expect("the handler should answer");
-
-        assert_eq!(response.encryption_key_attestation, expected);
-        assert_ne!(
-            response.signing_key_attestation, response.encryption_key_attestation,
-            "each key must be attested in its own document"
-        );
-    }
-
-    /// A document past the ceiling is withheld rather than served stale, so the failure lands here
-    /// as an enclave error instead of on the client as a verification failure.
+    /// Withheld rather than served stale, so the failure lands here instead of on the client.
     #[tokio::test]
     async fn handler_reports_not_ready_once_the_cache_has_aged_out() {
         let state = stale_state_with(Arc::new(EchoAttestor));

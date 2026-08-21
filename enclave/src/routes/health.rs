@@ -6,10 +6,9 @@ use crate::state::EnclaveState;
 
 /// Reports whether the enclave can serve requests.
 ///
-/// Attestation freshness is part of readiness, not a detail of the assignment route: without a
-/// servable document that route fails, so answering `Ok` here would hold a broken enclave in
-/// rotation. Deliberately silent — the host probes this continuously, and the refresh task already
-/// logs the failure that caused it.
+/// Attestation freshness belongs here, not just on the assignment route: without a servable
+/// document that route fails, so answering `Ok` would hold a broken enclave in rotation. Silent by
+/// design — the host probes continuously, and the refresh task logs the cause.
 pub async fn handler(state: Arc<EnclaveState>, _: HealthRequest) -> Result<(), EnclaveError> {
     if state.attestations_are_servable() {
         return Ok(());
@@ -34,8 +33,6 @@ mod tests {
         assert_eq!(handler(state, HealthRequest).await, Ok(()));
     }
 
-    /// Readiness has to fall with the attestation cache, or the host keeps routing to an enclave
-    /// whose assignment route is failing.
     #[tokio::test]
     async fn an_aged_out_cache_reports_not_ready() {
         let state = stale_state_with(Arc::new(EchoAttestor));
