@@ -1,0 +1,13 @@
+[package]
+name = "deepface-types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+enclave-types.workspace = true
+pontifex = { workspace = true }
+serde = { workspace = true }
+serde_bytes.workspace = true

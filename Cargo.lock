@@ -696,24 +696,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "client"
-version = "0.1.0"
-dependencies = [
- "attested-channel",
- "axum",
- "base64",
- "deepface-protocol",
- "getrandom 0.4.3",
- "hex-literal",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "url",
-]
-
-[[package]]
 name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -967,6 +949,94 @@ dependencies = [
 ]
 
 [[package]]
+name = "deepface-client"
+version = "0.1.0"
+dependencies = [
+ "attested-channel",
+ "axum",
+ "base64",
+ "deepface-protocol",
+ "getrandom 0.4.3",
+ "hex-literal",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "deepface-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "attested-channel",
+ "deepface-client",
+ "deepface-protocol",
+ "deepface-types",
+ "enclave-types",
+ "getrandom 0.4.3",
+ "hex",
+ "pontifex",
+ "rand 0.8.7",
+ "sha2 0.10.9",
+ "tokio",
+]
+
+[[package]]
+name = "deepface-enclave"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "attested-channel",
+ "ciborium",
+ "deepface-protocol",
+ "deepface-types",
+ "enclave-types",
+ "face-engine",
+ "getrandom 0.4.3",
+ "hex",
+ "image",
+ "pontifex",
+ "rand 0.8.7",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2 0.10.9",
+ "taceo-ark-babyjubjub",
+ "taceo-eddsa-babyjubjub",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "deepface-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64",
+ "deepface-types",
+ "enclave-types",
+ "futures-util",
+ "hex",
+ "http-body-util",
+ "pontifex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "deepface-protocol"
 version = "0.1.0"
 dependencies = [
@@ -982,6 +1052,16 @@ dependencies = [
  "taceo-eddsa-babyjubjub",
  "taceo-poseidon2",
  "zeroize",
+]
+
+[[package]]
+name = "deepface-types"
+version = "0.1.0"
+dependencies = [
+ "enclave-types",
+ "pontifex",
+ "serde",
+ "serde_bytes",
 ]
 
 [[package]]
@@ -1097,23 +1177,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "15401da73a9ed8c80e3b2d4dc05fe10e7b72d7243b9f614e516a44fa99986e88"
 
 [[package]]
-name = "e2e"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "attested-channel",
- "client",
- "deepface-protocol",
- "enclave-types",
- "getrandom 0.4.3",
- "hex",
- "pontifex",
- "rand 0.8.7",
- "sha2 0.10.9",
- "tokio",
-]
-
-[[package]]
 name = "ecdsa"
 version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1160,32 +1223,6 @@ dependencies = [
  "sec1",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "enclave"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "attested-channel",
- "ciborium",
- "deepface-protocol",
- "enclave-types",
- "face-engine",
- "getrandom 0.4.3",
- "hex",
- "image",
- "pontifex",
- "rand 0.8.7",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2 0.10.9",
- "taceo-ark-babyjubjub",
- "taceo-eddsa-babyjubjub",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1717,30 +1754,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
 dependencies = [
  "digest 0.11.3",
-]
-
-[[package]]
-name = "host"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "base64",
- "enclave-types",
- "futures-util",
- "hex",
- "http-body-util",
- "pontifex",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "url",
 ]
 
 [[package]]

@@ -4,18 +4,35 @@ Rust workspace for the embedding verifier host and secure enclave.
 
 ## Structure
 
-One directory per workspace member, named after the crate it holds.
+Two workloads run in this workspace — the `DeepFace` verifier and the `DeepIdentifier`
+migration — over the same host/enclave shape. Each owns a top-level directory; what both
+would otherwise duplicate lives in `shared/`. Crate names compose from the path, so
+`deepface/host` is `deepface-host` and `di/enclave` is `di-enclave`.
 
 ```text
 embedding-verifier/
-├── host/              # Axum HTTP API — the untrusted side of the boundary
-├── enclave/           # Nitro enclave workload — the trusted side
-├── enclave-types/     # Wire contract carried over vsock between the two
-├── attested-channel/  # Client↔enclave channel and the attestation it rests on; destined for pontifex
-├── deepface-protocol/ # Match inputs and outputs; travels sealed, the host links none of it. Will likely move to `world-id-protocol`.
-├── client/            # Attestation-verifying client
-└── e2e/               # End-to-end harness driving host and enclave together
+├── shared/
+│   ├── attested-channel/  # Client↔enclave channel and the attestation it rests on; destined for pontifex
+│   └── enclave-types/     # The vsock contract both workloads share: health, errors, key attestation
+├── deepface/
+│   ├── host/              # Axum HTTP API — the untrusted side of the boundary
+│   ├── enclave/           # Nitro enclave workload — the trusted side
+│   ├── types/             # The match's own vsock contract
+│   ├── protocol/          # Match inputs and outputs; travels sealed, the host links none of it. Will likely move to `world-id-protocol`.
+│   ├── client/            # Attestation-verifying client
+│   └── e2e/               # End-to-end harness driving host and enclave together
+└── di/                    # Skeleton — dirs and crates only, no behaviour yet
+    ├── host/
+    ├── enclave/
+    └── types/
 ```
+
+The split is what keeps one workload out of the other's enclave image: `deepface-types` holds
+the match request, `di-types` will hold the migration job, and neither links the other.
+`di-host` and `di-enclave` currently log and exit non-zero — a skeleton that idled would read
+as healthy to whatever is watching it. See
+[Spec: DeepIdentifier Migration TEE Setup v1](https://app.notion.com/p/worldcoin/Spec-DeepIdentifier-Migration-TEE-Setup-v1-3c08614bdf8c8014b7ddf50f3cac4e4b)
+for what goes in them.
 
 ## Development
 
@@ -30,11 +47,11 @@ cargo test --all
 
 # Run the host on http://localhost:8000
 # ENCLAVE_CID and ENCLAVE_PORT are required; the process panics without them.
-RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin host
+RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin deepface-host
 curl http://localhost:8000/health
 
 # Run the secure enclave placeholder
-RUST_LOG=info cargo run --bin enclave
+RUST_LOG=info cargo run --bin deepface-enclave
 ```
 
 ## Enclave assignment
@@ -56,7 +73,7 @@ Attest errors do not block serving until the document is older than `MAX_SERVABL
 at which point the refresh task exits and the enclave process exits. The cache is boot-scoped,
 so a restart takes it along and there is nothing for the host to invalidate.
 
-`client` verifies the document — the COSE signature, the certificate chain up to the
+`deepface-client` verifies the document — the COSE signature, the certificate chain up to the
 pinned AWS Nitro root, and the expected measurements. It is configured by a JSON file, in the
 shape `world-id-protocol` uses for an authenticator:
 
@@ -77,11 +94,11 @@ proves a document came from *some* enclave. A `--debug-mode` enclave reports all
 its memory is readable from the parent instance, so it is rejected unless
 `allow_debug_measurements` is set.
 
-`e2e` reads that file from `VERIFIER_CONFIG` and fetches its encryption key
+`deepface-e2e` reads that file from `VERIFIER_CONFIG` and fetches its encryption key
 through the host, exercising the assignment route and the client together:
 
 ```bash
-VERIFIER_CONFIG=./client.json cargo run --bin e2e -- <credential> <live> <challenge>
+VERIFIER_CONFIG=./client.json cargo run --bin deepface-e2e -- <credential> <live> <challenge>
 ```
 
 ## Matches
@@ -128,7 +145,7 @@ the RP's objects are stale — has to come from enclave-side metrics rather than
 > **No SSRF destination control.** `challenge_image_url` is only constrained in shape — HTTPS,
 > a domain rather than an IP literal, no credentials, no redirects, a 5s timeout and a 4 MiB
 > cap. Nothing pins *where* a fetch may go, so this endpoint must not take untrusted callers
-> as-is. See `TODO(SSRF)` in `host/src/challenge_fetch.rs`.
+> as-is. See `TODO(SSRF)` in `deepface/host/src/challenge_fetcher.rs`.
 
 ## Nitro-enabled development host
 

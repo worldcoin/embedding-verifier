@@ -1,12 +1,16 @@
-# Builds the `host` image and pushes it to the GitHub Container
+# Builds the `deepface-host` image and pushes it to the GitHub Container
 # Registry (attested).
+#
+# One host per workload: when `di-host` gets a Dockerfile this needs a matrix over
+# (package, dockerfile, image name) rather than a second copy of this file.
 name: Build and Push Docker Image
 
 on:
   pull_request:
     paths:
-      - "host/**"
-      - "enclave-types/**"
+      - "deepface/host/**"
+      - "deepface/types/**"
+      - "shared/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -94,7 +98,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: host/Dockerfile
+          file: deepface/host/Dockerfile
           # Publish on push/tag/dispatch; PRs build only (validation).
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
