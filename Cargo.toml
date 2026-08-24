@@ -6,6 +6,9 @@ members = [
     "deepface/host",
     "deepface/protocol",
     "deepface/types",
+    "di/enclave",
+    "di/host",
+    "di/types",
     "shared/attested-channel",
     "shared/enclave-types",
 ]
@@ -31,6 +34,7 @@ async-trait = "0.1"
 attested-channel = { path = "shared/attested-channel" }
 deepface-protocol = { path = "deepface/protocol" }
 deepface-types = { path = "deepface/types" }
+di-types = { path = "di/types" }
 # Attestation crates are pinned to bedrock's versions so the two verifiers cannot drift.
 aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
 axum = "0.8"
