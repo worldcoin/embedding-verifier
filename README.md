@@ -49,13 +49,12 @@ else:
 The enclave's identity (`module_id`) and expiry (the leaf certificate's `notAfter`) are read
 from the document *after* verifying it, never from fields the untrusted host could set.
 
-Documents are cached **inside the enclave** for 10 minutes (`MAX_CACHED_AGE`); the first read after
-that re-attests before answering, so an outdated document is never served and all but one request
-per interval skips the NSM entirely. The cache is boot-scoped, so a restart takes it along and there
-is nothing for the host to invalidate.
-
-A burst arriving on an expired document costs one attestation, not one per caller: the lock spans
-the check and the re-attestation.
+Documents are served from an in-enclave cache. After boot starts background refresh, a task
+re-attests every 10 minutes (`MAX_CACHED_AGE`); requests always receive the last successful
+document immediately, including past `MAX_CACHED_AGE` if a refresh is in flight or has failed.
+Attest errors do not block serving until the document is older than `MAX_SERVABLE_AGE` (1 hour),
+at which point the refresh task exits and the enclave process exits. The cache is boot-scoped,
+so a restart takes it along and there is nothing for the host to invalidate.
 
 `client` verifies the document — the COSE signature, the certificate chain up to the
 pinned AWS Nitro root, and the expected measurements. It is configured by a JSON file, in the

@@ -30,23 +30,34 @@ async fn main() -> anyhow::Result<()> {
     let face_engine = Arc::new(FaceEngine::default());
     info!("initialized Face Engine");
     // Attests both boot keys, so a broken NSM stops the boot and both caches start populated.
-    let state = Arc::new(
-        EnclaveState::generate(Arc::new(NsmAttestor), face_engine)
-            .map_err(|error| anyhow!("failed to generate and attest the boot keys: {error:?}"))?,
-    );
+    let mut state = EnclaveState::generate(Arc::new(NsmAttestor), face_engine)
+        .map_err(|error| anyhow!("failed to generate and attest the boot keys: {error:?}"))?;
+    let (encryption_refresh, signing_refresh) = state.start_attestation_refresh();
+    let state = Arc::new(state);
 
-    let attestation = state
-        .encryption_key_attestation()
-        .await
-        .map_err(|error| anyhow!("failed to read the boot attestation document: {error:?}"))?;
+    let attestation = state.encryption_key_attestation().await;
     let document = SecureModule::parse_raw_attestation_doc(&attestation)
         .map_err(|error| anyhow!("failed to parse the boot attestation document: {error:?}"))?;
     attestation::log_boot_measurements(&document);
 
     info!(port = PONTIFEX_PORT, "starting enclave Pontifex server");
 
-    server::start(state, PONTIFEX_PORT).await.map_err(|error| {
-        error!(%error, "enclave Pontifex server stopped");
-        error
-    })
+    tokio::select! {
+        result = server::start(state, PONTIFEX_PORT) => {
+            result.map_err(|error| {
+                error!(%error, "enclave Pontifex server stopped");
+                error
+            })
+        }
+        result = encryption_refresh => {
+            Err(anyhow!(
+                "encryption key attestation refresh stopped: {result:?}"
+            ))
+        }
+        result = signing_refresh => {
+            Err(anyhow!(
+                "signing key attestation refresh stopped: {result:?}"
+            ))
+        }
+    }
 }

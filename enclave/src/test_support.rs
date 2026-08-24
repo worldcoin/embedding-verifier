@@ -59,6 +59,37 @@ impl Attestor for CountingAttestor {
     }
 }
 
+/// Succeeds for the configured number of calls, then returns
+/// [`EnclaveError::AttestationFailed`].
+pub struct FailsAfterSuccessesAttestor {
+    calls: AtomicUsize,
+    successful_calls: usize,
+}
+
+impl FailsAfterSuccessesAttestor {
+    pub const fn new(successful_calls: usize) -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            successful_calls,
+        }
+    }
+
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::Relaxed)
+    }
+}
+
+impl Attestor for FailsAfterSuccessesAttestor {
+    fn attest_public_key(&self, public_key: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+        let call = self.calls.fetch_add(1, Ordering::Relaxed);
+        if call < self.successful_calls {
+            Ok(public_key.to_vec())
+        } else {
+            Err(EnclaveError::AttestationFailed)
+        }
+    }
+}
+
 /// Panics if a test reaches it, for paths that must reject before comparing faces.
 pub struct UnusedFaceEngine;
 

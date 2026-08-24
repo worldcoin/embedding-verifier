@@ -6,6 +6,7 @@ use attested_channel::channel::{ENCRYPTION_KEY_LEN, Responder, UnwrapErr};
 use eddsa_babyjubjub::EdDSAPublicKey;
 use enclave_types::EnclaveError;
 use getrandom::SysRng;
+use tokio::task::JoinHandle;
 
 use crate::{
     attestation::{AttestedKey, Attestor, MAX_CACHED_AGE},
@@ -51,13 +52,13 @@ impl EnclaveState {
                     EnclaveError::AttestationFailed
                 })?;
 
-        let attested_encryption_key = AttestedKey::attest_now(
+        let attested_encryption_key = AttestedKey::new(
             Arc::clone(&attestor),
             responder.public_key().to_vec(),
             MAX_CACHED_AGE,
         )?;
         let attested_signing_key =
-            AttestedKey::attest_now(attestor, signing_public_key.to_vec(), MAX_CACHED_AGE)?;
+            AttestedKey::new(attestor, signing_public_key.to_vec(), MAX_CACHED_AGE)?;
 
         Ok(Self {
             responder,
@@ -98,21 +99,27 @@ impl EnclaveState {
         self.face_engine.as_ref()
     }
 
-    /// The attestation document for the encryption public key.
+    /// Starts background attestation refresh for both boot keys.
     ///
-    /// # Errors
+    /// Supervise both handles in `main`: if either completes, exit the process.
     ///
-    /// Propagates the attestation failure if the cached document expired and could not be renewed.
-    pub async fn encryption_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
+    /// # Panics
+    ///
+    /// Panics if called more than once.
+    pub fn start_attestation_refresh(&mut self) -> (JoinHandle<()>, JoinHandle<()>) {
+        (
+            self.attested_encryption_key.start_refresh(),
+            self.attested_signing_key.start_refresh(),
+        )
+    }
+
+    /// The attestation document for the encryption public key (last successful cache entry).
+    pub async fn encryption_key_attestation(&self) -> Vec<u8> {
         self.attested_encryption_key.document().await
     }
 
-    /// The attestation document for the signing public key.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the attestation failure if the cached document expired and could not be renewed.
-    pub async fn signing_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
+    /// The attestation document for the signing public key (last successful cache entry).
+    pub async fn signing_key_attestation(&self) -> Vec<u8> {
         self.attested_signing_key.document().await
     }
 }
@@ -156,15 +163,15 @@ mod tests {
 
         assert_eq!(
             state.encryption_key_attestation().await,
-            Ok(state.encryption_public_key().to_vec())
+            state.encryption_public_key().to_vec()
         );
         assert_eq!(
             state.signing_key_attestation().await,
-            Ok(state
+            state
                 .signing_public_key()
                 .to_compressed_bytes()
                 .expect("generated BabyJubJub public key serializes")
-                .to_vec())
+                .to_vec()
         );
     }
 

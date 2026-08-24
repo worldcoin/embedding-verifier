@@ -1,17 +1,21 @@
-//! Nitro Secure Module attestation, and the cache in front of it.
+//! Nitro Secure Module attestation.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use enclave_types::EnclaveError;
 use pontifex::{AttestationDoc, SecureModule};
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
-/// How long a document is served before the next read re-attests.
-///
-/// Well inside the hour that `client`'s default `max_attestation_age_millis` allows, so a document
-/// is never close to stale when a client verifies it.
+/// How long after an attest before the background task refreshes the document.
 pub const MAX_CACHED_AGE: Duration = Duration::from_mins(10);
+
+/// After a failed refresh, if the last successful attest is at least this old, the
+/// refresh task exits so `main` takes down the enclave. Aligned with the client
+/// default `max_attestation_age_millis` (1h).
+pub const MAX_SERVABLE_AGE: Duration = Duration::from_hours(1);
 
 /// Produces attestation documents binding a public key to this enclave.
 pub trait Attestor: Send + Sync {
@@ -41,32 +45,31 @@ impl Attestor for NsmAttestor {
 }
 
 /// A cached document and when it was produced.
-struct Cached {
+struct CachedAttestation {
     document: Vec<u8>,
     attested_at: Instant,
 }
 
 /// A boot-scoped public key and its most recent attestation document.
 ///
-/// Attesting is a blocking NSM ioctl, and the assignment route is nothing but that call — which is
-/// where a restart-driven re-assignment burst lands. Caching it takes the ioctl off all but one
-/// request per interval. The cache is boot-scoped by construction, so a restart takes it along and
-/// there is nothing to invalidate; what a document outlives is the freshness window clients
-/// enforce, hence the age bound.
+/// Call [`Self::start_refresh`] once; the returned handle must be supervised (see `main`).
+/// Until then the construction-time document is served. Readers always get the last
+/// successful document immediately.
 pub struct AttestedKey {
     attestor: Arc<dyn Attestor>,
     public_key: Vec<u8>,
     max_age: Duration,
-    cached: Mutex<Cached>,
+    cached_attestation: Arc<Mutex<CachedAttestation>>,
+    refresh_started: bool,
 }
 
 impl AttestedKey {
-    /// Attests `public_key` now, so a broken NSM fails construction rather than the first request.
+    /// Constructs a new `AttestedKey` for `public_key` using the given `attestor`.
     ///
     /// # Errors
     ///
     /// Propagates the [`Attestor`] failure.
-    pub fn attest_now(
+    pub fn new(
         attestor: Arc<dyn Attestor>,
         public_key: Vec<u8>,
         max_age: Duration,
@@ -77,31 +80,71 @@ impl AttestedKey {
             attestor,
             public_key,
             max_age,
-            cached: Mutex::new(Cached {
+            cached_attestation: Arc::new(Mutex::new(CachedAttestation {
                 document,
                 attested_at: Instant::now(),
-            }),
+            })),
+            refresh_started: false,
         })
     }
 
-    /// A document no older than `max_age`, re-attesting first if the cached one has expired.
+    /// Starts the background refresh task.
     ///
-    /// The lock spans check-and-attest, so a burst arriving on an expired document costs one
-    /// attestation rather than one per caller. A failure leaves the previous document in place for
-    /// the next read to retry.
+    /// # Panics
     ///
-    /// # Errors
-    ///
-    /// Propagates the [`Attestor`] failure.
-    pub async fn document(&self) -> Result<Vec<u8>, EnclaveError> {
-        let mut cached = self.cached.lock().await;
+    /// Panics if called more than once.
+    pub fn start_refresh(&mut self) -> JoinHandle<()> {
+        assert!(!self.refresh_started, "attestation refresh already started");
+        self.refresh_started = true;
 
-        if cached.attested_at.elapsed() >= self.max_age {
-            cached.document = self.attestor.attest_public_key(&self.public_key)?;
-            cached.attested_at = Instant::now();
-        }
+        let attestor = Arc::clone(&self.attestor);
+        let public_key = self.public_key.clone();
+        let max_age = self.max_age;
+        let cache = Arc::clone(&self.cached_attestation);
 
-        Ok(cached.document.clone())
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(max_age).await;
+
+                let attestor = Arc::clone(&attestor);
+                let key = public_key.clone();
+                let result =
+                    tokio::task::spawn_blocking(move || attestor.attest_public_key(&key)).await;
+
+                match result {
+                    Ok(Ok(document)) => {
+                        let mut cached = cache.lock().await;
+                        cached.document = document;
+                        cached.attested_at = Instant::now();
+                    }
+                    Ok(Err(error)) => {
+                        tracing::error!(?error, "background attestation refresh failed");
+                        let age = cache.lock().await.attested_at.elapsed();
+                        if age >= MAX_SERVABLE_AGE {
+                            tracing::error!(
+                                ?age,
+                                max = ?MAX_SERVABLE_AGE,
+                                "attestation document exceeded max servable age; exiting refresh task"
+                            );
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        // spawn_blocking task panicked
+                        tracing::error!(
+                            ?error,
+                            "background attestation spawn_blocking join failed"
+                        );
+                        return;
+                    }
+                }
+            }
+        })
+    }
+
+    /// Returns the cached attestation document (may be older than `max_age` while a refresh runs).
+    pub async fn document(&self) -> Vec<u8> {
+        self.cached_attestation.lock().await.document.clone()
     }
 }
 
@@ -166,11 +209,11 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use super::{AttestedKey, Attestor};
-    use crate::test_support::CountingAttestor;
+    use super::{AttestedKey, Attestor, MAX_SERVABLE_AGE};
+    use crate::test_support::{CountingAttestor, FailsAfterSuccessesAttestor};
 
     fn key(attestor: Arc<dyn Attestor>, max_age: Duration) -> AttestedKey {
-        AttestedKey::attest_now(attestor, b"a-public-key".to_vec(), max_age).expect("should attest")
+        AttestedKey::new(attestor, b"a-public-key".to_vec(), max_age).expect("should attest")
     }
 
     #[tokio::test]
@@ -183,11 +226,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_expired_document_is_re_attested_before_it_is_served() {
+    async fn background_task_refreshes_after_max_age() {
         let attestor = Arc::new(CountingAttestor::new());
-        let cached = key(attestor.clone(), Duration::ZERO);
+        let mut cached = key(attestor.clone(), Duration::from_millis(20));
+        let _refresh = cached.start_refresh();
+        let before = cached.document().await;
 
-        assert_ne!(cached.document().await, cached.document().await);
-        assert_eq!(attestor.calls(), 3, "construction plus one per read");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let after = cached.document().await;
+        assert_ne!(before, after);
+        assert!(attestor.calls() >= 2);
+    }
+
+    #[tokio::test]
+    async fn failed_refresh_keeps_serving_the_last_document() {
+        let attestor = Arc::new(FailsAfterSuccessesAttestor::new(1));
+        let mut cached = key(attestor.clone(), Duration::from_millis(20));
+        let refresh = cached.start_refresh();
+        let before = cached.document().await;
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert!(
+            attestor.calls() >= 2,
+            "failed refresh should have been attempted"
+        );
+        assert_eq!(cached.document().await, before);
+        assert!(!refresh.is_finished());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn refresh_task_exits_when_document_exceeds_max_servable_age() {
+        let attestor = Arc::new(FailsAfterSuccessesAttestor::new(1));
+        let mut cached = key(attestor.clone(), Duration::from_secs(1));
+        let refresh = cached.start_refresh();
+
+        tokio::task::yield_now().await;
+        tokio::time::advance(MAX_SERVABLE_AGE).await;
+
+        for _ in 0..100 {
+            if refresh.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        assert!(refresh.is_finished());
+        assert!(attestor.calls() >= 2);
     }
 }

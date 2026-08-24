@@ -8,7 +8,7 @@
     dead_code
 )]
 
-/// Nitro Secure Module attestation, and the cache in front of it.
+/// Nitro Secure Module attestation.
 pub mod attestation;
 /// Face embedding generation and comparison.
 pub mod face_engine;
