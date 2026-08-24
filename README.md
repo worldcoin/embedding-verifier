@@ -130,17 +130,15 @@ the RP's objects are stale — has to come from enclave-side metrics rather than
 
 ### Constraining the challenge fetch
 
-The fetch is the one place the host follows a caller-supplied URL, so `CHALLENGE_IMAGE_ALLOWLIST`
-pins where it may go: a comma-separated list of `host/key-prefix` entries, e.g.
-`rp-a.s3.eu-west-1.amazonaws.com/challenge-images/,rp-b.example.com/df/`. The host matches the
-whole host name — a suffix match would accept `evil-bucket.example.com` for an allowlisted
-`bucket.example.com` — and requires the path to start with the prefix. There is no default: with
-nothing configured the host refuses to start rather than fetch from anywhere.
+`CHALLENGE_IMAGE_ALLOWLIST` pins where the fetch may go: a comma-separated list of
+`host/key-prefix` entries, e.g. `rp-a.s3.eu-west-1.amazonaws.com/challenge-images/,rp-b.example.com/df/`.
+The whole host is compared — a suffix match would accept `evil-bucket.example.com` for an
+allowlisted `bucket.example.com` — and the path must start with the prefix. There is no default:
+without it the host refuses to start.
 
-Around that: HTTPS on the default port only, no credentials in the URL, no IP literals, no
-redirect following, a 5s deadline, a 4 MiB ceiling enforced while streaming, and a resolver that
-drops any address outside the public internet — so an allowlisted name whose DNS answers
-`169.254.169.254` still cannot be reached.
+Around that: HTTPS on the default port only, no credentials, no IP literals, no redirects, a 5s
+deadline, a 4 MiB streamed ceiling, and a resolver that drops addresses outside the public
+internet, so an allowlisted name answering `169.254.169.254` still cannot be reached.
 
 ## Nitro-enabled development host
 

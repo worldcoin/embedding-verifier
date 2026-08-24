@@ -61,8 +61,7 @@ impl Environment {
     /// # Panics
     ///
     /// Panics when `CHALLENGE_IMAGE_ALLOWLIST` is unset or holds no entry. There is no safe
-    /// default: a fetcher with nothing pinned would retrieve from anywhere a caller names, so
-    /// refusing to start is the only correct reading of a missing value.
+    /// default: a fetcher that pins nothing would fetch from anywhere a caller names.
     #[must_use]
     pub fn challenge_image_allowlist(&self) -> Vec<String> {
         let raw = env::var("CHALLENGE_IMAGE_ALLOWLIST").unwrap_or_else(|_| {
