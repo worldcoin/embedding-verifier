@@ -13,7 +13,7 @@ async fn health_returns_ok() {
         Environment::Development,
         Arc::new(PontifexEnclaveClient::new(0, 0)),
         Arc::new(
-            ChallengeFetcher::new(&["bucket.example.com/challenge-images/".to_owned()])
+            ChallengeFetcher::new("https://bucket.example.com/challenges/")
                 .expect("the fetcher should build"),
         ),
     );

@@ -8,12 +8,12 @@ use crate::error::AppError;
 
 /// A match request.
 ///
-/// `challenge_image_url` is plaintext so the host can fetch immediately; `ciphertext` is the
+/// `challenge_image_id` is plaintext so the host can fetch immediately; `ciphertext` is the
 /// sealed request, which the host relays without being able to read it.
 #[derive(Debug, Deserialize)]
 pub struct MatchRequestBody {
-    /// Where the RP put the encrypted challenge image.
-    challenge_image_url: String,
+    /// Which object in the configured bucket holds the encrypted challenge image.
+    challenge_image_id: String,
     /// The sealed match request, base64.
     ciphertext: String,
 }
@@ -35,8 +35,8 @@ pub struct MatchResponseBody {
 ///
 /// # Errors
 ///
-/// Returns [`AppError`] if the challenge image cannot be fetched or the enclave rejects the
-/// request.
+/// Returns [`AppError`] if the id is rejected, the challenge image cannot be fetched, or the
+/// enclave rejects the request.
 pub async fn handler(
     State(state): State<AppState>,
     Json(body): Json<MatchRequestBody>,
@@ -52,7 +52,7 @@ pub async fn handler(
 
     let challenge_ciphertext = state
         .challenge_source()
-        .fetch(&body.challenge_image_url)
+        .fetch(&body.challenge_image_id)
         .await
         .map_err(AppError::challenge_fetch)?;
 

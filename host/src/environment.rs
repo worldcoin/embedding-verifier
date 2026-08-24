@@ -56,29 +56,24 @@ impl Environment {
         Self::required_u32("ENCLAVE_PORT")
     }
 
-    /// Returns the allowlisted challenge-image locations, as `host/key-prefix` entries.
+    /// Returns the bucket location challenge-image ids are resolved against.
     ///
     /// # Panics
     ///
-    /// Panics when `CHALLENGE_IMAGE_ALLOWLIST` is unset or holds no entry. There is no safe
-    /// default: a fetcher that pins nothing would fetch from anywhere a caller names.
+    /// Panics when `CHALLENGE_IMAGE_BASE_URL` is unset or blank. There is no safe default: the
+    /// base is the only thing deciding where a fetch goes.
     #[must_use]
-    pub fn challenge_image_allowlist(&self) -> Vec<String> {
-        let raw = env::var("CHALLENGE_IMAGE_ALLOWLIST").unwrap_or_else(|_| {
-            panic!("CHALLENGE_IMAGE_ALLOWLIST environment variable is not set")
-        });
-        let entries: Vec<String> = raw
-            .split(',')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-            .map(ToOwned::to_owned)
-            .collect();
+    pub fn challenge_image_base_url(&self) -> String {
+        let base_url = env::var("CHALLENGE_IMAGE_BASE_URL")
+            .unwrap_or_else(|_| panic!("CHALLENGE_IMAGE_BASE_URL environment variable is not set"))
+            .trim()
+            .to_owned();
         assert!(
-            !entries.is_empty(),
-            "CHALLENGE_IMAGE_ALLOWLIST is empty; refusing to fetch challenge images from anywhere"
+            !base_url.is_empty(),
+            "CHALLENGE_IMAGE_BASE_URL environment variable is empty"
         );
 
-        entries
+        base_url
     }
 
     fn required_u32(name: &str) -> u32 {

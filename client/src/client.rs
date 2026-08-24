@@ -104,7 +104,7 @@ struct ApiErrorCode {
 /// A match request, as the host reads it.
 #[derive(Debug, Serialize)]
 struct MatchRequestBody {
-    challenge_image_url: String,
+    challenge_image_id: String,
     ciphertext: String,
 }
 
@@ -212,7 +212,7 @@ impl FaceVerifierClient {
     /// [`MatchResult::Failed`] is a normal return, not an error. A statement is verified against the
     /// attested signing key first; call [`match_token::verify`] again to read its claims.
     ///
-    /// The image at `challenge_image_url` must be encrypted under the key and IV in `inputs`.
+    /// The object at `challenge_image_id` must be encrypted under the key and IV in `inputs`.
     ///
     /// # Errors
     ///
@@ -221,7 +221,7 @@ impl FaceVerifierClient {
         &self,
         assignment: &VerifiedAssignment,
         inputs: &MatchInputs,
-        challenge_image_url: &str,
+        challenge_image_id: &str,
         now: SystemTime,
     ) -> Result<MatchResult, ClientError> {
         let plaintext = inputs.to_cbor().map_err(|_| ClientError::MalformedResult)?;
@@ -238,7 +238,7 @@ impl FaceVerifierClient {
             .http
             .post(url)
             .json(&MatchRequestBody {
-                challenge_image_url: challenge_image_url.to_owned(),
+                challenge_image_id: challenge_image_id.to_owned(),
                 ciphertext: STANDARD.encode(sealed.into_bytes()),
             })
             .send()

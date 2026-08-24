@@ -18,9 +18,9 @@ async fn main() -> anyhow::Result<()> {
         environment.enclave_cid(),
         environment.enclave_port(),
     ));
-    // A missing or broken allowlist fails the boot, not the first request.
+    // A missing or broken base URL fails the boot, not the first request.
     let challenge_source = Arc::new(ChallengeFetcher::new(
-        &environment.challenge_image_allowlist(),
+        &environment.challenge_image_base_url(),
     )?);
     let state = AppState::new(environment, enclave_client, challenge_source);
 
