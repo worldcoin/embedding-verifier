@@ -236,6 +236,14 @@ async fn matches_attributes_fetch_failures_outward() {
             "invalid_challenge_url",
             false,
         ),
+        // A destination the allowlist does not cover is the caller's problem, and retrying it
+        // will not make it allowlisted.
+        (
+            FetchError::NotAllowlisted,
+            StatusCode::BAD_REQUEST,
+            "invalid_challenge_url",
+            false,
+        ),
     ];
 
     for (error, expected_status, expected_code, retryable) in cases {

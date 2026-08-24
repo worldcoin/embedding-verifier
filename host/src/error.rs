@@ -90,7 +90,7 @@ impl AppError {
     #[must_use]
     pub fn challenge_fetch(error: FetchError) -> Self {
         match error {
-            FetchError::Malformed => Self::new(
+            FetchError::Malformed | FetchError::NotAllowlisted => Self::new(
                 StatusCode::BAD_REQUEST,
                 "invalid_challenge_url",
                 "The challenge image URL was rejected",

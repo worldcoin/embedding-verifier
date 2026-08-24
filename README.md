@@ -29,8 +29,11 @@ cargo build
 cargo test --all
 
 # Run the host on http://localhost:8000
-# ENCLAVE_CID and ENCLAVE_PORT are required; the process panics without them.
-RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin host
+# ENCLAVE_CID, ENCLAVE_PORT and CHALLENGE_IMAGE_ALLOWLIST are required; the process
+# panics without them.
+RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 \
+  CHALLENGE_IMAGE_ALLOWLIST=bucket.example.com/challenge-images/ \
+  cargo run --bin host
 curl http://localhost:8000/health
 
 # Run the secure enclave placeholder
@@ -117,7 +120,7 @@ code.
 | --- | --- |
 | `200` | The enclave answered; the sealed payload holds the outcome |
 | `409` `reassign_required` | The request did not open, so there was no channel to reply on; re-assign and re-seal, once |
-| `400` `invalid_challenge_url` | The URL was rejected before any request was made |
+| `400` `invalid_challenge_url` | The URL was off the allowlist or malformed, and was rejected before any request was made |
 | `502` `challenge_fetch_failed` | The challenge image could not be fetched |
 | `500` `internal_error` | Enclave fault |
 
@@ -125,10 +128,19 @@ code.
 nothing to seal a reply into. Everything else the host might want — how often matches fail, how often
 the RP's objects are stale — has to come from enclave-side metrics rather than from status codes.
 
-> **No SSRF destination control.** `challenge_image_url` is only constrained in shape — HTTPS,
-> a domain rather than an IP literal, no credentials, no redirects, a 5s timeout and a 4 MiB
-> cap. Nothing pins *where* a fetch may go, so this endpoint must not take untrusted callers
-> as-is. See `TODO(SSRF)` in `host/src/challenge_fetch.rs`.
+### Constraining the challenge fetch
+
+The fetch is the one place the host follows a caller-supplied URL, so `CHALLENGE_IMAGE_ALLOWLIST`
+pins where it may go: a comma-separated list of `host/key-prefix` entries, e.g.
+`rp-a.s3.eu-west-1.amazonaws.com/challenge-images/,rp-b.example.com/df/`. The host matches the
+whole host name — a suffix match would accept `evil-bucket.example.com` for an allowlisted
+`bucket.example.com` — and requires the path to start with the prefix. There is no default: with
+nothing configured the host refuses to start rather than fetch from anywhere.
+
+Around that: HTTPS on the default port only, no credentials in the URL, no IP literals, no
+redirect following, a 5s deadline, a 4 MiB ceiling enforced while streaming, and a resolver that
+drops any address outside the public internet — so an allowlisted name whose DNS answers
+`169.254.169.254` still cannot be reached.
 
 ## Nitro-enabled development host
 

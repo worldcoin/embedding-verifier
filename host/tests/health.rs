@@ -12,7 +12,10 @@ async fn health_returns_ok() {
     let state = AppState::new(
         Environment::Development,
         Arc::new(PontifexEnclaveClient::new(0, 0)),
-        Arc::new(ChallengeFetcher::new().expect("the HTTP client should build")),
+        Arc::new(
+            ChallengeFetcher::new(&["bucket.example.com/challenge-images/".to_owned()])
+                .expect("the fetcher should build"),
+        ),
     );
     let response = routes::handler()
         .with_state(state)

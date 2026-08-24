@@ -18,7 +18,10 @@ async fn main() -> anyhow::Result<()> {
         environment.enclave_cid(),
         environment.enclave_port(),
     ));
-    let challenge_source = Arc::new(ChallengeFetcher::new()?);
+    // A missing or broken allowlist fails the boot rather than the first request.
+    let challenge_source = Arc::new(ChallengeFetcher::new(
+        &environment.challenge_image_allowlist(),
+    )?);
     let state = AppState::new(environment, enclave_client, challenge_source);
 
     host::server::start(state).await

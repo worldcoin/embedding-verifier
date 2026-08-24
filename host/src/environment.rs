@@ -56,6 +56,32 @@ impl Environment {
         Self::required_u32("ENCLAVE_PORT")
     }
 
+    /// Returns the allowlisted challenge-image locations, as `host/key-prefix` entries.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `CHALLENGE_IMAGE_ALLOWLIST` is unset or holds no entry. There is no safe
+    /// default: a fetcher with nothing pinned would retrieve from anywhere a caller names, so
+    /// refusing to start is the only correct reading of a missing value.
+    #[must_use]
+    pub fn challenge_image_allowlist(&self) -> Vec<String> {
+        let raw = env::var("CHALLENGE_IMAGE_ALLOWLIST").unwrap_or_else(|_| {
+            panic!("CHALLENGE_IMAGE_ALLOWLIST environment variable is not set")
+        });
+        let entries: Vec<String> = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
+        assert!(
+            !entries.is_empty(),
+            "CHALLENGE_IMAGE_ALLOWLIST is empty; refusing to fetch challenge images from anywhere"
+        );
+
+        entries
+    }
+
     fn required_u32(name: &str) -> u32 {
         env::var(name)
             .unwrap_or_else(|_| panic!("{name} environment variable is not set"))
