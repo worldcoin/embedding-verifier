@@ -9,7 +9,7 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use common::{StubChallengeSource, StubEnclaveClient, state_with, state_with_source};
-use enclave_types::{EnclaveError, GetEnclaveKeysResponse};
+use enclave_types::EnclaveError;
 use host::AppState;
 use host::challenge_fetcher::FetchError;
 use host::enclave::EnclaveClientError;
@@ -66,19 +66,18 @@ fn match_request(url: &str) -> Request<Body> {
         .expect("request should be valid")
 }
 
-fn keys(encryption: Vec<u8>, signing: Vec<u8>) -> StubEnclaveClient {
+/// Serves only the encryption key. The stub panics on anything else, so this doubles as an
+/// assertion that the assignment route asks for one key and not the other.
+fn encryption_key(attestation: Vec<u8>) -> StubEnclaveClient {
     StubEnclaveClient {
-        keys: Some(Ok(GetEnclaveKeysResponse {
-            encryption_key_attestation: encryption,
-            signing_key_attestation: signing,
-        })),
+        encryption_key: Some(Ok(attestation)),
         ..StubEnclaveClient::default()
     }
 }
 
 #[tokio::test]
 async fn assignment_returns_the_encryption_key_attestation_and_nothing_else() {
-    let state = state_with(keys(vec![1, 2, 3], vec![4, 5, 6]));
+    let state = state_with(encryption_key(vec![1, 2, 3]));
 
     let (status, body) = send(state, assignment_request()).await;
 
@@ -93,7 +92,7 @@ async fn assignment_returns_the_encryption_key_attestation_and_nothing_else() {
 
 #[tokio::test]
 async fn assignment_is_not_reachable_by_get() {
-    let state = state_with(keys(vec![1, 2, 3], vec![4, 5, 6]));
+    let state = state_with(encryption_key(vec![1, 2, 3]));
 
     let request = Request::builder()
         .method(Method::GET)
@@ -110,7 +109,7 @@ async fn assignment_is_not_reachable_by_get() {
 /// the Key Registry, and the encryption key is only served as part of an assignment.
 #[tokio::test]
 async fn enclave_keys_are_not_served_as_a_route() {
-    let state = state_with(keys(vec![1, 2, 3], vec![4, 5, 6]));
+    let state = state_with(encryption_key(vec![1, 2, 3]));
 
     let request = Request::builder()
         .method(Method::GET)
@@ -154,7 +153,7 @@ async fn assignment_surfaces_enclave_failures_as_structured_errors() {
 
     for (error, expected_status, expected_code, retryable) in cases {
         let state = state_with(StubEnclaveClient {
-            keys: Some(Err(error)),
+            encryption_key: Some(Err(error)),
             ..StubEnclaveClient::default()
         });
 
@@ -166,19 +165,19 @@ async fn assignment_surfaces_enclave_failures_as_structured_errors() {
     }
 }
 
+/// Only the signing key is configured, so this also pins that the match route never asks for the
+/// encryption key it has no use for.
 #[tokio::test]
 async fn matches_relays_the_sealed_request_and_the_fetched_challenge() {
     let state = state_with_source(
         StubEnclaveClient {
-            keys: Some(Ok(GetEnclaveKeysResponse {
-                encryption_key_attestation: vec![1, 2, 3],
-                signing_key_attestation: vec![4, 5, 6],
-            })),
+            signing_key: Some(Ok(vec![4, 5, 6])),
             match_result: Some(Ok(enclave_types::MatchResponse {
                 ciphertext: vec![9u8; 48],
             })),
             expected_body: Some(b"sealed".to_vec()),
             expected_challenge: Some(b"challenge-ciphertext".to_vec()),
+            ..StubEnclaveClient::default()
         },
         StubChallengeSource::returning(b"challenge-ciphertext"),
     );
@@ -262,10 +261,7 @@ async fn matches_maps_an_unopenable_request_to_conflict() {
     // Re-assign and re-seal: the client cannot tell this from a corrupt ciphertext, which is why
     // the retry has to be bounded client-side.
     let state = state_with(StubEnclaveClient {
-        keys: Some(Ok(GetEnclaveKeysResponse {
-            encryption_key_attestation: vec![1],
-            signing_key_attestation: vec![2],
-        })),
+        signing_key: Some(Ok(vec![2])),
         match_result: Some(Err(EnclaveClientError::Operation(
             EnclaveError::RequestNotOpened,
         ))),
@@ -287,10 +283,7 @@ async fn matches_answers_200_whatever_the_sealed_result_says() {
     // A quality failure, a below-threshold match and a malformed payload are all sealed now, so
     // the host cannot distinguish them from a statement -- and must not try.
     let state = state_with(StubEnclaveClient {
-        keys: Some(Ok(GetEnclaveKeysResponse {
-            encryption_key_attestation: vec![1],
-            signing_key_attestation: vec![2],
-        })),
+        signing_key: Some(Ok(vec![2])),
         match_result: Some(Ok(enclave_types::MatchResponse {
             ciphertext: vec![9u8; 48],
         })),

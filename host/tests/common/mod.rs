@@ -3,17 +3,18 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use enclave_types::{GetEnclaveKeysResponse, MatchRequest, MatchResponse};
+use enclave_types::{MatchRequest, MatchResponse};
 use host::challenge_fetcher::{ChallengeSource, FetchError};
 use host::enclave::{EnclaveClient, EnclaveClientError};
 use host::{AppState, Environment};
 
 /// An [`EnclaveClient`] answering from fixed results.
 ///
-/// Unconfigured operations panic, so a route calling the wrong one fails loudly.
+/// Unconfigured operations panic, so a route asking for the wrong key fails loudly.
 #[derive(Default)]
 pub struct StubEnclaveClient {
-    pub keys: Option<Result<GetEnclaveKeysResponse, EnclaveClientError>>,
+    pub encryption_key: Option<Result<Vec<u8>, EnclaveClientError>>,
+    pub signing_key: Option<Result<Vec<u8>, EnclaveClientError>>,
     pub match_result: Option<Result<MatchResponse, EnclaveClientError>>,
     /// Asserted against the sealed body the route forwards, if set.
     pub expected_body: Option<Vec<u8>>,
@@ -27,10 +28,16 @@ impl EnclaveClient for StubEnclaveClient {
         Ok(())
     }
 
-    async fn get_enclave_keys(&self) -> Result<GetEnclaveKeysResponse, EnclaveClientError> {
-        self.keys
+    async fn encryption_key_attestation(&self) -> Result<Vec<u8>, EnclaveClientError> {
+        self.encryption_key
             .clone()
-            .expect("route requested enclave keys but the stub was not configured to answer")
+            .expect("route asked for the encryption key but the stub was not configured to answer")
+    }
+
+    async fn signing_key_attestation(&self) -> Result<Vec<u8>, EnclaveClientError> {
+        self.signing_key
+            .clone()
+            .expect("route asked for the signing key but the stub was not configured to answer")
     }
 
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError> {

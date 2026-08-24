@@ -13,7 +13,7 @@ mod error;
 mod health;
 mod matches;
 
-pub use enclave_keys::{GetEnclaveKeysRequest, GetEnclaveKeysResponse};
+pub use enclave_keys::{GetEncryptionKeyRequest, GetSigningKeyRequest, KeyAttestation};
 pub use error::EnclaveError;
 pub use health::HealthRequest;
 pub use matches::{MatchRequest, MatchResponse};
