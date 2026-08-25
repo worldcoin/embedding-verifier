@@ -51,6 +51,30 @@ curl http://localhost:8000/health
 RUST_LOG=info cargo run --bin deepface-enclave
 ```
 
+## Building images
+
+Each workload has a host image and an enclave image. Host images are what gets
+deployed; an enclave image is only an input to the EIF, and it is the EIF's PCRs that
+clients attest — so `build-docker.yml` builds all four on every PR but publishes only
+the hosts.
+
+```bash
+# Enclave EIF + PCR measurements. Linux x86_64 + Docker; Nitro hardware is not needed
+# to build, only to run. Artifacts are named per workload, so both can share one dir.
+scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcrs.json
+scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pcrs.json
+
+# Carrier image that launches an EIF on a Nitro node
+docker build -f scripts/Dockerfile.eif --build-arg EIF_FILE=di-enclave.eif target/eif
+```
+
+Only `deepface` needs `GIT_HUB_TOKEN` and `HUGGING_FACE_TOKEN` — its enclave links
+`face-engine` from a private repo and bakes in a model bundle. `di` needs neither, and
+the script asks for them per workload rather than unconditionally.
+
+`di-enclave` currently exits non-zero on start, so its EIF builds and measures but will
+not stay running. That is deliberate until the boot sequence lands.
+
 ## Enclave assignment
 
 `POST /v1/enclave-assignment` returns the enclave's encryption-key attestation and nothing
@@ -78,7 +102,7 @@ shape `world-id-protocol` uses for an authenticator:
 {
   "host_url": "http://localhost:8000",
   "allowed_pcr_configs": [
-    [{ "index": 0, "value": "<PCR0 hex from scripts/build-eif.sh>" }]
+    [{ "index": 0, "value": "<PCR0 hex from deepface-pcrs.json>" }]
   ],
   "max_attestation_age_millis": 3600000,
   "allow_debug_measurements": false
