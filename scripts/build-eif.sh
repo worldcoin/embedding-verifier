@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build the enclave EIF and emit its PCR measurements. Needs Linux
+# Build the DeepFace enclave EIF and emit its PCR measurements. Needs Linux
 # x86_64 + Docker; Nitro hardware is only required to run the enclave, not
 # build it.
 #
@@ -11,6 +11,10 @@ set -euo pipefail
 # Env: NITRO_CLI_VERSION (default v1.4.2), ENCLAVE_IMAGE_TAG,
 #      GIT_HUB_TOKEN (read access to private GitHub dependencies),
 #      HUGGING_FACE_TOKEN (read access to private model repositories)
+#
+# TODO: One enclave is hard-coded here. `di-enclave` needs its own EIF, so the
+# Dockerfile, image tag and artifact name all have to become arguments. Renaming
+# the artifact is deferred to the deployment work, which consumes it.
 
 if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
   echo "[ERROR] EIF builds require Linux x86_64 (got $(uname -s)/$(uname -m))." >&2
@@ -81,7 +85,7 @@ if [[ "$build_image" == "true" ]]; then
     --secret id=GITHUB_TOKEN,env=GIT_HUB_TOKEN \
     --secret id=HUGGING_FACE_TOKEN,env=HUGGING_FACE_TOKEN \
     -t "$ENCLAVE_IMAGE_TAG" \
-    -f enclave/Dockerfile \
+    -f deepface/enclave/Dockerfile \
     .
 else
   echo "[1/3] Using existing enclave container image ($ENCLAVE_IMAGE_TAG)..."

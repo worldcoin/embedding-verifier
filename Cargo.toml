@@ -1,12 +1,16 @@
 [workspace]
 members = [
-    "attested-channel",
-    "client",
-    "deepface-protocol",
-    "e2e",
-    "enclave",
-    "enclave-types",
-    "host",
+    "deepface/client",
+    "deepface/e2e",
+    "deepface/enclave",
+    "deepface/host",
+    "deepface/protocol",
+    "deepface/types",
+    "di/enclave",
+    "di/host",
+    "di/types",
+    "shared/attested-channel",
+    "shared/enclave-types",
 ]
 resolver = "3"
 
@@ -27,17 +31,19 @@ anyhow = "1.0"
 ark-babyjubjub = { package = "taceo-ark-babyjubjub", version = "0.5" }
 ark-ff = "0.5"
 async-trait = "0.1"
-attested-channel = { path = "attested-channel" }
-deepface-protocol = { path = "deepface-protocol" }
+attested-channel = { path = "shared/attested-channel" }
+deepface-protocol = { path = "deepface/protocol" }
+deepface-types = { path = "deepface/types" }
+di-types = { path = "di/types" }
 # Attestation crates are pinned to bedrock's versions so the two verifiers cannot drift.
 aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
 axum = "0.8"
 base64 = "0.22"
 ciborium = "0.2"
-client = { path = "client" }
 coset = "0.4.2"
+deepface-client = { path = "deepface/client" }
 eddsa-babyjubjub = { package = "taceo-eddsa-babyjubjub", version = "0.5" }
-enclave-types = { path = "enclave-types" }
+enclave-types = { path = "shared/enclave-types" }
 face-engine = { git = "https://github.com/worldcoin/biometric-engines", rev = "face-engine-v2.16.0", default-features = false, features = ["tract"] }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 hex-literal = "1.1"
