@@ -65,7 +65,7 @@ scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif,
 scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pcrs.json
 
 # Carrier image that launches an EIF on a Nitro node
-docker build -f scripts/Dockerfile.eif --build-arg EIF_FILE=di-enclave.eif target/eif
+docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif target/eif
 ```
 
 Only `deepface` needs `GIT_HUB_TOKEN` and `HUGGING_FACE_TOKEN` — its enclave links

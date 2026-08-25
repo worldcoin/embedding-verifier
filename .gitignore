@@ -22,9 +22,8 @@ models/
 # Python
 **/__pycache__/
 
-# Enclave — built EIFs; the negation keeps the carrier Dockerfile tracked
+# Enclave — built EIFs
 *.eif
-!**/Dockerfile.eif
 
 # Local biometric fixtures used by the E2E client
 deepface/e2e/**/fixtures/

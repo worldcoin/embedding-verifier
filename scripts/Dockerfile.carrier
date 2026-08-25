@@ -1,10 +1,19 @@
 # syntax=docker/dockerfile:1
 # Carrier image that launches an enclave EIF on Nitro-enabled nodes.
-# Build context: the output dir of scripts/build-eif.sh (default target/eif/).
 #
-# One carrier for every workload — the EIF is the only thing that differs, so
-# EIF_FILE selects which one is baked in and the path inside the image is fixed:
-#   docker build -f scripts/Dockerfile.eif --build-arg EIF_FILE=di-enclave.eif target/eif
+# This consumes an EIF, it does not produce one — scripts/build-eif.sh does that,
+# by handing the enclave image to `nitro-cli build-enclave`. What this packages is
+# the already-built artifact plus the nitro-cli that runs it, because an enclave
+# cannot be scheduled directly: `nitro-cli run-enclave` has to be called from the
+# parent instance, so something ordinary has to own the enclave's lifecycle.
+#
+# Build context: the output dir of scripts/build-eif.sh (default target/eif/), so
+# EIF_FILE is a bare filename in that directory.
+#
+# One carrier Dockerfile for every workload — the EIF is the only thing that
+# differs. It is baked in at build time, so each workload gets its own image and
+# the image digest covers the artifact whose PCRs clients attest:
+#   docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif target/eif
 
 FROM public.ecr.aws/amazonlinux/amazonlinux:2023
 
