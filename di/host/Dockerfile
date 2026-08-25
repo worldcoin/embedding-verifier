@@ -3,9 +3,10 @@
 # Builds the `di-host` service as a statically-linked musl binary and packages
 # it in a `scratch` image. Built with the repository root as the context.
 #
-# Unlike deepface/host/Dockerfile this needs no build secret: di-host depends
-# only on di-types, tracing and tracing-subscriber, so there is no private git
-# dependency to authenticate. Add the GITHUB_TOKEN mount back if that changes.
+# GITHUB_TOKEN is needed even though di-host depends on nothing private: cargo
+# resolves the whole workspace before building any member, so the private
+# face-engine git dependency is fetched no matter which --package is selected.
+# That is a cost of the single-workspace layout, not of this crate.
 
 FROM ghcr.io/rust-cross/rust-musl-cross:x86_64-musl AS chef
 USER root
@@ -23,15 +24,29 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 
-RUN cargo chef cook --release --locked \
+RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
+    GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)" && \
+    git config --global \
+      url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
+      "https://github.com/worldcoin/biometric-engines" && \
+    CARGO_NET_GIT_FETCH_WITH_CLI=true cargo chef cook --release --locked \
       --target x86_64-unknown-linux-musl \
       --recipe-path recipe.json \
-      --package di-host
+      --package di-host && \
+    git config --global --unset-all \
+      url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf
 COPY . .
-RUN cargo build --release --locked \
+RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
+    GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)" && \
+    git config --global \
+      url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
+      "https://github.com/worldcoin/biometric-engines" && \
+    CARGO_NET_GIT_FETCH_WITH_CLI=true cargo build --release --locked \
       --target x86_64-unknown-linux-musl \
       --package di-host \
- && mv target/x86_64-unknown-linux-musl/release/di-host /app/host-bin
+ && mv target/x86_64-unknown-linux-musl/release/di-host /app/host-bin \
+ && git config --global --unset-all \
+      url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf
 
 FROM scratch AS runtime
 WORKDIR /app

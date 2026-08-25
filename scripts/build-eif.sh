@@ -13,9 +13,10 @@ set -euo pipefail
 #      GIT_HUB_TOKEN (read access to private GitHub dependencies),
 #      HUGGING_FACE_TOKEN (read access to private model repositories)
 #
-# Only deepface needs the two tokens: its enclave links face-engine from a
-# private repo and bakes in a model bundle. di needs neither, so they are
-# required per workload rather than unconditionally.
+# GIT_HUB_TOKEN is required for every workload: cargo resolves the whole
+# workspace before building any member, so the private face-engine dependency is
+# fetched even by workloads that do not use it. HUGGING_FACE_TOKEN is
+# deepface-only — its enclave bakes in a model bundle; DI injects at runtime.
 
 NITRO_CLI_VERSION="${NITRO_CLI_VERSION:-v1.4.2}"
 
@@ -102,21 +103,24 @@ out_dir="$(cd "$out_dir" && pwd)"
 if [[ "$build_image" == "true" ]]; then
   echo "[1/3] Building $workload enclave container image ($ENCLAVE_IMAGE_TAG)..."
 
-  # Only deepface's enclave links a private dependency and bakes in models.
-  # Demanding these for every workload would be a lie about what di needs.
-  secret_args=()
-  if [[ "$workload" == "deepface" ]]; then
-    if [[ -z "${GIT_HUB_TOKEN:-}" ]]; then
-      echo "[ERROR] GIT_HUB_TOKEN is required to fetch private GitHub dependencies." >&2
-      exit 1
-    fi
+  # Every workload needs GIT_HUB_TOKEN, including ones that depend on nothing
+  # private: cargo resolves the whole workspace before building any member, so
+  # the face-engine git dependency is fetched no matter which --package is
+  # selected. HUGGING_FACE_TOKEN is genuinely deepface-only — its enclave bakes
+  # in a model bundle, and DI injects models at runtime instead.
+  if [[ -z "${GIT_HUB_TOKEN:-}" ]]; then
+    echo "[ERROR] GIT_HUB_TOKEN is required to fetch private GitHub dependencies." >&2
+    exit 1
+  fi
 
+  secret_args=(--secret "id=GITHUB_TOKEN,env=GIT_HUB_TOKEN")
+
+  if [[ "$workload" == "deepface" ]]; then
     if [[ -z "${HUGGING_FACE_TOKEN:-}" ]]; then
       echo "[ERROR] HUGGING_FACE_TOKEN is required to download private models." >&2
       exit 1
     fi
 
-    secret_args+=(--secret "id=GITHUB_TOKEN,env=GIT_HUB_TOKEN")
     secret_args+=(--secret "id=HUGGING_FACE_TOKEN,env=HUGGING_FACE_TOKEN")
   fi
 

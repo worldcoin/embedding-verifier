@@ -68,9 +68,11 @@ scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pc
 docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif target/eif
 ```
 
-Only `deepface` needs `GIT_HUB_TOKEN` and `HUGGING_FACE_TOKEN` — its enclave links
-`face-engine` from a private repo and bakes in a model bundle. `di` needs neither, and
-the script asks for them per workload rather than unconditionally.
+Both workloads need `GIT_HUB_TOKEN`, including `di`, which depends on nothing private:
+cargo resolves the whole workspace before building any member, so the `face-engine` git
+dependency is fetched whichever `--package` is selected. `HUGGING_FACE_TOKEN` is
+genuinely `deepface`-only — its enclave bakes in a model bundle, and per the spec DI
+injects models at runtime instead.
 
 `di-enclave` currently exits non-zero on start, so its EIF builds and measures but will
 not stay running. That is deliberate until the boot sequence lands.

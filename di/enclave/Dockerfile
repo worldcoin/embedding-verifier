@@ -6,11 +6,14 @@
 # PCRs are reproducible, then register the real PCRs (dev runs --debug-mode,
 # which zeroes PCRs and skips attestation).
 #
-# Unlike deepface/enclave/Dockerfile this needs no build secrets: di-enclave
-# depends only on di-types, tracing and tracing-subscriber, so there is no
-# private git dependency to authenticate and no model bundle to download. Both
-# come back when the iris pipeline lands — models are injected at runtime per
-# the spec, so HUGGING_FACE_TOKEN should not return here.
+# GITHUB_TOKEN is needed even though di-enclave depends on nothing private:
+# cargo resolves the whole workspace before building any member, so the private
+# face-engine git dependency is fetched no matter which --package is selected.
+# That is a cost of the single-workspace layout, not of this crate.
+#
+# No HUGGING_FACE_TOKEN though: the model bundle is a deepface build stage, and
+# per the spec DI models are injected at runtime rather than baked into the
+# image, so it should not appear here later either.
 
 FROM rust:1.97.0-bookworm AS builder
 
@@ -21,7 +24,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 COPY . .
 
-RUN cargo build --release --locked --package di-enclave --bin di-enclave
+RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
+    GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)" && \
+    git config --global \
+      url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
+      "https://github.com/worldcoin/biometric-engines" && \
+    CARGO_NET_GIT_FETCH_WITH_CLI=true \
+      cargo build --release --locked --package di-enclave --bin di-enclave && \
+    git config --global --unset-all \
+      url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf
 
 FROM debian:bookworm-slim
 
