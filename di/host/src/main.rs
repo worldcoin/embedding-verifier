@@ -1,8 +1,6 @@
 //! Migration API and enclave relay for the `DeepIdentifier` migration — the untrusted side.
 //!
-//! Skeleton. What this replaces is §6 of the spec: enclave assignment, job enqueue and result
-//! polling on the outside; pulling its own queue, fetching the staged object and relaying
-//! ciphertext and KMS blobs it cannot open on the inside. None of that exists yet.
+//! Skeleton. The routes it replaces are §6 of the spec.
 
 #![deny(
     clippy::all,
@@ -21,8 +19,7 @@ fn main() -> ExitCode {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    // Exits non-zero rather than binding a port: a host that serves nothing but answers
-    // `/healthz` would read as green to a load balancer.
+    // Non-zero rather than binding a port: a skeleton that answers /healthz reads as green.
     tracing::error!("di-host is a skeleton and serves no routes yet");
     ExitCode::FAILURE
 }

@@ -4,10 +4,9 @@ Rust workspace for the embedding verifier host and secure enclave.
 
 ## Structure
 
-Two workloads run in this workspace — the `DeepFace` verifier and the `DeepIdentifier`
-migration — over the same host/enclave shape. Each owns a top-level directory; what both
-would otherwise duplicate lives in `shared/`. Crate names compose from the path, so
-`deepface/host` is `deepface-host` and `di/enclave` is `di-enclave`.
+Two workloads over the same host/enclave shape — the `DeepFace` verifier and the
+`DeepIdentifier` migration. Each owns a top-level directory; what both would duplicate
+lives in `shared/`. Crate names compose from the path: `deepface/host` is `deepface-host`.
 
 ```text
 embedding-verifier/
@@ -27,10 +26,8 @@ embedding-verifier/
     └── types/
 ```
 
-The split is what keeps one workload out of the other's enclave image: `deepface-types` holds
-the match request, `di-types` will hold the migration job, and neither links the other.
-`di-host` and `di-enclave` currently log and exit non-zero — a skeleton that idled would read
-as healthy to whatever is watching it. See
+Splitting the types is what keeps one workload out of the other's enclave image. `di-host`
+and `di-enclave` log and exit non-zero — a skeleton that idled would read as healthy. See
 [Spec: DeepIdentifier Migration TEE Setup v1](https://app.notion.com/p/worldcoin/Spec-DeepIdentifier-Migration-TEE-Setup-v1-3c08614bdf8c8014b7ddf50f3cac4e4b)
 for what goes in them.
 

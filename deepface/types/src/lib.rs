@@ -1,7 +1,5 @@
-//! The vsock wire contract for the `DeepFace` match, carried between the host and the enclave.
-//!
-//! The exchanges every workload shares — health, errors, key attestation — come from
-//! [`enclave_types`]; only the match itself lives here.
+//! The vsock wire contract for the `DeepFace` match. What every workload shares comes from
+//! [`enclave_types`].
 
 #![deny(
     clippy::all,
