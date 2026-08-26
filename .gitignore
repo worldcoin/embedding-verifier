@@ -22,7 +22,7 @@ models/
 # Python
 **/__pycache__/
 
-# Enclave — built EIFs, but not the carrier Dockerfile that happens to end in .eif
+# Enclave — built EIFs; the negation keeps the carrier Dockerfile tracked
 *.eif
 !**/Dockerfile.eif
 
