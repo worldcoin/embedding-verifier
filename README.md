@@ -1,3 +1,5 @@
+TODO: This README is outdated and will be updated soon.
+
 # Embedding Verifier
 
 Rust workspace for the embedding verifier host and secure enclave.
