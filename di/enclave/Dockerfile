@@ -1,13 +1,5 @@
 # syntax=docker/dockerfile:1
 # Enclave workload image, converted to an EIF by scripts/build-eif.sh --workload di.
-#
-# Base images are tag-pinned and the build is --locked. Before a PRODUCTION
-# deploy, pin base images by digest + apt to a snapshot.debian.org timestamp so
-# PCRs are reproducible, then register the real PCRs (dev runs --debug-mode,
-# which zeroes PCRs and skips attestation).
-#
-# GITHUB_TOKEN despite di-enclave using nothing private: cargo resolves the whole
-# workspace, so face-engine is fetched whichever --package is selected.
 
 FROM rust:1.97.0-bookworm AS builder
 
