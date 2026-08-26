@@ -22,8 +22,8 @@ models/
 # Python
 **/__pycache__/
 
-# Enclave
+# Enclave — built EIFs
 *.eif
 
 # Local biometric fixtures used by the E2E client
-e2e/**/fixtures/
+deepface/e2e/**/fixtures/

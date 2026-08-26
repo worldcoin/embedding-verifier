@@ -1,16 +1,17 @@
-# Builds the `deepface-host` image and pushes it to the GitHub Container
-# Registry (attested).
+# Builds every workload image; hosts are pushed to GHCR (attested).
 #
-# One host per workload: when `di-host` gets a Dockerfile this needs a matrix over
-# (package, dockerfile, image name) rather than a second copy of this file.
+# Enclave images build but do not publish: they are inputs to scripts/build-eif.sh,
+# and what gets deployed is the EIF. Built here so a broken enclave Dockerfile
+# fails on the PR that breaks it.
 name: Build and Push Docker Image
 
 on:
   pull_request:
     paths:
-      - "deepface/host/**"
-      - "deepface/types/**"
+      - "deepface/**"
+      - "di/**"
       - "shared/**"
+      - "scripts/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -33,8 +34,28 @@ permissions:
 
 jobs:
   docker-build:
-    name: Docker build
+    name: Docker build (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: deepface-host
+            dockerfile: deepface/host/Dockerfile
+            image: embedding-verifier
+            publish: true
+          - name: di-host
+            dockerfile: di/host/Dockerfile
+            image: embedding-verifier-di-host
+            publish: true
+          - name: deepface-enclave
+            dockerfile: deepface/enclave/Dockerfile
+            image: embedding-verifier-deepface-enclave
+            publish: false
+          - name: di-enclave
+            dockerfile: di/enclave/Dockerfile
+            image: embedding-verifier-di-enclave
+            publish: false
     permissions:
       contents: read
       id-token: write
@@ -76,7 +97,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || steps.version.outputs.is_stable == 'true' }}
             type=sha
@@ -86,7 +107,7 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && matrix.publish
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -98,21 +119,23 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: deepface/host/Dockerfile
+          file: ${{ matrix.dockerfile }}
           # Publish on push/tag/dispatch; PRs build only (validation).
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ github.event_name != 'pull_request' && matrix.publish }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
+          # HUGGING_FACE_TOKEN is only mounted by deepface/enclave/Dockerfile.
           secrets: |
             GITHUB_TOKEN=${{ steps.biometric-engines-token.outputs.token }}
+            HUGGING_FACE_TOKEN=${{ secrets.HUGGING_FACE_TOKEN }}
 
       - name: Attest build provenance
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && matrix.publish
         uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
         with:
           push-to-registry: true
-          subject-name: ghcr.io/${{ github.repository }}
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}

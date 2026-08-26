@@ -1,45 +1,52 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build the DeepFace enclave EIF and emit its PCR measurements. Needs Linux
+# Build a workload's enclave EIF and emit its PCR measurements. Needs Linux
 # x86_64 + Docker; Nitro hardware is only required to run the enclave, not
 # build it.
 #
-# Usage: scripts/build-eif.sh [--from-image] [output-dir]
-#        (output-dir defaults to target/eif)
-# Outputs: embedding-verifier-enclave.eif, pcrs.json
+# Usage: scripts/build-eif.sh [--workload <name>] [--from-image] [output-dir]
+#        (workload defaults to deepface, output-dir to target/eif)
+# Outputs: <workload>-enclave.eif, <workload>-pcrs.json
 # Env: NITRO_CLI_VERSION (default v1.4.2), ENCLAVE_IMAGE_TAG,
 #      GIT_HUB_TOKEN (read access to private GitHub dependencies),
 #      HUGGING_FACE_TOKEN (read access to private model repositories)
 #
-# TODO: One enclave is hard-coded here. `di-enclave` needs its own EIF, so the
-# Dockerfile, image tag and artifact name all have to become arguments. Renaming
-# the artifact is deferred to the deployment work, which consumes it.
-
-if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
-  echo "[ERROR] EIF builds require Linux x86_64 (got $(uname -s)/$(uname -m))." >&2
-  exit 1
-fi
+# GIT_HUB_TOKEN applies to every workload: cargo resolves the whole workspace, so
+# face-engine is fetched even by workloads that do not use it. HUGGING_FACE_TOKEN
+# is deepface-only.
 
 NITRO_CLI_VERSION="${NITRO_CLI_VERSION:-v1.4.2}"
-ENCLAVE_IMAGE_TAG="${ENCLAVE_IMAGE_TAG:-embedding-verifier-enclave:local}"
+
+# A new workload is a directory with an enclave/Dockerfile plus an entry here.
+WORKLOADS=("deepface" "di")
 
 usage() {
   printf '%s\n' \
-    "Usage: scripts/build-eif.sh [--from-image] [output-dir]" \
+    "Usage: scripts/build-eif.sh [--workload <name>] [--from-image] [output-dir]" \
     "" \
-    "Build the enclave EIF and emit its PCR measurements." \
+    "Build a workload's enclave EIF and emit its PCR measurements." \
     "" \
     "Options:" \
-    "  --from-image  Convert ENCLAVE_IMAGE_TAG without building it first." \
-    "  -h, --help    Show this help."
+    "  --workload <name>  Which enclave to build: ${WORKLOADS[*]} (default deepface)." \
+    "  --from-image       Convert ENCLAVE_IMAGE_TAG without building it first." \
+    "  -h, --help         Show this help."
 }
 
 build_image=true
+workload="deepface"
 out_dir="target/eif"
 output_dir_provided=false
 while (( $# > 0 )); do
   case "$1" in
+    --workload)
+      if (( $# < 2 )); then
+        echo "[ERROR] --workload needs a value." >&2
+        exit 2
+      fi
+      workload="$2"
+      shift
+      ;;
     --from-image)
       build_image=false
       ;;
@@ -63,29 +70,53 @@ while (( $# > 0 )); do
   shift
 done
 
+if [[ ! " ${WORKLOADS[*]} " == *" $workload "* ]]; then
+  echo "[ERROR] Unknown workload: $workload (expected one of: ${WORKLOADS[*]})" >&2
+  exit 2
+fi
+
+# After arg parsing, so --help and a bad --workload work on any host.
+if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
+  echo "[ERROR] EIF builds require Linux x86_64 (got $(uname -s)/$(uname -m))." >&2
+  exit 1
+fi
+
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
+
+dockerfile="$workload/enclave/Dockerfile"
+if [[ ! -f "$dockerfile" ]]; then
+  echo "[ERROR] No enclave Dockerfile for '$workload' at $dockerfile." >&2
+  exit 1
+fi
+ENCLAVE_IMAGE_TAG="${ENCLAVE_IMAGE_TAG:-embedding-verifier-$workload-enclave:local}"
 
 mkdir -p "$out_dir"
 out_dir="$(cd "$out_dir" && pwd)"
 
 if [[ "$build_image" == "true" ]]; then
-  echo "[1/3] Building enclave container image ($ENCLAVE_IMAGE_TAG)..."
+  echo "[1/3] Building $workload enclave container image ($ENCLAVE_IMAGE_TAG)..."
+
   if [[ -z "${GIT_HUB_TOKEN:-}" ]]; then
     echo "[ERROR] GIT_HUB_TOKEN is required to fetch private GitHub dependencies." >&2
     exit 1
   fi
 
-  if [[ -z "${HUGGING_FACE_TOKEN:-}" ]]; then
-    echo "[ERROR] HUGGING_FACE_TOKEN is required to download private models." >&2
-    exit 1
+  secret_args=(--secret "id=GITHUB_TOKEN,env=GIT_HUB_TOKEN")
+
+  if [[ "$workload" == "deepface" ]]; then
+    if [[ -z "${HUGGING_FACE_TOKEN:-}" ]]; then
+      echo "[ERROR] HUGGING_FACE_TOKEN is required to download private models." >&2
+      exit 1
+    fi
+
+    secret_args+=(--secret "id=HUGGING_FACE_TOKEN,env=HUGGING_FACE_TOKEN")
   fi
 
   docker build \
-    --secret id=GITHUB_TOKEN,env=GIT_HUB_TOKEN \
-    --secret id=HUGGING_FACE_TOKEN,env=HUGGING_FACE_TOKEN \
+    "${secret_args[@]}" \
     -t "$ENCLAVE_IMAGE_TAG" \
-    -f deepface/enclave/Dockerfile \
+    -f "$dockerfile" \
     .
 else
   echo "[1/3] Using existing enclave container image ($ENCLAVE_IMAGE_TAG)..."
@@ -106,17 +137,18 @@ if [ ! -x "$nitro_cli" ]; then
 fi
 
 echo "[3/3] Converting to EIF..."
-eif_path="$out_dir/embedding-verifier-enclave.eif"
-build_json="$out_dir/build-enclave.json"
+eif_path="$out_dir/$workload-enclave.eif"
+build_json="$out_dir/$workload-build-enclave.json"
 NITRO_CLI_BLOBS="$nitro_cli_dir/blobs/x86_64" \
 NITRO_CLI_ARTIFACTS="$out_dir/artifacts" \
   "$nitro_cli" build-enclave \
     --docker-uri "$ENCLAVE_IMAGE_TAG" \
     --output-file "$eif_path" | tee "$build_json"
 
-jq '.Measurements' "$build_json" > "$out_dir/pcrs.json"
+pcrs_path="$out_dir/$workload-pcrs.json"
+jq '.Measurements' "$build_json" > "$pcrs_path"
 
 echo
 echo "EIF:  $eif_path"
-echo "PCRs: $out_dir/pcrs.json"
-jq . "$out_dir/pcrs.json"
+echo "PCRs: $pcrs_path"
+jq . "$pcrs_path"

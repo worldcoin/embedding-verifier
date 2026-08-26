@@ -4,10 +4,9 @@ Rust workspace for the embedding verifier host and secure enclave.
 
 ## Structure
 
-Two workloads run in this workspace — the `DeepFace` verifier and the `DeepIdentifier`
-migration — over the same host/enclave shape. Each owns a top-level directory; what both
-would otherwise duplicate lives in `shared/`. Crate names compose from the path, so
-`deepface/host` is `deepface-host` and `di/enclave` is `di-enclave`.
+Two workloads over the same host/enclave shape — the `DeepFace` verifier and the
+`DeepIdentifier` migration. Each owns a top-level directory; what both would duplicate
+lives in `shared/`. Crate names compose from the path: `deepface/host` is `deepface-host`.
 
 ```text
 embedding-verifier/
@@ -27,10 +26,8 @@ embedding-verifier/
     └── types/
 ```
 
-The split is what keeps one workload out of the other's enclave image: `deepface-types` holds
-the match request, `di-types` will hold the migration job, and neither links the other.
-`di-host` and `di-enclave` currently log and exit non-zero — a skeleton that idled would read
-as healthy to whatever is watching it. See
+Splitting the types is what keeps one workload out of the other's enclave image. `di-host`
+and `di-enclave` log and exit non-zero — a skeleton that idled would read as healthy. See
 [Spec: DeepIdentifier Migration TEE Setup v1](https://app.notion.com/p/worldcoin/Spec-DeepIdentifier-Migration-TEE-Setup-v1-3c08614bdf8c8014b7ddf50f3cac4e4b)
 for what goes in them.
 
@@ -53,6 +50,28 @@ curl http://localhost:8000/health
 # Run the secure enclave placeholder
 RUST_LOG=info cargo run --bin deepface-enclave
 ```
+
+## Building images
+
+Each workload has a host image and an enclave image. `build-docker.yml` builds all four
+on every PR but publishes only the hosts — an enclave image is an input to the EIF, and
+it is the EIF's PCRs that clients attest.
+
+```bash
+# EIF + PCRs. Linux x86_64 + Docker; Nitro hardware only needed to run, not to build.
+scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcrs.json
+scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pcrs.json
+
+# Carrier image that launches an EIF on a Nitro node
+docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif target/eif
+```
+
+Both workloads need `GIT_HUB_TOKEN` — cargo resolves the whole workspace, so
+`face-engine` is fetched even by `di`, which does not use it. `HUGGING_FACE_TOKEN` is
+`deepface`-only.
+
+`di-enclave` exits non-zero on start, so its EIF builds and measures but will not stay
+running, until the boot sequence lands.
 
 ## Enclave assignment
 
@@ -81,7 +100,7 @@ shape `world-id-protocol` uses for an authenticator:
 {
   "host_url": "http://localhost:8000",
   "allowed_pcr_configs": [
-    [{ "index": 0, "value": "<PCR0 hex from scripts/build-eif.sh>" }]
+    [{ "index": 0, "value": "<PCR0 hex from deepface-pcrs.json>" }]
   ],
   "max_attestation_age_millis": 3600000,
   "allow_debug_measurements": false

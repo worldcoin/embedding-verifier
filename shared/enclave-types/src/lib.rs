@@ -1,9 +1,7 @@
-//! The vsock wire contract every host↔enclave pair in this workspace shares.
+//! The vsock wire contract every host↔enclave pair shares: health, errors, key attestation.
 //!
-//! Health, errors and key attestation are the same exchange whichever workload runs inside the
-//! enclave, so they live here. Anything specific to one workload — the `DeepFace` match, the
-//! `DeepIdentifier` migration job — belongs in that workload's own types crate, which keeps its
-//! request shapes out of the other's enclave image.
+//! Anything specific to one workload belongs in that workload's own types crate, which keeps
+//! its request shapes out of the other's enclave image.
 
 #![deny(
     clippy::all,
