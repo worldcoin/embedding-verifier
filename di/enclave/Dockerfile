@@ -6,14 +6,8 @@
 # PCRs are reproducible, then register the real PCRs (dev runs --debug-mode,
 # which zeroes PCRs and skips attestation).
 #
-# GITHUB_TOKEN is needed even though di-enclave depends on nothing private:
-# cargo resolves the whole workspace before building any member, so the private
-# face-engine git dependency is fetched no matter which --package is selected.
-# That is a cost of the single-workspace layout, not of this crate.
-#
-# No HUGGING_FACE_TOKEN though: the model bundle is a deepface build stage, and
-# per the spec DI models are injected at runtime rather than baked into the
-# image, so it should not appear here later either.
+# GITHUB_TOKEN despite di-enclave using nothing private: cargo resolves the whole
+# workspace, so face-engine is fetched whichever --package is selected.
 
 FROM rust:1.97.0-bookworm AS builder
 

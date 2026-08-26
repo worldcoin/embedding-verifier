@@ -8,20 +8,17 @@ set -euo pipefail
 # Usage: scripts/build-eif.sh [--workload <name>] [--from-image] [output-dir]
 #        (workload defaults to deepface, output-dir to target/eif)
 # Outputs: <workload>-enclave.eif, <workload>-pcrs.json
-#          Named per workload so both can be built into one output dir.
 # Env: NITRO_CLI_VERSION (default v1.4.2), ENCLAVE_IMAGE_TAG,
 #      GIT_HUB_TOKEN (read access to private GitHub dependencies),
 #      HUGGING_FACE_TOKEN (read access to private model repositories)
 #
-# GIT_HUB_TOKEN is required for every workload: cargo resolves the whole
-# workspace before building any member, so the private face-engine dependency is
-# fetched even by workloads that do not use it. HUGGING_FACE_TOKEN is
-# deepface-only — its enclave bakes in a model bundle; DI injects at runtime.
+# GIT_HUB_TOKEN applies to every workload: cargo resolves the whole workspace, so
+# face-engine is fetched even by workloads that do not use it. HUGGING_FACE_TOKEN
+# is deepface-only.
 
 NITRO_CLI_VERSION="${NITRO_CLI_VERSION:-v1.4.2}"
 
-# Workloads that ship an enclave. A new one is a directory with an
-# enclave/Dockerfile plus an entry here.
+# A new workload is a directory with an enclave/Dockerfile plus an entry here.
 WORKLOADS=("deepface" "di")
 
 usage() {
@@ -73,15 +70,12 @@ while (( $# > 0 )); do
   shift
 done
 
-# Fail before any work if the workload is not one we know how to build, rather
-# than letting docker report a missing Dockerfile several steps in.
 if [[ ! " ${WORKLOADS[*]} " == *" $workload "* ]]; then
   echo "[ERROR] Unknown workload: $workload (expected one of: ${WORKLOADS[*]})" >&2
   exit 2
 fi
 
-# Only now: argument errors above are answerable on any host, but nothing past
-# this point works without a Linux x86_64 build machine.
+# After arg parsing, so --help and a bad --workload work on any host.
 if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
   echo "[ERROR] EIF builds require Linux x86_64 (got $(uname -s)/$(uname -m))." >&2
   exit 1
@@ -103,11 +97,6 @@ out_dir="$(cd "$out_dir" && pwd)"
 if [[ "$build_image" == "true" ]]; then
   echo "[1/3] Building $workload enclave container image ($ENCLAVE_IMAGE_TAG)..."
 
-  # Every workload needs GIT_HUB_TOKEN, including ones that depend on nothing
-  # private: cargo resolves the whole workspace before building any member, so
-  # the face-engine git dependency is fetched no matter which --package is
-  # selected. HUGGING_FACE_TOKEN is genuinely deepface-only — its enclave bakes
-  # in a model bundle, and DI injects models at runtime instead.
   if [[ -z "${GIT_HUB_TOKEN:-}" ]]; then
     echo "[ERROR] GIT_HUB_TOKEN is required to fetch private GitHub dependencies." >&2
     exit 1

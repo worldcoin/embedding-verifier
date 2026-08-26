@@ -53,14 +53,12 @@ RUST_LOG=info cargo run --bin deepface-enclave
 
 ## Building images
 
-Each workload has a host image and an enclave image. Host images are what gets
-deployed; an enclave image is only an input to the EIF, and it is the EIF's PCRs that
-clients attest — so `build-docker.yml` builds all four on every PR but publishes only
-the hosts.
+Each workload has a host image and an enclave image. `build-docker.yml` builds all four
+on every PR but publishes only the hosts — an enclave image is an input to the EIF, and
+it is the EIF's PCRs that clients attest.
 
 ```bash
-# Enclave EIF + PCR measurements. Linux x86_64 + Docker; Nitro hardware is not needed
-# to build, only to run. Artifacts are named per workload, so both can share one dir.
+# EIF + PCRs. Linux x86_64 + Docker; Nitro hardware only needed to run, not to build.
 scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcrs.json
 scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pcrs.json
 
@@ -68,14 +66,12 @@ scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pc
 docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif target/eif
 ```
 
-Both workloads need `GIT_HUB_TOKEN`, including `di`, which depends on nothing private:
-cargo resolves the whole workspace before building any member, so the `face-engine` git
-dependency is fetched whichever `--package` is selected. `HUGGING_FACE_TOKEN` is
-genuinely `deepface`-only — its enclave bakes in a model bundle, and per the spec DI
-injects models at runtime instead.
+Both workloads need `GIT_HUB_TOKEN` — cargo resolves the whole workspace, so
+`face-engine` is fetched even by `di`, which does not use it. `HUGGING_FACE_TOKEN` is
+`deepface`-only.
 
-`di-enclave` currently exits non-zero on start, so its EIF builds and measures but will
-not stay running. That is deliberate until the boot sequence lands.
+`di-enclave` exits non-zero on start, so its EIF builds and measures but will not stay
+running, until the boot sequence lands.
 
 ## Enclave assignment
 

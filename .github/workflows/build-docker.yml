@@ -1,11 +1,8 @@
-# Builds every workload image and pushes it to the GitHub Container Registry
-# (attested).
+# Builds every workload image; hosts are pushed to GHCR (attested).
 #
-# Hosts publish; enclave images do not. An enclave image is only an input to
-# `scripts/build-eif.sh` — what gets deployed is the EIF built from it, whose
-# PCRs are the identity clients attest. Publishing the container alongside the
-# host images would invite deploying a thing that cannot attest. They are built
-# here anyway so a broken enclave Dockerfile fails on the PR that breaks it.
+# Enclave images build but do not publish: they are inputs to scripts/build-eif.sh,
+# and what gets deployed is the EIF. Built here so a broken enclave Dockerfile
+# fails on the PR that breaks it.
 name: Build and Push Docker Image
 
 on:
@@ -123,17 +120,14 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          # Publish on push/tag/dispatch, and only for images meant to be
-          # deployed; PRs build only (validation).
+          # Publish on push/tag/dispatch; PRs build only (validation).
           push: ${{ github.event_name != 'pull_request' && matrix.publish }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
-          # Both are consumed only by deepface/enclave/Dockerfile's model stage and
-          # the private face-engine fetch; the di Dockerfiles mount neither, and an
-          # unused build secret is not an error.
+          # HUGGING_FACE_TOKEN is only mounted by deepface/enclave/Dockerfile.
           secrets: |
             GITHUB_TOKEN=${{ steps.biometric-engines-token.outputs.token }}
             HUGGING_FACE_TOKEN=${{ secrets.HUGGING_FACE_TOKEN }}

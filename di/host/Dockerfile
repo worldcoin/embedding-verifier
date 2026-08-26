@@ -3,10 +3,8 @@
 # Builds the `di-host` service as a statically-linked musl binary and packages
 # it in a `scratch` image. Built with the repository root as the context.
 #
-# GITHUB_TOKEN is needed even though di-host depends on nothing private: cargo
-# resolves the whole workspace before building any member, so the private
-# face-engine git dependency is fetched no matter which --package is selected.
-# That is a cost of the single-workspace layout, not of this crate.
+# GITHUB_TOKEN despite di-host using nothing private: cargo resolves the whole
+# workspace, so face-engine is fetched whichever --package is selected.
 
 FROM ghcr.io/rust-cross/rust-musl-cross:x86_64-musl AS chef
 USER root
