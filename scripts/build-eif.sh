@@ -136,8 +136,8 @@ fi
 echo "[2/3] Building $workload EIF..."
 if ! eif_store=$(nix build ".#${workload}-eif" --no-link --print-out-paths); then
   echo >&2
-  echo "[ERROR] nix build failed. On a 'platform mismatch' for x86_64-linux, this host" >&2
-  echo "        needs a remote builder for that system." >&2
+  echo "[ERROR] nix build failed; the error above says why. A 'platform mismatch' for" >&2
+  echo "        x86_64-linux means this host needs a remote builder for that system." >&2
   exit 1
 fi
 

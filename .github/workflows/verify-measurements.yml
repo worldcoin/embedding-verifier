@@ -63,8 +63,12 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
+      # GH_APP_TOKEN again: the helper written above expands it when git runs, which is
+      # here, not in the step that wrote it. Passed per-step rather than written into
+      # ~/.gitconfig so the token never lands on the runner's disk.
       - name: Build EIF and measure
         env:
+          GH_APP_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
           HUGGING_FACE_TOKEN: ${{ secrets.HUGGING_FACE_TOKEN }}
         run: scripts/build-eif.sh --workload ${{ matrix.workload }} target/eif
 
