@@ -1,0 +1,116 @@
+# Verifies measurements.json against what the source actually measures to.
+#
+# The EIF is built by flake.nix, so the PCRs depend on the commit and nothing else —
+# this job rebuilds them and fails when the committed values no longer match. It
+# surfaces the fresh values but never commits them: rotating a measurement, and
+# re-registering it with clients, stays a human act.
+name: verify-measurements
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - "deepface/**"
+      - "di/**"
+      - "shared/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "flake.nix"
+      - "flake.lock"
+      - "measurements.json"
+      - "scripts/build-eif.sh"
+      - ".github/workflows/verify-measurements.yml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  verify-pcrs:
+    name: verify PCRs match source (${{ matrix.workload }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        workload: [deepface, di]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Mint biometric-engines access token
+        id: biometric-engines-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
+          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
+          owner: worldcoin
+          repositories: biometric-engines
+
+      # crane resolves the private face-engine dependency with `builtins.fetchGit`, which runs
+      # on the host and uses the host's git credentials. A credential helper rather than
+      # `url.insteadOf`, because the rewrite depends on which git backend Nix was built with.
+      - name: Authorize git for biometric-engines
+        env:
+          GH_APP_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
+        run: |
+          git config --global credential."https://github.com".helper \
+            '!f() { echo username=x-access-token; echo "password=${GH_APP_TOKEN}"; }; f'
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Build EIF and measure
+        env:
+          HUGGING_FACE_TOKEN: ${{ secrets.HUGGING_FACE_TOKEN }}
+        run: scripts/build-eif.sh --workload ${{ matrix.workload }} target/eif
+
+      - name: Verify PCRs
+        env:
+          WORKLOAD: ${{ matrix.workload }}
+        run: |
+          set -euo pipefail
+          committed=$(jq -S --arg w "$WORKLOAD" '.[$w]' measurements.json)
+          measured=$(jq -S --arg w "$WORKLOAD" '.[$w]' target/eif/measurements.json)
+
+          if [[ "$(jq -r 'to_entries | map(select(.value == null)) | length' <<<"$committed")" != "0" ]]; then
+            {
+              echo "## \`$WORKLOAD\` has no registered measurements"
+              echo "Paste these into \`measurements.json\` under \`.$WORKLOAD\`, and register them"
+              echo "with every client before the enclave is deployed:"
+              echo '```json'
+              echo "$measured"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "ERROR: .$WORKLOAD in measurements.json is unset." >&2
+            exit 1
+          fi
+
+          if [[ "$committed" == "$measured" ]]; then
+            echo "PCRs match measurements.json for $WORKLOAD." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "## Committed \`$WORKLOAD\` measurements are stale"
+            echo '```diff'
+            diff -u <(echo "$committed") <(echo "$measured") || true
+            echo '```'
+            echo "Fresh values — paste into \`measurements.json\`:"
+            echo '```json'
+            echo "$measured"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "ERROR: .$WORKLOAD in measurements.json is out of date." >&2
+          exit 1
+
+      - name: Upload fresh measurements
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fresh-measurements-${{ matrix.workload }}
+          path: target/eif/measurements.json
+          if-no-files-found: ignore

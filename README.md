@@ -53,22 +53,27 @@ RUST_LOG=info cargo run --bin deepface-enclave
 
 ## Building images
 
-Each workload has a host image and an enclave image. `build-docker.yml` builds all four
-on every PR but publishes only the hosts — an enclave image is an input to the EIF, and
-it is the EIF's PCRs that clients attest.
+Hosts are Docker images, published by `build-docker.yml`. Enclaves are not: their EIFs are
+built by `flake.nix`, so the PCRs a client attests depend on the commit and nothing else —
+no Docker daemon and no `nitro-cli` on the measured path.
 
 ```bash
-# EIF + PCRs. Linux x86_64 + Docker; Nitro hardware only needed to run, not to build.
-scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcrs.json
-scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pcrs.json
+# EIF + PCRs. Needs x86_64-linux, natively or through a remote builder.
+scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, measurements.json
+scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, measurements.json
 
 # Carrier image that launches an EIF on a Nitro node
 docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif target/eif
 ```
 
-Both workloads need `GIT_HUB_TOKEN` — cargo resolves the whole workspace, so
-`face-engine` is fetched even by `di`, which does not use it. `HUGGING_FACE_TOKEN` is
-`deepface`-only.
+`face-engine` is private, and cargo resolves the whole workspace, so every build needs git
+credentials for `worldcoin/biometric-engines` — an ssh agent or a credential helper, not an
+environment variable. `HUGGING_FACE_TOKEN` is `deepface`-only and is used by the script
+itself, never inside a build.
+
+`measurements.json` records the PCRs each workload measures to. `verify-measurements.yml`
+rebuilds them on every PR and fails when they drift; updating the file, and re-registering
+the values with clients, stays a human act.
 
 `di-enclave` exits non-zero on start, so its EIF builds and measures but will not stay
 running, until the boot sequence lands.

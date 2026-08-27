@@ -1,8 +1,7 @@
-# Builds every workload image; hosts are pushed to GHCR (attested).
+# Builds and publishes the host images to GHCR (attested).
 #
-# Enclave images build but do not publish: they are inputs to scripts/build-eif.sh,
-# and what gets deployed is the EIF. Built here so a broken enclave Dockerfile
-# fails on the PR that breaks it.
+# Enclaves are not here: they are built by flake.nix, not Docker, so that their PCRs
+# depend on the commit alone. See scripts/build-eif.sh and verify-measurements.yml.
 name: Build and Push Docker Image
 
 on:
@@ -43,19 +42,9 @@ jobs:
           - name: deepface-host
             dockerfile: deepface/host/Dockerfile
             image: embedding-verifier
-            publish: true
           - name: di-host
             dockerfile: di/host/Dockerfile
             image: embedding-verifier-di-host
-            publish: true
-          - name: deepface-enclave
-            dockerfile: deepface/enclave/Dockerfile
-            image: embedding-verifier-deepface-enclave
-            publish: false
-          - name: di-enclave
-            dockerfile: di/enclave/Dockerfile
-            image: embedding-verifier-di-enclave
-            publish: false
     permissions:
       contents: read
       id-token: write
@@ -107,7 +96,7 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request' && matrix.publish
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -121,19 +110,17 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           # Publish on push/tag/dispatch; PRs build only (validation).
-          push: ${{ github.event_name != 'pull_request' && matrix.publish }}
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
-          # HUGGING_FACE_TOKEN is only mounted by deepface/enclave/Dockerfile.
           secrets: |
             GITHUB_TOKEN=${{ steps.biometric-engines-token.outputs.token }}
-            HUGGING_FACE_TOKEN=${{ secrets.HUGGING_FACE_TOKEN }}
 
       - name: Attest build provenance
-        if: github.event_name != 'pull_request' && matrix.publish
+        if: github.event_name != 'pull_request'
         uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
         with:
           push-to-registry: true
