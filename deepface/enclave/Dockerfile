@@ -30,7 +30,7 @@ RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
 FROM python:3.12.11-slim-bookworm AS model-downloader
 
 WORKDIR /build
-COPY scripts/download-face-models.py scripts/download-face-models.py
+COPY scripts/download-face-models.py scripts/download_face_models.py scripts/
 
 RUN python3 -m pip install --no-cache-dir huggingface-hub==0.34.4
 
