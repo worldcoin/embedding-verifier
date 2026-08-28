@@ -28,7 +28,7 @@ const EXPIRES_AT: &str = "expires_at";
 /// A row must survive every statement its key signed: once it expires the lookup answers `404`,
 /// and a `404` is a hard verification failure that MUST NOT be retried into a pass. This is a
 /// floor set by the match statement's lifetime, not a storage-cost dial.
-const RETENTION: Duration = Duration::from_days(90);
+const RETENTION: Duration = Duration::from_hours(24 * 90);
 
 /// Bound on one attempt, so a hung connection cannot pin a request or the boot task.
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
