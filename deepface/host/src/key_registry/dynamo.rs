@@ -1,4 +1,4 @@
-//! DynamoDB-backed [`KeyRegistry`].
+//! `DynamoDB`-backed [`KeyRegistry`].
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -38,7 +38,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 /// Attempts per call. The SDK spaces them with exponential backoff and jitter.
 const MAX_ATTEMPTS: u32 = 3;
 
-/// The `Signing Key` registry, in DynamoDB.
+/// The `Signing Key` registry, in `DynamoDB`.
 #[derive(Debug, Clone)]
 pub struct DynamoKeyRegistry {
     client: Client,
@@ -260,7 +260,7 @@ mod tests {
             item.remove(attribute);
 
             let error = DynamoKeyRegistry::read_entry(public_key(), &item)
-                .expect_err("{attribute} is required");
+                .expect_err("a row missing an attribute is not readable");
 
             assert!(matches!(error, RegistryError::Malformed { .. }));
         }

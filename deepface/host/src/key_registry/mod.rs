@@ -6,7 +6,7 @@
 //! answer is terminal for the caller (§6).
 //!
 //! [`KeyRegistry`] is the whole database boundary: one row per key, fetched and written whole.
-//! DynamoDB is the deployed backing ([`DynamoKeyRegistry`]); tests and local runs use
+//! `DynamoDB` is the deployed backing ([`DynamoKeyRegistry`]); tests and local runs use
 //! [`InMemoryKeyRegistry`].
 
 mod dynamo;

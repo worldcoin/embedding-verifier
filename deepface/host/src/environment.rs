@@ -56,7 +56,7 @@ impl Environment {
         Self::required_u32("ENCLAVE_PORT")
     }
 
-    /// Returns the DynamoDB table holding the `Signing Key` registry.
+    /// Returns the `DynamoDB` table holding the `Signing Key` registry.
     ///
     /// # Panics
     ///
@@ -77,7 +77,8 @@ impl Environment {
     #[must_use]
     pub fn enclave_pcr0(&self) -> Vec<u8> {
         let value = Self::required("ENCLAVE_PCR0");
-        let digits = value.trim().strip_prefix("0x").unwrap_or(value.trim());
+        let value = value.trim();
+        let digits = value.strip_prefix("0x").unwrap_or(value);
 
         hex::decode(digits)
             .unwrap_or_else(|_| panic!("ENCLAVE_PCR0 environment variable is not hex"))

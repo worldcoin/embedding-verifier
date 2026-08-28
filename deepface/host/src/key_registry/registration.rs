@@ -27,7 +27,7 @@ const MAX_ATTESTATION_AGE: Duration = Duration::from_hours(1);
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 /// Cap on the wait between attempts. Registration is a boot step, not a request path, so a
 /// minute between attempts costs nothing but keeps a wedged store from being hammered.
-const MAX_BACKOFF: Duration = Duration::from_secs(60);
+const MAX_BACKOFF: Duration = Duration::from_mins(1);
 
 /// Why this boot's key is not in the registry.
 #[derive(Debug, thiserror::Error)]
@@ -157,8 +157,8 @@ async fn register_once(
         .await
         .map_err(RegistrationError::Enclave)?;
 
-    let verified = verifier.verify(&document, SystemTime::now())?;
-    let entry = entry_from(document, &verified)?;
+    let attestation = verifier.verify(&document, SystemTime::now())?;
+    let entry = entry_from(document, &attestation)?;
     let public_key = entry.public_key;
 
     registry.set(&entry).await?;
@@ -385,7 +385,7 @@ mod tests {
             sender,
         ));
 
-        tokio::time::sleep(Duration::from_secs(300)).await;
+        tokio::time::sleep(Duration::from_mins(5)).await;
 
         assert!(!task.is_finished(), "registration should still be trying");
         assert_eq!(
