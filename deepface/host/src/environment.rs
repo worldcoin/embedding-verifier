@@ -56,9 +56,58 @@ impl Environment {
         Self::required_u32("ENCLAVE_PORT")
     }
 
+    /// Returns the DynamoDB table holding the `Signing Key` registry.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `KEY_REGISTRY_TABLE` is unset.
+    #[must_use]
+    pub fn key_registry_table(&self) -> String {
+        Self::required("KEY_REGISTRY_TABLE")
+    }
+
+    /// Returns the PCR0 this host's enclave must attest.
+    ///
+    /// The measurement of the image the host was deployed with, so an enclave running anything
+    /// else never reaches the registry.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `ENCLAVE_PCR0` is unset or is not hex.
+    #[must_use]
+    pub fn enclave_pcr0(&self) -> Vec<u8> {
+        let value = Self::required("ENCLAVE_PCR0");
+        let digits = value.trim().strip_prefix("0x").unwrap_or(value.trim());
+
+        hex::decode(digits)
+            .unwrap_or_else(|_| panic!("ENCLAVE_PCR0 environment variable is not hex"))
+    }
+
+    /// Whether to accept a `--debug-mode` enclave, whose measurements are all zero.
+    ///
+    /// # Panics
+    ///
+    /// Panics outside development. A debug-mode enclave's memory is readable from the parent
+    /// instance, so its attestation says nothing about what ran.
+    #[must_use]
+    pub fn allow_debug_measurements(&self) -> bool {
+        let allowed = env::var("ALLOW_DEBUG_MEASUREMENTS")
+            .is_ok_and(|value| value.trim().eq_ignore_ascii_case("true"));
+
+        assert!(
+            !allowed || *self == Self::Development,
+            "ALLOW_DEBUG_MEASUREMENTS is development-only"
+        );
+
+        allowed
+    }
+
+    fn required(name: &str) -> String {
+        env::var(name).unwrap_or_else(|_| panic!("{name} environment variable is not set"))
+    }
+
     fn required_u32(name: &str) -> u32 {
-        env::var(name)
-            .unwrap_or_else(|_| panic!("{name} environment variable is not set"))
+        Self::required(name)
             .parse()
             .unwrap_or_else(|_| panic!("{name} environment variable is not a valid u32"))
     }
