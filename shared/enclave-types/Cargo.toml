@@ -1,13 +1,13 @@
 [package]
 name = "enclave-types"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-publish.workspace = true
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.0"
+license = "MIT"
+publish = false
 
-# In both enclave graphs, so versions are pinned here rather than inherited from the root
-# workspace table — an edit there must not be able to move an EIF's PCRs.
+# In both enclave graphs. Nothing here is inherited from the root workspace — not the package
+# metadata above, not the versions below — so an edit there cannot reach an EIF.
 [dependencies]
 pontifex = { version = "1.1.2", default-features = false }
 serde = { version = "1.0", features = ["derive"] }

@@ -1,11 +1,13 @@
+# In both enclave graphs. Nothing here is inherited from the root workspace — not the package
+# metadata below, not the dependency versions — so an edit there cannot reach an EIF.
 [package]
 name = "attested-channel"
 description = "Verifying an enclave's attestation and opening an HPKE channel to the enclave it attests"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-publish.workspace = true
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.0"
+license = "MIT"
+publish = false
 
 [features]
 attestation = [

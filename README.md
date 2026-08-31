@@ -40,10 +40,14 @@ pin. Now an EIF's inputs are its own `Cargo.toml`, the `Cargo.lock` beside it, a
 crates they name.
 
 `attested-channel`, `enclave-types`, `deepface-protocol`, `deepface-types` and `di-types` are
-in both an enclave graph and the host-side one. They are members of the root workspace but pin
-their own dependency versions instead of inheriting from `[workspace.dependencies]`, so the
-root table cannot reach an enclave graph either. Add a dependency to one of them the same way
-you would in a standalone crate: write the version in its own manifest.
+in both an enclave graph and the host-side one. They are members of the root workspace but
+inherit nothing from it — not `[workspace.dependencies]`, not `[workspace.package]` — so the
+root manifest cannot reach an enclave graph either. Treat them as standalone crates: write the
+version, and the `edition`, in their own manifest.
+
+Package metadata matters as much as the dependency versions here. An inherited `edition` would
+change how an enclave compiles when the root workspace moved, and bumping the root
+`[workspace.package].version` would leave both enclave lockfiles stale against `--locked`.
 
 `face-engine` now lives only in `deepface/enclave`, so it is the one build that needs a token
 for `worldcoin/biometric-engines`. CI runs the other lanes without one, which is what keeps

@@ -3,9 +3,11 @@
 #
 # Each enclave is its own workspace with its own lockfile (deepface/enclave, di/enclave), so
 # nothing resolved here can move an EIF's PCRs. The crates in both graphs — attested-channel,
-# enclave-types, deepface-protocol, deepface-types, di-types — are members here but pin their
-# own dependency versions rather than inheriting from the table below, which is what keeps the
-# isolation total: this table cannot reach the enclave graphs at all.
+# enclave-types, deepface-protocol, deepface-types, di-types — are members here, but inherit
+# nothing: not the dependency versions in [workspace.dependencies], and not the package
+# metadata in [workspace.package]. Both tables below therefore reach only the four host-side
+# crates. Inherited `edition` would change how an enclave compiles, and an inherited `version`
+# bump would strand both enclave lockfiles against `--locked`.
 [workspace]
 members = [
     "deepface/client",
@@ -24,6 +26,8 @@ exclude = [
 ]
 resolver = "3"
 
+# Inherited only by deepface-client, deepface-e2e, deepface-host and di-host. The crates an
+# enclave reaches spell their metadata out themselves.
 [workspace.package]
 edition = "2024"
 rust-version = "1.97.0"
