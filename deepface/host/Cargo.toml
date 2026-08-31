@@ -15,6 +15,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 attested-channel = { workspace = true, features = ["attestation"] }
 axum.workspace = true
+backon.workspace = true
 base64.workspace = true
 deepface-types.workspace = true
 enclave-types.workspace = true
@@ -22,7 +23,6 @@ futures-util = "0.3"
 hex = { workspace = true, features = ["serde"] }
 moka.workspace = true
 pontifex = { workspace = true, features = ["client"] }
-rand.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 thiserror.workspace = true

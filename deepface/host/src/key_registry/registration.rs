@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 use attested_channel::nitro::{
     EnclaveAttestationError, EnclaveAttestationVerifier, PcrMeasurement, VerifiedAttestation,
 };
-use rand::Rng as _;
+use backon::{ExponentialBuilder, Retryable as _};
 use tokio::sync::watch;
 
 use super::{
@@ -80,30 +80,52 @@ pub async fn register_signing_key(
     verifier: EnclaveAttestationVerifier,
     registered: watch::Sender<Option<SigningPublicKey>>,
 ) {
-    let mut attempt: u32 = 0;
-    let mut backoff = INITIAL_BACKOFF;
+    let mut failures: u32 = 0;
 
-    loop {
-        attempt = attempt.saturating_add(1);
-
-        match register_once(enclave_client.as_ref(), registry.as_ref(), &verifier).await {
-            Ok(public_key) => {
-                tracing::info!(%public_key, attempt, "registered this boot's signing key");
-                // The receiver lives in the app state, which outlives this task.
-                let _ = registered.send(Some(public_key));
-                return;
-            }
-            Err(error) => tracing::warn!(
+    let result = (|| register_once(enclave_client.as_ref(), registry.as_ref(), &verifier))
+        .retry(backoff())
+        .notify(|error, delay| {
+            failures = failures.saturating_add(1);
+            tracing::warn!(
                 %error,
-                attempt,
+                attempt = failures,
+                retry_in = ?delay,
                 dependency = "key-registry",
                 "could not register this boot's signing key; readiness stays red"
-            ),
-        }
+            );
+        })
+        .await;
 
-        tokio::time::sleep(jittered(backoff)).await;
-        backoff = backoff.saturating_mul(2).min(MAX_BACKOFF);
+    match result {
+        Ok(public_key) => {
+            tracing::info!(
+                %public_key,
+                attempt = failures.saturating_add(1),
+                "registered this boot's signing key"
+            );
+            // The receiver lives in the app state, which outlives this task.
+            let _ = registered.send(Some(public_key));
+        }
+        // The schedule has no attempt cap, so this is unreachable in practice. Logged rather
+        // than asserted, since a silent exit here would leave readiness red with no reason why.
+        Err(error) => tracing::error!(
+            %error,
+            dependency = "key-registry",
+            "stopped trying to register this boot's signing key; readiness stays red"
+        ),
     }
+}
+
+/// Retry schedule for registration: exponential with jitter, and no cap on attempts.
+///
+/// Nothing else reports this host ready, so giving up would take it out of the load balancer for
+/// good. Backing off to a minute and staying there is what a wedged registry should cost.
+const fn backoff() -> ExponentialBuilder {
+    ExponentialBuilder::new()
+        .with_min_delay(INITIAL_BACKOFF)
+        .with_max_delay(MAX_BACKOFF)
+        .with_jitter()
+        .without_max_times()
 }
 
 /// Records that the enclave holding `public_key` shut down normally.
@@ -190,13 +212,6 @@ fn entry_from(
     })
 }
 
-/// Full jitter, so a fleet restarting together does not retry in lockstep.
-fn jittered(backoff: Duration) -> Duration {
-    let millis = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX);
-
-    Duration::from_millis(rand::thread_rng().gen_range(0..=millis))
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -206,10 +221,7 @@ mod tests {
     use attested_channel::nitro::VerifiedAttestation;
     use tokio::sync::watch;
 
-    use super::{
-        INITIAL_BACKOFF, MAX_BACKOFF, RegistrationError, entry_from, jittered,
-        register_signing_key, retire_signing_key,
-    };
+    use super::{RegistrationError, entry_from, register_signing_key, retire_signing_key};
     use crate::key_registry::{
         InMemoryKeyRegistry, KeyRegistry, KeyStatus, RegistryEntry, SigningPublicKey,
     };
@@ -252,15 +264,6 @@ mod tests {
             .expect_err("a 31-byte key is not a BabyJubJub signing key");
 
         assert!(matches!(error, RegistrationError::PublicKey(_)));
-    }
-
-    #[test]
-    fn jitter_never_exceeds_the_backoff_it_is_given() {
-        for backoff in [INITIAL_BACKOFF, MAX_BACKOFF] {
-            for _ in 0..100 {
-                assert!(jittered(backoff) <= backoff);
-            }
-        }
     }
 
     fn entry(public_key: SigningPublicKey, status: KeyStatus) -> RegistryEntry {

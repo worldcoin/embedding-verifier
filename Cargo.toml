@@ -38,6 +38,7 @@ di-types = { path = "di/types" }
 # Attestation crates are pinned to bedrock's versions so the two verifiers cannot drift.
 aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
 axum = "0.8"
+backon = { version = "1", default-features = false, features = ["std", "tokio-sleep"] }
 base64 = "0.22"
 ciborium = "0.2"
 coset = "0.4.2"
