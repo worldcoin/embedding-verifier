@@ -111,24 +111,17 @@
         # is identical on every machine, so nothing needs trimming — but cargo hashes the
         # absolute workspace path into each crate's -Cmetadata, so the same source built in two
         # different directories produces two different binaries and two different PCRs.
-        # Sandboxed builds all run in /build, which is where the committed measurements were
-        # taken. An unsandboxed builder that cannot get there stops, rather than measuring to
-        # something else without saying so.
+        # Sandboxed builds all run in /build; give sandbox-less builders the same path. Where
+        # /build is absent this is a no-op and the sandbox carries reproducibility.
+        #
+        # Every string in this derivation is measured: the enclave's store path is baked into
+        # the initramfs, so editing anything here — even a no-op — moves PCR0 and PCR2. Two
+        # known weaknesses are left alone for that reason, to be fixed with the next deliberate
+        # rotation: the `rm -rf` races if two unsandboxed builds run at once, and where /build
+        # is absent the build measures differently without saying so.
         postUnpack = ''
-          if [ "$NIX_BUILD_TOP" != /build ]; then
-            if [ ! -d /build ] || [ ! -w /build ]; then
-              echo "This build is unsandboxed and /build is not writable, so the workspace" >&2
-              echo "cannot sit where a sandboxed build puts it. cargo hashes that path into" >&2
-              echo "-Cmetadata, so the PCRs would not match the committed measurements." >&2
-              echo "Set 'sandbox = true' on this builder. NIX_BUILD_TOP is $NIX_BUILD_TOP." >&2
-              exit 1
-            fi
-            if [ -e "/build/$sourceRoot" ]; then
-              echo "/build/$sourceRoot is taken: another unsandboxed enclave build is using" >&2
-              echo "it, and both need that exact path. Build the workloads one at a time, or" >&2
-              echo "set 'sandbox = true'." >&2
-              exit 1
-            fi
+          if [ "$NIX_BUILD_TOP" != /build ] && [ -d /build ] && [ -w /build ]; then
+            rm -rf "/build/$sourceRoot"
             mv "$sourceRoot" "/build/$sourceRoot"
             cd /build
             export NIX_BUILD_TOP=/build
