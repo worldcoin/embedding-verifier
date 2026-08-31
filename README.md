@@ -76,8 +76,8 @@ rebuilds them on every PR that can move one and fails when they drift, so a PR t
 enclave updates the file in the same commit. Updating it, and re-registering the values with
 clients, stays a human act.
 
-The enclaves build with fat LTO (see `flake.nix`): rustc 1.97 otherwise emits
-address-dependent code for one dependency's SIMD kernels, and the PCRs would vary by machine.
+The enclaves build with LLVM's LICM scalar promotion disabled (see `flake.nix`): rustc
+otherwise emits address-dependent code, and the PCRs would vary by machine.
 
 `di-enclave` exits non-zero on start, so its EIF builds and measures but will not stay
 running, until the boot sequence lands.
