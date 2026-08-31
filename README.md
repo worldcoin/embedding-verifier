@@ -70,12 +70,30 @@ done
 ```bash
 # Run the host on http://localhost:8000
 # ENCLAVE_CID and ENCLAVE_PORT are required; the process panics without them.
+# The default telemetry preset writes human-readable logs locally.
 RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin deepface-host
 curl http://localhost:8000/health
 
 # Run the secure enclave placeholder
 RUST_LOG=info cargo run --manifest-path deepface/enclave/Cargo.toml --bin deepface-enclave
 ```
+
+For production, the host can export HTTP spans and trace-correlated JSON logs to a local Datadog
+Agent, plus HTTP request metrics over StatsD:
+
+```bash
+TELEMETRY_PRESET=datadog \
+TELEMETRY_SERVICE_NAME=deepface-host \
+TELEMETRY_METRICS_BACKEND=statsd \
+TELEMETRY_STATSD_PREFIX=embedding_verifier.deepface_host \
+ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin deepface-host
+```
+
+`TELEMETRY_DATADOG_ENDPOINT` changes the trace-agent endpoint (default
+`http://localhost:8126`); `TELEMETRY_STATSD_HOST` and `TELEMETRY_STATSD_PORT` change the metrics
+agent endpoint (default `localhost:8125`). See
+[`telemetry-batteries`](https://github.com/worldcoin/telemetry-batteries) for the full set of
+logging and metrics options.
 
 ## Building images
 
