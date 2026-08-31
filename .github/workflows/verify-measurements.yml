@@ -40,13 +40,9 @@ on:
 jobs:
   verify-pcrs:
     name: verify PCRs match source (${{ matrix.workload }})
-    # A fixed runner class, not ubuntu-latest. deepface is not reproducible across CPUs: one
-    # megabyte of fast_image_resize's SSE4 kernels compiles differently on different hardware,
-    # and GitHub's hosted fleet is heterogeneous, so back-to-back runs measured different PCRs.
-    # The registered measurements are the ones this class produces. Moving this line moves the
-    # PCRs. See README for what that costs a third-party verifier.
-    runs-on:
-      group: arc-public-large-amd64-runner
+    # Deliberately ubuntu-latest: the fleet is heterogeneous, so every run doubles as a check
+    # that the measurements reproduce on hardware nobody picked.
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -74,16 +70,6 @@ jobs:
         run: |
           git config --global credential."https://github.com".helper \
             '!f() { echo username=x-access-token; echo "password=${GH_APP_TOKEN}"; }; f'
-
-      # The ARC pods hand out a world-writable root, and Nix refuses to use a /nix it does not
-      # trust. Create it with sane modes before the installer looks.
-      - name: Prepare /nix
-        run: |
-          set -euo pipefail
-          if sudo -n true 2>/dev/null; then SUDO=sudo; else SUDO=; fi
-          $SUDO mkdir -p /nix
-          $SUDO chmod 0755 /nix
-          ls -ld /nix
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22

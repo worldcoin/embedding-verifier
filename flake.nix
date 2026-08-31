@@ -114,6 +114,14 @@
         CARGO_BUILD_JOBS = "4";
         CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "1";
 
+        # rustc 1.97 emits address-dependent code for fast_image_resize's SIMD kernels: the same
+        # crate builds to different bytes under different address-space layouts, so PCRs differed
+        # per machine (and per run with ASLR). Fat LTO takes the codegen path that does not have
+        # the bug — verified identical across ASLR on/off and varied stack rlimits. Do not drop
+        # this without re-running that experiment; a plain `cargo build` cannot see the problem
+        # because Nix builds disable ASLR.
+        CARGO_PROFILE_RELEASE_LTO = "fat";
+
         # Panic locations embed absolute source paths. Under Nix the source is a store path that
         # is identical on every machine, so nothing needs trimming — but cargo hashes the
         # absolute workspace path into each crate's -Cmetadata, so the same source built in two
