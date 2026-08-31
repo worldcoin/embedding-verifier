@@ -72,8 +72,9 @@ environment variable. `HUGGING_FACE_TOKEN` is `deepface`-only and is used by the
 itself, never inside a build.
 
 `measurements.json` records the PCRs each workload measures to. `verify-measurements.yml`
-rebuilds them on every PR and fails when they drift; updating the file, and re-registering
-the values with clients, stays a human act.
+rebuilds them and fails when they drift, but runs only on manual dispatch while the enclaves
+are still moving — turn its triggers on before a client pins a measurement. Updating the
+file, and re-registering the values with clients, stays a human act.
 
 `di-enclave` exits non-zero on start, so its EIF builds and measures but will not stay
 running, until the boot sequence lands.
@@ -105,7 +106,7 @@ shape `world-id-protocol` uses for an authenticator:
 {
   "host_url": "http://localhost:8000",
   "allowed_pcr_configs": [
-    [{ "index": 0, "value": "<PCR0 hex from deepface-pcrs.json>" }]
+    [{ "index": 0, "value": "<PCR0 hex from measurements.json>" }]
   ],
   "max_attestation_age_millis": 3600000,
   "allow_debug_measurements": false

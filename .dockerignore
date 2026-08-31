@@ -5,7 +5,7 @@ build/
 .git/
 .github/
 
-# Private model artifacts are downloaded inside the model-downloader stage.
+# Private model artifacts are fetched into the Nix store by scripts/build-eif.sh.
 models/
 
 # Local editor / OS cruft.
