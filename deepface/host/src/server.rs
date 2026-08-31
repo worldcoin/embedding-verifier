@@ -3,8 +3,8 @@
 use std::net::SocketAddr;
 
 use anyhow::Context;
+use telemetry_batteries::tracing::middleware::TraceLayer;
 use tokio::net::TcpListener;
-use tower_http::trace::TraceLayer;
 
 use crate::{AppState, routes};
 
@@ -29,7 +29,7 @@ pub async fn start(state: AppState) -> anyhow::Result<()> {
         listener,
         routes::handler()
             .with_state(state)
-            .layer(TraceLayer::new_for_http())
+            .layer(TraceLayer::new())
             .into_make_service(),
     )
     .with_graceful_shutdown(shutdown_signal())
