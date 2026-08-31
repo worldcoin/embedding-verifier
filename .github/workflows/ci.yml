@@ -163,6 +163,8 @@ jobs:
         continue-on-error: ${{ matrix.checks == 'advisories' }}
         with:
           command: check ${{ matrix.checks }}
+          # The one deny.toml at the repository root covers all three workspaces; cargo-deny
+          # reads it from the working directory, which is where the action runs.
           manifest-path: ${{ matrix.workspace }}/Cargo.toml
           rust-version: 1.97.0
           # Only the deepface enclave lane mints a token; the others resolve nothing private.

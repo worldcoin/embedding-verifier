@@ -1,6 +1,14 @@
-# One config for all three workspaces (root, deepface/enclave, di/enclave), symlinked into the
-# two enclave directories. An entry that only one workspace needs — `allow-git` below, the ISC
-# allowance — logs an "unmatched" warning in the others. Warnings, not failures.
+# One policy for all three workspaces: the root one, deepface/enclave and di/enclave.
+# cargo-deny reads `<cwd>/deny.toml`, so run it from the repository root and select the
+# workspace with --manifest-path:
+#
+#   cargo deny --manifest-path deepface/enclave/Cargo.toml --all-features check
+#
+# Each workspace sees a subset of the dependencies, so `unused-allowed-license` and
+# `unused-allowed-source` are set to "allow" below — otherwise every lane warns about the
+# allowances the other lanes need. The cost is that a genuinely stale allowance no longer
+# gets flagged; an allowance that matches nothing permits nothing, so it is a hygiene
+# question rather than a policy hole.
 [graph]
 all-features = true
 targets = ["x86_64-unknown-linux-gnu"]
@@ -22,6 +30,8 @@ deny = [
 [licenses]
 version = 2
 confidence-threshold = 1.0
+# See the note at the top: three workspaces share this allow list, each using part of it.
+unused-allowed-license = "allow"
 # biometric-engines is a private first-party repository whose crates are not
 # published with SPDX metadata. Keep enforcing licenses for every other source.
 private = { ignore = true, ignore-sources = ["https://github.com/worldcoin/biometric-engines"] }
@@ -50,4 +60,7 @@ license-files = [{ path = "LICENSE", hash = 0x001c7e6c }]
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# Only deepface/enclave reaches biometric-engines; the other two workspaces resolve no git
+# source at all, so this goes unmatched there. See the note at the top.
+unused-allowed-source = "allow"
 allow-git = ["https://github.com/worldcoin/biometric-engines"]

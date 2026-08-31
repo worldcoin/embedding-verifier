@@ -54,10 +54,12 @@ that true.
 Every command takes a `--manifest-path`, because there are three workspaces:
 
 ```bash
+# From the repository root — cargo-deny reads deny.toml from the working directory.
 for ws in . deepface/enclave di/enclave; do
   cargo fmt    --manifest-path "$ws/Cargo.toml" --all -- --check
   cargo clippy --manifest-path "$ws/Cargo.toml" --all-targets --all-features --
   cargo test   --manifest-path "$ws/Cargo.toml" --all
+  cargo deny   --manifest-path "$ws/Cargo.toml" --all-features check
 done
 ```
 
