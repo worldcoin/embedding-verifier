@@ -37,6 +37,8 @@ deepface-types = { path = "deepface/types" }
 di-types = { path = "di/types" }
 # Attestation crates are pinned to bedrock's versions so the two verifiers cannot drift.
 aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
 axum = "0.8"
 backon = { version = "1", default-features = false, features = ["std", "tokio-sleep"] }
 base64 = "0.22"

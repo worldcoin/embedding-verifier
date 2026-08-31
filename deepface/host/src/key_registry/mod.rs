@@ -6,6 +6,10 @@
 //! answer is terminal for the caller (§6).
 //!
 //! [`KeyRegistry`] is the whole database boundary: one row per key, fetched and written whole.
+//! `DynamoDB` is the deployed backing ([`DynamoKeyRegistry`]); tests and local runs use
+//! [`InMemoryKeyRegistry`].
+
+mod dynamo;
 mod memory;
 mod public_key;
 mod registration;
@@ -15,6 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use serde::Serialize;
 
+pub use dynamo::DynamoKeyRegistry;
 pub use memory::InMemoryKeyRegistry;
 pub use public_key::{InvalidSigningPublicKey, SIGNING_PUBLIC_KEY_LEN, SigningPublicKey};
 pub use registration::{RegistrationError, register_signing_key, retire_signing_key, verifier};
@@ -42,6 +47,17 @@ impl KeyStatus {
             Self::Active => "active",
             Self::Retired => "retired",
             Self::Revoked => "revoked",
+        }
+    }
+
+    /// Reads a stored spelling back.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "active" => Some(Self::Active),
+            "retired" => Some(Self::Retired),
+            "revoked" => Some(Self::Revoked),
+            _ => None,
         }
     }
 }
@@ -73,6 +89,14 @@ pub enum RegistryError {
     /// The store could not be reached, or refused the call.
     #[error("key registry is unavailable: {0}")]
     Unavailable(String),
+    /// A stored row could not be read back into a [`RegistryEntry`]. Retrying will not fix it.
+    #[error("key registry holds a malformed row for {public_key}: {reason}")]
+    Malformed {
+        /// The key whose row could not be read.
+        public_key: SigningPublicKey,
+        /// What was wrong with it.
+        reason: String,
+    },
 }
 
 /// The append-only record of every `Signing Key` this `Service` has used.
@@ -104,4 +128,24 @@ pub(crate) fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::KeyStatus;
+
+    #[test]
+    fn every_status_round_trips_through_its_stored_spelling() {
+        for status in [KeyStatus::Active, KeyStatus::Retired, KeyStatus::Revoked] {
+            assert_eq!(KeyStatus::parse(status.as_str()), Some(status));
+        }
+    }
+
+    /// A row whose status the host cannot read must fail loudly rather than default to `active`.
+    #[test]
+    fn an_unknown_status_does_not_become_active() {
+        assert_eq!(KeyStatus::parse("ACTIVE"), None);
+        assert_eq!(KeyStatus::parse("expired"), None);
+        assert_eq!(KeyStatus::parse(""), None);
+    }
 }

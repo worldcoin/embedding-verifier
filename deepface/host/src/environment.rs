@@ -56,6 +56,16 @@ impl Environment {
         Self::required_u32("ENCLAVE_PORT")
     }
 
+    /// Returns the `DynamoDB` table holding the `Signing Key` registry.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `KEY_REGISTRY_TABLE` is unset.
+    #[must_use]
+    pub fn key_registry_table(&self) -> String {
+        Self::required("KEY_REGISTRY_TABLE")
+    }
+
     /// Returns the PCR0 this host's enclave must attest.
     ///
     /// The measurement of the image the host was deployed with, so an enclave running anything

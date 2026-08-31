@@ -206,12 +206,21 @@ impl AppError {
     /// must not be able to produce that answer.
     #[must_use]
     pub fn key_registry(error: &RegistryError) -> Self {
-        Self::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "key_registry_unavailable",
-            "The signing key registry could not be read",
-            true,
-        )
+        match error {
+            RegistryError::Unavailable(_) => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "key_registry_unavailable",
+                "The signing key registry could not be read",
+                true,
+            ),
+            // A row the host cannot parse will not parse on the next attempt either.
+            RegistryError::Malformed { .. } => Self::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                "Internal server error",
+                false,
+            ),
+        }
         .with_detail(error.to_string())
     }
 
@@ -285,17 +294,39 @@ mod tests {
 
     use super::AppError;
     use crate::enclave::EnclaveClientError;
-    use crate::key_registry::RegistryError;
+    use crate::key_registry::{RegistryError, SigningPublicKey};
 
     /// The one mapping the spec pins outright: `404` means "not a key of this Service", and a
     /// registry the host could not read must never be able to say that.
     #[test]
     fn a_registry_that_cannot_be_read_is_never_an_unknown_key() {
-        let mapped = AppError::key_registry(&RegistryError::Unavailable("timed out".to_string()));
+        for error in [
+            RegistryError::Unavailable("timed out".to_string()),
+            RegistryError::Malformed {
+                public_key: SigningPublicKey::from_bytes([7; 32]),
+                reason: "status is missing".to_string(),
+            },
+        ] {
+            let mapped = AppError::key_registry(&error);
 
-        assert_ne!(mapped.status(), StatusCode::NOT_FOUND);
-        assert!(mapped.status().is_server_error());
-        assert!(mapped.allow_retry, "an outage is worth retrying");
+            assert_ne!(mapped.status(), StatusCode::NOT_FOUND, "{error}");
+            assert!(mapped.status().is_server_error(), "{error}");
+        }
+    }
+
+    /// An outage is worth another go; a row that will not parse never will.
+    #[test]
+    fn only_an_unreachable_registry_is_worth_retrying() {
+        assert!(
+            AppError::key_registry(&RegistryError::Unavailable("boom".to_string())).allow_retry
+        );
+        assert!(
+            !AppError::key_registry(&RegistryError::Malformed {
+                public_key: SigningPublicKey::from_bytes([7; 32]),
+                reason: "status is missing".to_string(),
+            })
+            .allow_retry
+        );
     }
 
     /// A hard verification failure. A client that retried it into a pass would accept a statement
