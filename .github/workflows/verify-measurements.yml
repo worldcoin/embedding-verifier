@@ -40,7 +40,13 @@ on:
 jobs:
   verify-pcrs:
     name: verify PCRs match source (${{ matrix.workload }})
-    runs-on: ubuntu-latest
+    # A fixed runner class, not ubuntu-latest. deepface is not reproducible across CPUs: one
+    # megabyte of fast_image_resize's SSE4 kernels compiles differently on different hardware,
+    # and GitHub's hosted fleet is heterogeneous, so back-to-back runs measured different PCRs.
+    # The registered measurements are the ones this class produces. Moving this line moves the
+    # PCRs. See README for what that costs a third-party verifier.
+    runs-on:
+      group: arc-public-large-amd64-runner
     timeout-minutes: 90
     strategy:
       fail-fast: false

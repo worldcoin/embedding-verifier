@@ -76,6 +76,12 @@ rebuilds them on every PR that can move one and fails when they drift, so a PR t
 enclave updates the file in the same commit. Updating it, and re-registering the values with
 clients, stays a human act.
 
+The `deepface` PCRs hold only for builds on the runner class `verify-measurements.yml` pins.
+One megabyte of `fast_image_resize`'s SSE4 kernels compiles differently on different CPUs, so
+the same commit measures differently on other hardware — a third-party verifier on their own
+machine will not reproduce PCR0. `di` has no such dependency and reproduces anywhere. Fixing
+this properly means changing that dependency in `face-engine`.
+
 `di-enclave` exits non-zero on start, so its EIF builds and measures but will not stay
 running, until the boot sequence lands.
 
