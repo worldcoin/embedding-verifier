@@ -3,8 +3,8 @@
 # Builds the `di-host` service as a statically-linked musl binary and packages
 # it in a `scratch` image. Built with the repository root as the context.
 #
-# GITHUB_TOKEN despite di-host using nothing private: cargo resolves the whole
-# workspace, so face-engine is fetched whichever --package is selected.
+# The host-side workspace reaches no private repository — `face-engine` lives in the
+# deepface/enclave workspace — so this build needs no GITHUB_TOKEN.
 
 FROM ghcr.io/rust-cross/rust-musl-cross:x86_64-musl AS chef
 USER root
@@ -22,29 +22,15 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 
-RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
-    GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)" && \
-    git config --global \
-      url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
-      "https://github.com/worldcoin/biometric-engines" && \
-    CARGO_NET_GIT_FETCH_WITH_CLI=true cargo chef cook --release --locked \
+RUN cargo chef cook --release --locked \
       --target x86_64-unknown-linux-musl \
       --recipe-path recipe.json \
-      --package di-host && \
-    git config --global --unset-all \
-      url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf
+      --package di-host
 COPY . .
-RUN --mount=type=secret,id=GITHUB_TOKEN,required=true \
-    GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)" && \
-    git config --global \
-      url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
-      "https://github.com/worldcoin/biometric-engines" && \
-    CARGO_NET_GIT_FETCH_WITH_CLI=true cargo build --release --locked \
+RUN cargo build --release --locked \
       --target x86_64-unknown-linux-musl \
       --package di-host \
- && mv target/x86_64-unknown-linux-musl/release/di-host /app/host-bin \
- && git config --global --unset-all \
-      url."https://x-access-token:${GITHUB_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf
+ && mv target/x86_64-unknown-linux-musl/release/di-host /app/host-bin
 
 FROM scratch AS runtime
 WORKDIR /app

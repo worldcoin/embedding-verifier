@@ -12,14 +12,17 @@ set -euo pipefail
 #      GIT_HUB_TOKEN (read access to private GitHub dependencies),
 #      HUGGING_FACE_TOKEN (read access to private model repositories)
 #
-# GIT_HUB_TOKEN applies to every workload: cargo resolves the whole workspace, so
-# face-engine is fetched even by workloads that do not use it. HUGGING_FACE_TOKEN
-# is deepface-only.
+# Each workload's enclave is its own cargo workspace, so a build resolves only that
+# workload's dependencies. GIT_HUB_TOKEN and HUGGING_FACE_TOKEN are therefore both
+# deepface-only: nothing in di's graph is private.
 
 NITRO_CLI_VERSION="${NITRO_CLI_VERSION:-v1.4.2}"
 
 # A new workload is a directory with an enclave/Dockerfile plus an entry here.
 WORKLOADS=("deepface" "di")
+
+# Workloads whose enclave graph reaches a private repository.
+PRIVATE_DEP_WORKLOADS=("deepface")
 
 usage() {
   printf '%s\n' \
@@ -97,12 +100,16 @@ out_dir="$(cd "$out_dir" && pwd)"
 if [[ "$build_image" == "true" ]]; then
   echo "[1/3] Building $workload enclave container image ($ENCLAVE_IMAGE_TAG)..."
 
-  if [[ -z "${GIT_HUB_TOKEN:-}" ]]; then
-    echo "[ERROR] GIT_HUB_TOKEN is required to fetch private GitHub dependencies." >&2
-    exit 1
-  fi
+  secret_args=()
 
-  secret_args=(--secret "id=GITHUB_TOKEN,env=GIT_HUB_TOKEN")
+  if [[ " ${PRIVATE_DEP_WORKLOADS[*]} " == *" $workload "* ]]; then
+    if [[ -z "${GIT_HUB_TOKEN:-}" ]]; then
+      echo "[ERROR] GIT_HUB_TOKEN is required to fetch $workload's private GitHub dependencies." >&2
+      exit 1
+    fi
+
+    secret_args+=(--secret "id=GITHUB_TOKEN,env=GIT_HUB_TOKEN")
+  fi
 
   if [[ "$workload" == "deepface" ]]; then
     if [[ -z "${HUGGING_FACE_TOKEN:-}" ]]; then
@@ -114,7 +121,7 @@ if [[ "$build_image" == "true" ]]; then
   fi
 
   docker build \
-    "${secret_args[@]}" \
+    ${secret_args[@]+"${secret_args[@]}"} \
     -t "$ENCLAVE_IMAGE_TAG" \
     -f "$dockerfile" \
     .

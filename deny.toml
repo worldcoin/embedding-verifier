@@ -1,3 +1,6 @@
+# One config for all three workspaces (root, deepface/enclave, di/enclave), symlinked into the
+# two enclave directories. An entry that only one workspace needs — `allow-git` below, the ISC
+# allowance — logs an "unmatched" warning in the others. Warnings, not failures.
 [graph]
 all-features = true
 targets = ["x86_64-unknown-linux-gnu"]

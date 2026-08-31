@@ -1,3 +1,8 @@
+# Three independent cargo workspaces, each with its own lockfile: the host-side one at the
+# repository root, and one per enclave so nothing outside an EIF's own graph can move its PCRs.
+# Every job runs across all three. Only deepface/enclave reaches a private repository, so the
+# other two lanes run without a token — if the root workspace ever regains `face-engine`, its
+# lane fails here rather than in a Docker build.
 name: CI
 
 on:
@@ -16,23 +21,32 @@ env:
 
 jobs:
   format:
-    name: Format
+    name: Format (${{ matrix.workspace }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [".", "deepface/enclave", "di/enclave"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.0
         with:
           components: rustfmt
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: cargo fmt --manifest-path ${{ matrix.workspace }}/Cargo.toml --all -- --check
 
   lint:
-    name: Lint
+    name: Lint (${{ matrix.workspace }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [".", "deepface/enclave", "di/enclave"]
     steps:
       - uses: actions/checkout@v4
       - name: Mint biometric-engines access token
         id: biometric-engines-token
+        if: matrix.workspace == 'deepface/enclave'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
@@ -43,7 +57,10 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.workspace }}
       - name: Configure private Git dependencies
+        if: matrix.workspace == 'deepface/enclave'
         env:
           BIOMETRIC_ENGINES_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
         run: |
@@ -51,15 +68,20 @@ jobs:
             url."https://x-access-token:${BIOMETRIC_ENGINES_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
             "https://github.com/worldcoin/biometric-engines"
       - name: Run Clippy
-        run: cargo clippy --locked --all-targets --all-features --
+        run: cargo clippy --manifest-path ${{ matrix.workspace }}/Cargo.toml --locked --all-targets --all-features --
 
   build:
-    name: Build
+    name: Build (${{ matrix.workspace }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [".", "deepface/enclave", "di/enclave"]
     steps:
       - uses: actions/checkout@v4
       - name: Mint biometric-engines access token
         id: biometric-engines-token
+        if: matrix.workspace == 'deepface/enclave'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
@@ -68,7 +90,10 @@ jobs:
           repositories: biometric-engines
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.workspace }}
       - name: Configure private Git dependencies
+        if: matrix.workspace == 'deepface/enclave'
         env:
           BIOMETRIC_ENGINES_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
         run: |
@@ -76,17 +101,22 @@ jobs:
             url."https://x-access-token:${BIOMETRIC_ENGINES_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
             "https://github.com/worldcoin/biometric-engines"
       - name: Build debug
-        run: cargo build --locked --verbose
+        run: cargo build --manifest-path ${{ matrix.workspace }}/Cargo.toml --locked --verbose
       - name: Build release
-        run: cargo build --locked --release --verbose
+        run: cargo build --manifest-path ${{ matrix.workspace }}/Cargo.toml --locked --release --verbose
 
   test:
-    name: Test
+    name: Test (${{ matrix.workspace }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [".", "deepface/enclave", "di/enclave"]
     steps:
       - uses: actions/checkout@v4
       - name: Mint biometric-engines access token
         id: biometric-engines-token
+        if: matrix.workspace == 'deepface/enclave'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
@@ -95,7 +125,10 @@ jobs:
           repositories: biometric-engines
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.workspace }}
       - name: Configure private Git dependencies
+        if: matrix.workspace == 'deepface/enclave'
         env:
           BIOMETRIC_ENGINES_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
         run: |
@@ -103,13 +136,15 @@ jobs:
             url."https://x-access-token:${BIOMETRIC_ENGINES_TOKEN}@github.com/worldcoin/biometric-engines".insteadOf \
             "https://github.com/worldcoin/biometric-engines"
       - name: Run tests
-        run: cargo test --locked --all --all-features --verbose
+        run: cargo test --manifest-path ${{ matrix.workspace }}/Cargo.toml --locked --all --all-features --verbose
 
   deny:
-    name: Cargo deny
+    name: Cargo deny (${{ matrix.workspace }}, ${{ matrix.checks }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
+        workspace: [".", "deepface/enclave", "di/enclave"]
         checks:
           - advisories
           - bans licenses sources
@@ -117,6 +152,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Mint biometric-engines access token
         id: biometric-engines-token
+        if: matrix.workspace == 'deepface/enclave'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
@@ -127,5 +163,7 @@ jobs:
         continue-on-error: ${{ matrix.checks == 'advisories' }}
         with:
           command: check ${{ matrix.checks }}
+          manifest-path: ${{ matrix.workspace }}/Cargo.toml
           rust-version: 1.97.0
-          credentials: https://x-access-token:${{ steps.biometric-engines-token.outputs.token }}@github.com
+          # Only the deepface enclave lane mints a token; the others resolve nothing private.
+          credentials: ${{ steps.biometric-engines-token.outputs.token && format('https://x-access-token:{0}@github.com', steps.biometric-engines-token.outputs.token) || '' }}
