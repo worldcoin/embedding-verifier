@@ -75,6 +75,16 @@ jobs:
           git config --global credential."https://github.com".helper \
             '!f() { echo username=x-access-token; echo "password=${GH_APP_TOKEN}"; }; f'
 
+      # The ARC pods hand out a world-writable root, and Nix refuses to use a /nix it does not
+      # trust. Create it with sane modes before the installer looks.
+      - name: Prepare /nix
+        run: |
+          set -euo pipefail
+          if sudo -n true 2>/dev/null; then SUDO=sudo; else SUDO=; fi
+          $SUDO mkdir -p /nix
+          $SUDO chmod 0755 /nix
+          ls -ld /nix
+
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
