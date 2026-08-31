@@ -107,6 +107,13 @@
         inherit src cargoVendorDir version;
         strictDeps = true;
 
+        # The build must not depend on the machine running it, only on the commit. Two defaults
+        # break that: cargo sets -j from the host's CPU count and hands it to every build script
+        # as NUM_JOBS, and release codegen splits each crate across 16 units. Pinning both makes
+        # a 4-core runner and a 32-core box do the same work in the same order.
+        CARGO_BUILD_JOBS = "4";
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "1";
+
         # Panic locations embed absolute source paths. Under Nix the source is a store path that
         # is identical on every machine, so nothing needs trimming — but cargo hashes the
         # absolute workspace path into each crate's -Cmetadata, so the same source built in two
