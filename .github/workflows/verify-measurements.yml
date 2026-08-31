@@ -9,6 +9,12 @@ name: verify-measurements
 permissions:
   contents: read
 
+# Two cold Rust builds per run, so a re-dispatch replaces the run in flight rather than
+# doubling up alongside it.
+concurrency:
+  group: verify-measurements-${{ github.ref }}
+  cancel-in-progress: true
+
 # Automatic runs are off while the enclaves are still being developed. Both workloads share
 # one cargo workspace, so any source change moves both PCRs, and the job would fail on every
 # PR that did not also update measurements.json in the same commit. Run it by hand from the
@@ -85,16 +91,24 @@ jobs:
           committed=$(jq -S --arg w "$WORKLOAD" '.[$w]' measurements.json)
           measured=$(jq -S --arg w "$WORKLOAD" '.[$w]' target/eif/measurements.json)
 
-          if [[ "$(jq -r 'to_entries | map(select(.value == null)) | length' <<<"$committed")" != "0" ]]; then
+          # jq -e, not a string comparison: a missing workload key makes `committed` the
+          # literal `null`, and `to_entries` on null exits 5. Inside a [[ ]] substitution that
+          # error does not trip `set -e`, so the branch would be taken off a jq stack trace
+          # rather than a check. This asserts the shape the clients actually pin.
+          if ! jq -e '
+                type == "object"
+                and ([.pcr0, .pcr1, .pcr2]
+                     | all(type == "string" and test("^0x[0-9a-f]{96}$")))
+              ' >/dev/null <<<"$committed"; then
             {
-              echo "## \`$WORKLOAD\` has no registered measurements"
+              echo "## \`$WORKLOAD\` has no usable registered measurements"
               echo "Paste these into \`measurements.json\` under \`.$WORKLOAD\`, and register them"
               echo "with every client before the enclave is deployed:"
               echo '```json'
               echo "$measured"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "ERROR: .$WORKLOAD in measurements.json is unset." >&2
+            echo "ERROR: .$WORKLOAD in measurements.json is unset or malformed." >&2
             exit 1
           fi
 
