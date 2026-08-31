@@ -6,7 +6,7 @@ use deepface_host::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Keep the guard alive until the server stops so buffered spans and metrics are flushed.
+    // Keep the guard alive until the server stops so buffered spans are flushed.
     let _telemetry = telemetry_batteries::init()
         .map_err(|error| anyhow::anyhow!("failed to initialize telemetry: {error:?}"))?;
 
