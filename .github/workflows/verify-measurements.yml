@@ -83,6 +83,24 @@ jobs:
           HUGGING_FACE_TOKEN: ${{ secrets.HUGGING_FACE_TOKEN }}
         run: scripts/build-eif.sh --workload ${{ matrix.workload }} target/eif
 
+      # When the PCRs drift, this says which layer drifted: every path in the EIF's closure
+      # with its narHash. Diff two runs and the first differing path is the cause — without
+      # it a mismatch only tells you the final number changed.
+      - name: Record closure hashes
+        env:
+          WORKLOAD: ${{ matrix.workload }}
+        run: |
+          set -euo pipefail
+          nix path-info --json --recursive --no-update-lock-file ".#${WORKLOAD}-eif" \
+            | jq -r '.[] | "\(.narHash)  \(.path)"' | sort -k2 > "closure-$WORKLOAD.txt"
+          wc -l < "closure-$WORKLOAD.txt" | xargs echo "paths:"
+
+      - name: Upload closure hashes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: closure-${{ matrix.workload }}
+          path: closure-${{ matrix.workload }}.txt
+
       - name: Verify PCRs
         env:
           WORKLOAD: ${{ matrix.workload }}
