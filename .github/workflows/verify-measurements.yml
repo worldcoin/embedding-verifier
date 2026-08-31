@@ -15,29 +15,27 @@ concurrency:
   group: verify-measurements-${{ github.ref }}
   cancel-in-progress: true
 
-# Automatic runs are off while the enclaves are still being developed. Both workloads share
-# one cargo workspace, so any source change moves both PCRs, and the job would fail on every
-# PR that did not also update measurements.json in the same commit. Run it by hand from the
-# Actions tab meanwhile, and uncomment the triggers below before either enclave has a client
-# pinned to a measurement.
+# Runs on every PR that can move a measurement, and on main. Both workloads share one cargo
+# workspace, so any source change moves both PCRs: a PR that changes the enclaves has to update
+# measurements.json in the same commit, and this job is what says so.
 on:
   workflow_dispatch:
-#  pull_request:
-#    paths:
-#      - "deepface/**"
-#      - "di/**"
-#      - "shared/**"
-#      - "Cargo.toml"
-#      - "Cargo.lock"
-#      - "rust-toolchain.toml"
-#      - "flake.nix"
-#      - "flake.lock"
-#      - "measurements.json"
-#      - "scripts/build-eif.sh"
-#      - ".github/workflows/verify-measurements.yml"
-#  push:
-#    branches:
-#      - main
+  pull_request:
+    paths:
+      - "deepface/**"
+      - "di/**"
+      - "shared/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "flake.nix"
+      - "flake.lock"
+      - "measurements.json"
+      - "scripts/build-eif.sh"
+      - ".github/workflows/verify-measurements.yml"
+  push:
+    branches:
+      - main
 
 jobs:
   verify-pcrs:

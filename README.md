@@ -72,9 +72,9 @@ environment variable. `HUGGING_FACE_TOKEN` is `deepface`-only and is used by the
 itself, never inside a build.
 
 `measurements.json` records the PCRs each workload measures to. `verify-measurements.yml`
-rebuilds them and fails when they drift, but runs only on manual dispatch while the enclaves
-are still moving — turn its triggers on before a client pins a measurement. Updating the
-file, and re-registering the values with clients, stays a human act.
+rebuilds them on every PR that can move one and fails when they drift, so a PR that changes an
+enclave updates the file in the same commit. Updating it, and re-registering the values with
+clients, stays a human act.
 
 `di-enclave` exits non-zero on start, so its EIF builds and measures but will not stay
 running, until the boot sequence lands.
