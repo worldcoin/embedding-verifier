@@ -106,6 +106,26 @@ jobs:
             done
           } | sort -u -k2 | tee "closure-$WORKLOAD.txt"
 
+          # Localize a binary difference without shipping the binary: this repo is public and
+          # the enclave links private face-engine code. Size plus per-chunk hashes say whether
+          # the divergence is a few embedded bytes or a whole-layout shift.
+          deps=$(nix-store --query --references \
+                   "$(nix path-info --derivation --no-update-lock-file ".#${WORKLOAD}-enclave")" \
+                 | grep -- '-deps-.*\.drv$' || true)
+          for d in $deps; do
+            for o in $(nix-store --query --outputs "$d"); do
+              nix-store --query --hash "$o" >/dev/null 2>&1 \
+                && printf 'deps %s  %s\n' "$(nix-store --query --hash "$o")" "$(basename "$o")"
+            done
+          done | tee -a "closure-$WORKLOAD.txt"
+
+          bin="$(nix build --no-link --no-update-lock-file --print-out-paths \
+                 ".#${WORKLOAD}-enclave")/bin/${WORKLOAD}-enclave"
+          echo "size $(stat -c%s "$bin")" | tee -a "closure-$WORKLOAD.txt"
+          split -b 1M -d -a 3 "$bin" chunk.
+          sha256sum chunk.* | tee -a "closure-$WORKLOAD.txt" > /dev/null
+          rm -f chunk.*
+
       - name: Upload closure hashes
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
