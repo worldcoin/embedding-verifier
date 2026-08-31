@@ -111,11 +111,24 @@
         # is identical on every machine, so nothing needs trimming — but cargo hashes the
         # absolute workspace path into each crate's -Cmetadata, so the same source built in two
         # different directories produces two different binaries and two different PCRs.
-        # Sandboxed builds all run in /build; give sandbox-less builders the same path. Where
-        # /build is absent this is a no-op and the sandbox carries reproducibility.
+        # Sandboxed builds all run in /build, which is where the committed measurements were
+        # taken. An unsandboxed builder that cannot get there stops, rather than measuring to
+        # something else without saying so.
         postUnpack = ''
-          if [ "$NIX_BUILD_TOP" != /build ] && [ -d /build ] && [ -w /build ]; then
-            rm -rf "/build/$sourceRoot"
+          if [ "$NIX_BUILD_TOP" != /build ]; then
+            if [ ! -d /build ] || [ ! -w /build ]; then
+              echo "This build is unsandboxed and /build is not writable, so the workspace" >&2
+              echo "cannot sit where a sandboxed build puts it. cargo hashes that path into" >&2
+              echo "-Cmetadata, so the PCRs would not match the committed measurements." >&2
+              echo "Set 'sandbox = true' on this builder. NIX_BUILD_TOP is $NIX_BUILD_TOP." >&2
+              exit 1
+            fi
+            if [ -e "/build/$sourceRoot" ]; then
+              echo "/build/$sourceRoot is taken: another unsandboxed enclave build is using" >&2
+              echo "it, and both need that exact path. Build the workloads one at a time, or" >&2
+              echo "set 'sandbox = true'." >&2
+              exit 1
+            fi
             mv "$sourceRoot" "/build/$sourceRoot"
             cd /build
             export NIX_BUILD_TOP=/build
@@ -123,7 +136,7 @@
         '';
       };
 
-      # Matches the apt list deepface/enclave/Dockerfile installs.
+      # face-engine builds its ONNX Runtime bindings with bindgen, which needs clang.
       faceEngineArgs = {
         nativeBuildInputs = with pkgs; [ clang pkg-config ];
         LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
@@ -170,10 +183,9 @@
           '';
         };
 
-      # Revision and digest are reviewed as one pair, moved out of
-      # scripts/download-face-models.py: the revision says which Hugging Face snapshot to take
-      # the file from, the digest pins the bytes, and the digest is what ends up measured into
-      # PCR0.
+      # Revision and digest are reviewed as one pair: the revision says which Hugging Face
+      # snapshot to take the file from, the digest pins the bytes, and the digest is what ends
+      # up measured into PCR0.
       faceModelSources = {
         "face_embedding_generator.onnx" = {
           repo = "FaceEmbeddingGenerator";
