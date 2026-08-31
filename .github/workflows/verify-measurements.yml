@@ -83,22 +83,33 @@ jobs:
           HUGGING_FACE_TOKEN: ${{ secrets.HUGGING_FACE_TOKEN }}
         run: scripts/build-eif.sh --workload ${{ matrix.workload }} target/eif
 
-      # When the PCRs drift, this says which layer drifted: every path in the EIF's closure
-      # with its narHash. Diff two runs and the first differing path is the cause — without
-      # it a mismatch only tells you the final number changed.
-      - name: Record closure hashes
+      # When the PCRs drift, this says which layer drifted: the narHash of every layer the EIF
+      # is assembled from. Diff two runs and the first differing line is the cause — without it
+      # a mismatch only tells you the final number changed.
+      - name: Record layer hashes
         env:
           WORKLOAD: ${{ matrix.workload }}
         run: |
           set -euo pipefail
-          nix path-info --json --recursive --no-update-lock-file ".#${WORKLOAD}-eif" \
-            | jq -r '.[] | "\(.narHash)  \(.path)"' | sort -k2 > "closure-$WORKLOAD.txt"
-          wc -l < "closure-$WORKLOAD.txt" | xargs echo "paths:"
+          eif_drv=$(nix path-info --derivation --no-update-lock-file ".#${WORKLOAD}-eif")
+          {
+            for d in $(nix-store --query --references "$eif_drv" | grep '\.drv$'); do
+              for o in $(nix-store --query --outputs "$d"); do
+                if nix-store --query --hash "$o" >/dev/null 2>&1; then
+                  printf '%s  %s\n' "$(nix-store --query --hash "$o")" "$(basename "$o")"
+                fi
+              done
+            done
+            for out in "${WORKLOAD}-enclave" "${WORKLOAD}-eif"; do
+              p=$(nix build --no-link --no-update-lock-file --print-out-paths ".#${out}")
+              printf '%s  %s\n' "$(nix-store --query --hash "$p")" "$(basename "$p")"
+            done
+          } | sort -u -k2 | tee "closure-$WORKLOAD.txt"
 
       - name: Upload closure hashes
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: closure-${{ matrix.workload }}
+          name: layer-hashes-${{ matrix.workload }}
           path: closure-${{ matrix.workload }}.txt
 
       - name: Verify PCRs
