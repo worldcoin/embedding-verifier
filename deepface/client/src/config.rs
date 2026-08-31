@@ -200,6 +200,31 @@ mod tests {
     }
 
     #[test]
+    fn accepts_pcr_values_with_and_without_the_0x_prefix() {
+        // measurements.json records PCRs 0x-prefixed; the README tells operators to copy them.
+        let json = r#"{
+            "host_url": "http://localhost:8000",
+            "allowed_pcr_configs": [[
+                { "index": 0, "value": "0xab01" },
+                { "index": 1, "value": "ab01" }
+            ]]
+        }"#;
+
+        let config = Config::from_json(json).expect("both spellings should parse");
+
+        let pcrs = &config.allowed_pcr_configs[0];
+        assert_eq!(pcrs[0].value, pcrs[1].value);
+
+        Config::from_json(
+            r#"{
+            "host_url": "http://localhost:8000",
+            "allowed_pcr_configs": [[{ "index": 0, "value": "0xzz" }]]
+        }"#,
+        )
+        .expect_err("non-hex must still be rejected");
+    }
+
+    #[test]
     fn round_trips_through_json_with_defaults_applied() {
         let json = r#"{
             "host_url": "http://localhost:8000",
