@@ -1,6 +1,4 @@
-//! In-memory [`KeyRegistry`], for tests and local runs with no AWS account.
-//!
-//! Boot-scoped: a restart takes the rows with it, so it is not a deployable registry.
+//! In-memory [`KeyRegistry`]
 
 use async_trait::async_trait;
 use moka::future::Cache;
@@ -24,9 +22,6 @@ impl InMemoryKeyRegistry {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            // Deliberately unbounded and with no TTL. Evicting a row turns a key this `Service`
-            // did issue into a `404`, which is a hard verification failure — a registry must
-            // forget nothing while the process lives.
             rows: Cache::builder().build(),
         }
     }
