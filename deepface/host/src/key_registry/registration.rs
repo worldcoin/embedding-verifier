@@ -340,14 +340,13 @@ mod tests {
         use deepface_types::{MatchRequest, MatchResponse};
         use std::sync::atomic::{AtomicU32, Ordering};
 
-        /// Refuses the attestation until it has been asked `successful_after` times.
-        struct FlakyEnclave {
+        /// Never answers, so registration can only keep retrying.
+        struct UnreachableEnclave {
             calls: AtomicU32,
-            successful_after: u32,
         }
 
         #[async_trait]
-        impl EnclaveClient for FlakyEnclave {
+        impl EnclaveClient for UnreachableEnclave {
             async fn health(&self) -> Result<(), EnclaveClientError> {
                 Ok(())
             }
@@ -357,11 +356,9 @@ mod tests {
             }
 
             async fn signing_key_attestation(&self) -> Result<Vec<u8>, EnclaveClientError> {
-                if self.calls.fetch_add(1, Ordering::SeqCst) < self.successful_after {
-                    return Err(EnclaveClientError::Timeout);
-                }
+                self.calls.fetch_add(1, Ordering::SeqCst);
 
-                unreachable!("this test never gets as far as verifying a document")
+                Err(EnclaveClientError::Timeout)
             }
 
             async fn run_match(
@@ -372,9 +369,8 @@ mod tests {
             }
         }
 
-        let enclave = Arc::new(FlakyEnclave {
+        let enclave = Arc::new(UnreachableEnclave {
             calls: AtomicU32::new(0),
-            successful_after: u32::MAX,
         });
         let (sender, receiver) = watch::channel(None);
 

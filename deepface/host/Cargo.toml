@@ -14,8 +14,6 @@ path = "src/main.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 attested-channel = { workspace = true, features = ["attestation"] }
-aws-config.workspace = true
-aws-sdk-dynamodb.workspace = true
 axum.workspace = true
 base64.workspace = true
 deepface-types.workspace = true

@@ -26,12 +26,6 @@ impl SigningPublicKey {
     pub const fn from_bytes(bytes: [u8; SIGNING_PUBLIC_KEY_LEN]) -> Self {
         Self(bytes)
     }
-
-    /// The compressed bytes, as the attestation document's `public_key` field carries them.
-    #[must_use]
-    pub const fn as_bytes(&self) -> &[u8; SIGNING_PUBLIC_KEY_LEN] {
-        &self.0
-    }
 }
 
 impl TryFrom<&[u8]> for SigningPublicKey {

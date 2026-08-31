@@ -128,39 +128,34 @@ pub fn state_with_source(client: StubEnclaveClient, source: StubChallengeSource)
 }
 
 /// Builds an [`AppState`] over `registry`, with this boot's key already registered.
+///
+/// A `watch` receiver keeps serving the last value after its sender drops, which is all the
+/// state reads.
 pub fn state_with_registry(
     client: StubEnclaveClient,
     source: StubChallengeSource,
     registry: Arc<dyn KeyRegistry>,
 ) -> AppState {
-    state_registering(client, source, registry, Some(registered_key()))
-}
-
-/// Builds an [`AppState`] whose signing key is not in the registry yet.
-pub fn state_before_registration(client: StubEnclaveClient) -> AppState {
-    state_registering(
-        client,
-        StubChallengeSource::default(),
-        Arc::new(InMemoryKeyRegistry::new()),
-        None,
-    )
-}
-
-/// A `watch` receiver keeps serving the last value after its sender drops, which is all the
-/// state reads.
-fn state_registering(
-    client: StubEnclaveClient,
-    source: StubChallengeSource,
-    registry: Arc<dyn KeyRegistry>,
-    registered: Option<SigningPublicKey>,
-) -> AppState {
-    let (_sender, receiver) = watch::channel(registered);
+    let (_sender, receiver) = watch::channel(Some(registered_key()));
 
     AppState::new(
         Environment::Development,
         Arc::new(client),
         Arc::new(source),
         registry,
+        receiver,
+    )
+}
+
+/// Builds an [`AppState`] whose signing key is not in the registry yet.
+pub fn state_before_registration(client: StubEnclaveClient) -> AppState {
+    let (_sender, receiver) = watch::channel(None);
+
+    AppState::new(
+        Environment::Development,
+        Arc::new(client),
+        Arc::new(StubChallengeSource::default()),
+        Arc::new(InMemoryKeyRegistry::new()),
         receiver,
     )
 }
