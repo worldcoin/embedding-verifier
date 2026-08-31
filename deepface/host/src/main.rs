@@ -23,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
         environment.enclave_port(),
     ));
     let challenge_source = Arc::new(ChallengeFetcher::new()?);
-    
+
     let key_registry: Arc<dyn KeyRegistry> = Arc::new(InMemoryKeyRegistry::new());
 
     // Registration runs in the background and readiness waits on it, so a registry outage leaves
