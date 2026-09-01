@@ -59,9 +59,24 @@ pub type EnclaveAttestationResult<T, E = EnclaveAttestationError> = Result<T, E>
 pub struct PcrMeasurement {
     /// Index of the PCR measurement.
     pub index: u32,
-    /// Expected value.
-    #[serde(with = "hex::serde")]
+    /// Expected value. Accepts hex with or without a `0x` prefix.
+    #[serde(with = "hex_maybe_prefixed")]
     pub value: Vec<u8>,
+}
+
+/// Hex that tolerates a `0x` prefix: measurements.json records PCRs `0x`-prefixed, and a
+/// config that rejects a copy-paste of the value it documents is a trap. Serializes bare.
+mod hex_maybe_prefixed {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        hex::serde::serialize(value, serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        hex::decode(s.strip_prefix("0x").unwrap_or(&s)).map_err(serde::de::Error::custom)
+    }
 }
 
 impl PcrMeasurement {
