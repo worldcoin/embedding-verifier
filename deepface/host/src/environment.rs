@@ -56,14 +56,25 @@ impl Environment {
         Self::required_u32("ENCLAVE_PORT")
     }
 
-    /// Returns the `DynamoDB` table holding the `Signing Key` registry.
+    /// Returns the `DynamoDB` table holding the `Signing Key` registry, or `None` when a
+    /// development run has not named one and the registry stays in memory.
     ///
     /// # Panics
     ///
-    /// Panics when `KEY_REGISTRY_TABLE` is unset.
+    /// Panics outside development when `KEY_REGISTRY_TABLE` is unset. A deployed host whose
+    /// registry died with the process would sign statements no verifier could look up.
     #[must_use]
-    pub fn key_registry_table(&self) -> String {
-        Self::required("KEY_REGISTRY_TABLE")
+    pub fn key_registry_table(&self) -> Option<String> {
+        let table = env::var("KEY_REGISTRY_TABLE")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+
+        assert!(
+            table.is_some() || *self == Self::Development,
+            "KEY_REGISTRY_TABLE environment variable is not set"
+        );
+
+        table
     }
 
     /// Returns the PCR0 this host's enclave must attest.
