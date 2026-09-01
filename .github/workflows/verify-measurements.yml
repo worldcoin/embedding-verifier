@@ -15,9 +15,14 @@ concurrency:
   group: verify-measurements-${{ github.ref }}
   cancel-in-progress: true
 
-# Runs on every PR that can move a measurement, and on main. Both workloads share one cargo
-# workspace, so any source change moves both PCRs: a PR that changes the enclaves has to update
-# measurements.json in the same commit, and this job is what says so.
+# Runs on every PR that can move a measurement, and on main. Each enclave is its own workspace
+# and flake.nix feeds each build only the crates that workload reaches, so a change under
+# deepface/ leaves di's PCRs alone — but the matrix rebuilds both anyway, because deciding which
+# one a diff can move is exactly the judgement this job exists to replace.
+#
+# The root Cargo.toml and Cargo.lock are deliberately not listed: they resolve the hosts, and
+# flake.nix hands neither to an enclave build. A host-side dependency bump cannot move a PCR,
+# and triggering on one would spend two cold 90-minute builds saying so.
 on:
   workflow_dispatch:
   pull_request:
@@ -25,8 +30,6 @@ on:
       - "deepface/**"
       - "di/**"
       - "shared/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
       - "rust-toolchain.toml"
       - "flake.nix"
       - "flake.lock"
@@ -109,16 +112,6 @@ jobs:
           # Localize a binary difference without shipping the binary: this repo is public and
           # the enclave links private face-engine code. Size plus per-chunk hashes say whether
           # the divergence is a few embedded bytes or a whole-layout shift.
-          deps=$(nix-store --query --references \
-                   "$(nix path-info --derivation --no-update-lock-file ".#${WORKLOAD}-enclave")" \
-                 | grep -- '-deps-.*\.drv$' || true)
-          for d in $deps; do
-            for o in $(nix-store --query --outputs "$d"); do
-              nix-store --query --hash "$o" >/dev/null 2>&1 \
-                && printf 'deps %s  %s\n' "$(nix-store --query --hash "$o")" "$(basename "$o")"
-            done
-          done | tee -a "closure-$WORKLOAD.txt"
-
           bin="$(nix build --no-link --no-update-lock-file --print-out-paths \
                  ".#${WORKLOAD}-enclave")/bin/${WORKLOAD}-enclave"
           echo "size $(stat -c%s "$bin")" | tee -a "closure-$WORKLOAD.txt"

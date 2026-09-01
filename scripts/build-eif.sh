@@ -25,6 +25,9 @@ set -euo pipefail
 # A new workload is an entry here plus a `<name>-eif` output in flake.nix.
 WORKLOADS=("deepface" "di")
 
+# Workloads whose enclave graph reaches a private repository.
+PRIVATE_DEP_WORKLOADS=("deepface")
+
 usage() {
   printf '%s\n' \
     "Usage: scripts/build-eif.sh [--workload <name>] [--allow-dirty] [output-dir]" \

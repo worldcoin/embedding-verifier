@@ -31,47 +31,44 @@
       rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-      version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
-
       # Only the files cargo actually reads. Whole directories would make the derivation hash —
       # and so the PCRs — move when a README or a workflow changes next to the code.
-      #
-      # This is the whole workspace, not one workload's crates: `members` lists every crate and
-      # each declares an explicit `[[bin]]`/`[[lib]]` path, so cargo fails to load the workspace
-      # if any member's sources are filtered out. Splitting the enclaves into nested workspaces
-      # (what world-chain does) is what buys per-workload PCR isolation; until then a deepface
-      # change moves di's PCR0 too.
-      src = lib.fileset.toSource {
+      cargoFiles = lib.fileset.fileFilter
+        (file:
+          file.hasExt "rs"
+          || file.name == "Cargo.toml"
+          || file.name == "Cargo.lock"
+          # Assets pulled in with include_str!/include_bytes!: the face engine graph configs,
+          # the AWS Nitro root CA, and the attestation fixture its tests parse. A new embedded
+          # asset type has to be added here or the build fails to find it.
+          || file.hasExt "yaml"
+          || file.hasExt "der"
+          || file.hasExt "b64");
+
+      # Each enclave is its own cargo workspace with its own lockfile, so its build reads that
+      # manifest, that lockfile, and the path crates they name — never the root workspace.
+      # Listing those crates per workload is what makes the isolation real: with the whole tree
+      # as src, a deepface/host edit would still move di's PCR0. A new path dependency has to be
+      # added here or the build fails to find it.
+      srcFor = crates: lib.fileset.toSource {
         root = ./.;
-        fileset = lib.fileset.unions [
-          (lib.fileset.fileFilter
-            (file:
-              file.hasExt "rs"
-              || file.name == "Cargo.toml"
-              || file.name == "Cargo.lock"
-              # Assets pulled in with include_str!/include_bytes!: the face engine graph configs,
-              # the AWS Nitro root CA, and the attestation fixture its tests parse. A new embedded
-              # asset type has to be added here or the build fails to find it.
-              || file.hasExt "yaml"
-              || file.hasExt "der"
-              || file.hasExt "b64")
-            ./.)
-          ./rust-toolchain.toml
-        ];
+        fileset = lib.fileset.unions ((map cargoFiles crates) ++ [ ./rust-toolchain.toml ]);
       };
 
-      # The biometric-engines rev Cargo.lock pins, so the assets grafted into the vendor tree
-      # below cannot come from a different commit than the crates built against them.
+      # The biometric-engines rev the deepface enclave's lockfile pins, so the assets grafted
+      # into the vendor tree below cannot come from a different commit than the crates built
+      # against them. Read from that lockfile and no other: the root workspace no longer
+      # resolves face-engine at all.
       lockedFaceEngineRev =
         let
-          lock = builtins.fromTOML (builtins.readFile ./Cargo.lock);
+          lock = builtins.fromTOML (builtins.readFile ./deepface/enclave/Cargo.lock);
           sources = lib.unique (lib.filter
             (source: source != null && lib.hasInfix "worldcoin/biometric-engines" source)
             (map (package: package.source or null) lock.package));
         in
         assert lib.assertMsg (lib.length sources == 1)
-          ("expected one worldcoin/biometric-engines git source in Cargo.lock, found "
-            + toString (lib.length sources));
+          ("expected one worldcoin/biometric-engines git source in deepface/enclave/Cargo.lock,"
+            + " found " + toString (lib.length sources));
         lib.last (lib.splitString "#" (lib.head sources));
 
       # Fetched here rather than taken as a flake input so there is no second pin to keep in
@@ -90,8 +87,8 @@
       # checkout, one level above the crate directories, so restoring assets/ there satisfies
       # it without patching the crate. Nothing verifies the addition: cargo writes
       # `{"files":{}}` as the checksum manifest for vendored git crates.
-      cargoVendorDir = craneLib.vendorCargoDeps {
-        cargoLock = ./Cargo.lock;
+      deepfaceVendorDir = craneLib.vendorCargoDeps {
+        cargoLock = ./deepface/enclave/Cargo.lock;
         overrideVendorGitCheckout = packages: drv:
           if lib.any (package: lib.hasInfix "worldcoin/biometric-engines" (package.source or "")) packages then
             pkgs.runCommandLocal "biometric-engines-checkout-with-assets" { } ''
@@ -103,8 +100,11 @@
             drv;
       };
 
+      # Nothing in di's graph comes from a git source, so this needs no override and no
+      # credentials — the lane that would notice a private dependency arriving is CI's.
+      diVendorDir = craneLib.vendorCargoDeps { cargoLock = ./di/enclave/Cargo.lock; };
+
       commonArgs = {
-        inherit src cargoVendorDir version;
         strictDeps = true;
 
         # The build must not depend on the machine running it, only on the commit. Two defaults
@@ -151,15 +151,21 @@
         LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
       };
 
-      buildEnclaveBin = { pname, extraArgs ? { } }:
-        let
-          args = commonArgs // extraArgs // {
-            inherit pname;
-            cargoExtraArgs = "--locked --package ${pname} --bin ${pname}";
-          };
-        in
-        craneLib.buildPackage (args // {
-          cargoArtifacts = craneLib.buildDepsOnly args;
+      # The enclave manifests spell their version out rather than inheriting it, so read it from
+      # there. Taking it from the root workspace would put a host-side version bump in the PCRs.
+      versionOf = manifest: (builtins.fromTOML (builtins.readFile manifest)).package.version;
+
+      # cargoArtifacts = null builds dependencies and crate in one derivation instead of
+      # splitting them across a `buildDepsOnly` dummy build. The split saves nothing on the
+      # cold build that PCRs are measured from, and crane's dummy source generation assumes the
+      # workspace is at the source root, which these nested workspaces are not.
+      buildEnclaveBin = { pname, workspace, crates, cargoVendorDir, extraArgs ? { } }:
+        craneLib.buildPackage (commonArgs // extraArgs // {
+          inherit pname cargoVendorDir;
+          version = versionOf (./. + "/${workspace}/Cargo.toml");
+          src = srcFor crates;
+          cargoArtifacts = null;
+          cargoExtraArgs = "--locked --manifest-path ${workspace}/Cargo.toml --bin ${pname}";
         });
 
       nitroBlobs = nitro-util.lib.${system}.blobs.x86_64;
@@ -171,8 +177,8 @@
       # PCR0/PCR2 depend on the machine doing the conversion.
       buildEif = { pname, extraRoot ? [ ] }:
         nitro-util.lib.${system}.buildEif {
-          inherit version;
           name = pname;
+          version = enclaveBins.${pname}.version;
           arch = "x86_64";
           kernel = nitroBlobs.kernel;
           kernelConfig = nitroBlobs.kernelConfig;
@@ -229,9 +235,23 @@
         faceModelSources));
 
       enclaveBins = {
-        di-enclave = buildEnclaveBin { pname = "di-enclave"; };
+        di-enclave = buildEnclaveBin {
+          pname = "di-enclave";
+          workspace = "di/enclave";
+          crates = [ ./di/enclave ./di/types ./shared/enclave-types ];
+          cargoVendorDir = diVendorDir;
+        };
         deepface-enclave = buildEnclaveBin {
           pname = "deepface-enclave";
+          workspace = "deepface/enclave";
+          crates = [
+            ./deepface/enclave
+            ./deepface/protocol
+            ./deepface/types
+            ./shared/attested-channel
+            ./shared/enclave-types
+          ];
+          cargoVendorDir = deepfaceVendorDir;
           extraArgs = faceEngineArgs;
         };
       };

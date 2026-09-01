@@ -1,6 +1,6 @@
 # Embedding Verifier
 
-Rust workspace for the embedding verifier host and secure enclave.
+Rust workspaces for the embedding verifier host and secure enclave.
 
 ## Structure
 
@@ -10,19 +10,20 @@ lives in `shared/`. Crate names compose from the path: `deepface/host` is `deepf
 
 ```text
 embedding-verifier/
+├── Cargo.toml             # Host-side workspace  -> Cargo.lock
 ├── shared/
 │   ├── attested-channel/  # Client↔enclave channel and the attestation it rests on; destined for pontifex
 │   └── enclave-types/     # The vsock contract both workloads share: health, errors, key attestation
 ├── deepface/
 │   ├── host/              # Axum HTTP API — the untrusted side of the boundary
-│   ├── enclave/           # Nitro enclave workload — the trusted side
+│   ├── enclave/           # Nitro enclave workload — the trusted side. Own workspace -> own Cargo.lock
 │   ├── types/             # The match's own vsock contract
 │   ├── protocol/          # Match inputs and outputs; travels sealed, the host links none of it. Will likely move to `world-id-protocol`.
 │   ├── client/            # Attestation-verifying client
 │   └── e2e/               # End-to-end harness driving host and enclave together
 └── di/                    # Skeleton — dirs and crates only, no behaviour yet
     ├── host/
-    ├── enclave/
+    ├── enclave/           # Own workspace -> own Cargo.lock
     └── types/
 ```
 
@@ -31,24 +32,49 @@ and `di-enclave` log and exit non-zero — a skeleton that idled would read as h
 [Spec: DeepIdentifier Migration TEE Setup v1](https://app.notion.com/p/worldcoin/Spec-DeepIdentifier-Migration-TEE-Setup-v1-3c08614bdf8c8014b7ddf50f3cac4e4b)
 for what goes in them.
 
+### Three workspaces, three lockfiles
+
+Each enclave is its own cargo workspace. One lockfile for the whole repository meant a
+`deepface-host` dependency bump re-resolved the enclave graph and moved PCR0, which clients
+pin. Now an EIF's inputs are its own `Cargo.toml`, the `Cargo.lock` beside it, and the path
+crates they name.
+
+`attested-channel`, `enclave-types`, `deepface-protocol`, `deepface-types` and `di-types` are
+in both an enclave graph and the host-side one. They are members of the root workspace but
+inherit nothing from it — not `[workspace.dependencies]`, not `[workspace.package]` — so the
+root manifest cannot reach an enclave graph either. Treat them as standalone crates: write the
+version, and the `edition`, in their own manifest.
+
+Package metadata matters as much as the dependency versions here. An inherited `edition` would
+change how an enclave compiles when the root workspace moved, and bumping the root
+`[workspace.package].version` would leave both enclave lockfiles stale against `--locked`.
+
+`face-engine` now lives only in `deepface/enclave`, so it is the one build that needs a token
+for `worldcoin/biometric-engines`. CI runs the other lanes without one, which is what keeps
+that true.
+
 ## Development
 
+Every command takes a `--manifest-path`, because there are three workspaces:
+
 ```bash
-# Run formatting and lint checks
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features --
+# From the repository root — cargo-deny reads deny.toml from the working directory.
+for ws in . deepface/enclave di/enclave; do
+  cargo fmt    --manifest-path "$ws/Cargo.toml" --all -- --check
+  cargo clippy --manifest-path "$ws/Cargo.toml" --all-targets --all-features --
+  cargo test   --manifest-path "$ws/Cargo.toml" --all
+  cargo deny   --manifest-path "$ws/Cargo.toml" --all-features check
+done
+```
 
-# Build and test the workspace
-cargo build
-cargo test --all
-
+```bash
 # Run the host on http://localhost:8000
 # ENCLAVE_CID and ENCLAVE_PORT are required; the process panics without them.
 RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin deepface-host
 curl http://localhost:8000/health
 
 # Run the secure enclave placeholder
-RUST_LOG=info cargo run --bin deepface-enclave
+RUST_LOG=info cargo run --manifest-path deepface/enclave/Cargo.toml --bin deepface-enclave
 ```
 
 ## Building images
@@ -66,15 +92,20 @@ scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, measu
 docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif target/eif
 ```
 
-`face-engine` is private, and cargo resolves the whole workspace, so every build needs git
-credentials for `worldcoin/biometric-engines` — an ssh agent or a credential helper, not an
-environment variable. `HUGGING_FACE_TOKEN` is `deepface`-only and is used by the script
+`face-engine` is private, so a `deepface` build needs git credentials for
+`worldcoin/biometric-engines` — an ssh agent or a credential helper, not an environment
+variable. Nothing in `di`'s graph is private, and neither is the host-side workspace, so those
+build without a token. `HUGGING_FACE_TOKEN` is `deepface`-only and is used by the script
 itself, never inside a build.
+
+`flake.nix` hands each enclave build only the crates that workload reaches — its own manifest
+and lockfile plus the path crates they name, and no root manifest. A path dependency added to
+an enclave has to be added to that list too, or the build fails to find it.
 
 `measurements.json` records the PCRs each workload measures to. `verify-measurements.yml`
 rebuilds them on every PR that can move one and fails when they drift, so a PR that changes an
 enclave updates the file in the same commit. Updating it, and re-registering the values with
-clients, stays a human act.
+clients, stays a human act. A host-side change cannot move a PCR and does not trigger it.
 
 The enclaves build with LLVM's LICM scalar promotion disabled (see `flake.nix`): rustc
 otherwise emits address-dependent code, and the PCRs would vary by machine.
@@ -206,13 +237,13 @@ nitro-cli describe-enclaves
 docker version
 ```
 
-Install Rust and the components used by this workspace:
+Install Rust and the components these workspaces use:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 rustup component add rustfmt clippy
-cargo test --all
+for ws in . deepface/enclave di/enclave; do cargo test --manifest-path "$ws/Cargo.toml" --all; done
 ```
 
 For private repository access, install and authenticate the GitHub CLI using its
