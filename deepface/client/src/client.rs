@@ -430,7 +430,12 @@ impl FaceVerifierClient {
             .await
             .map_err(ClientError::MalformedResponse)?;
 
-        let attestation = self.verifier.verify_base64(body.attestation.trim(), now)?;
+        // The registry holds the document the enclave produced at boot, so this is verified as
+        // of when it was signed rather than now. Liveness is the caller's policy, not this
+        // lookup's: for anything but the currently running enclave it is unanswerable.
+        let attestation = self
+            .verifier
+            .verify_stored_base64(body.attestation.trim(), now)?;
         if attestation.enclave_public_key != requested {
             return Err(ClientError::SigningKeyMismatch);
         }

@@ -27,8 +27,13 @@ const FIXTURE_TIMESTAMP_MILLIS: u64 = 1_758_628_609_915;
 const FIXTURE_ATTESTED_KEY: [u8; 32] =
     hex!("43b986461bbdb752dd389e8f36312e5ebc3377f91e694d8125d1bc0079b2e122");
 
+/// A registry row is read long after the boot that wrote it, by which time the document's
+/// certificate has expired. Looking it up at the fixture's own instant would only prove the
+/// lookup works in the one window it is never used in.
 fn fixture_instant() -> SystemTime {
-    UNIX_EPOCH + Duration::from_millis(FIXTURE_TIMESTAMP_MILLIS)
+    UNIX_EPOCH
+        + Duration::from_millis(FIXTURE_TIMESTAMP_MILLIS)
+        + Duration::from_secs(30 * 24 * 60 * 60)
 }
 
 fn config(base_url: &str) -> Config {

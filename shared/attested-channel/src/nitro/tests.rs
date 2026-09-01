@@ -283,3 +283,68 @@ fn rejects_an_empty_configuration_rather_than_matching_it_vacuously() {
         "unexpected error: {error}"
     );
 }
+
+/// Long enough after the fixture that its certificate has expired and its timestamp is stale.
+/// Roughly when a registry row from a previous boot would actually be looked up.
+fn long_after_the_fixture() -> SystemTime {
+    fixture_instant() + Duration::from_secs(30 * 24 * 60 * 60)
+}
+
+/// The reason `verify_stored` exists: a document outlives the window `verify` accepts it in.
+#[test]
+fn a_stored_document_verifies_after_verify_would_reject_it() {
+    let verifier = verifier();
+
+    let live = verifier.verify(&real_document(), long_after_the_fixture());
+    assert!(
+        live.is_err(),
+        "the fixture's certificate should have expired by now"
+    );
+
+    let stored = verifier
+        .verify_stored(&real_document(), long_after_the_fixture())
+        .expect("a stored document should verify as of when it was signed");
+
+    assert_eq!(stored.timestamp_millis, attestation_doc().timestamp);
+}
+
+/// Staleness is the point of a stored document, so it must not be an error.
+#[test]
+fn verify_stored_ignores_the_freshness_bound() {
+    let strict = EnclaveAttestationVerifier::new(vec![fixture_pcr_config()], 1);
+
+    strict
+        .verify_stored(&real_document(), long_after_the_fixture())
+        .expect("age is not a question a stored document answers");
+}
+
+/// Everything except the clock is still checked.
+#[test]
+fn verify_stored_still_rejects_unknown_measurements() {
+    let wrong = EnclaveAttestationVerifier::new(
+        vec![vec![PcrMeasurement::new(0, [0xabu8; 48])]],
+        GENEROUS_MAX_AGE_MILLIS,
+    );
+
+    let error = wrong
+        .verify_stored(&real_document(), long_after_the_fixture())
+        .expect_err("an unpinned image must not verify, however old the document is");
+
+    assert!(matches!(error, EnclaveAttestationError::CodeUntrusted(_)));
+}
+
+/// A document cannot have been signed after now, whoever holds the leaf key.
+#[test]
+fn verify_stored_rejects_a_timestamp_in_the_future() {
+    let error = verifier()
+        .verify_stored(
+            &real_document(),
+            fixture_instant() - Duration::from_secs(60),
+        )
+        .expect_err("a future timestamp is not a document that was stored");
+
+    assert!(matches!(
+        error,
+        EnclaveAttestationError::AttestationInvalidTimestamp(_)
+    ));
+}
