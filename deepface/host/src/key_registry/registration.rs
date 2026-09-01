@@ -64,6 +64,15 @@ pub enum RegistrationError {
     /// Asked to retire a key the registry has never seen.
     #[error("{0} is not in the registry")]
     NotRegistered(SigningPublicKey),
+    /// The registry already holds this key as retired or revoked. Nothing the enclave signs with
+    /// it can be verified, and rewriting the row `active` would undo an operator's decision.
+    #[error("{public_key} is in the registry as {}", status.as_str())]
+    NotActive {
+        /// The key the enclave attested.
+        public_key: SigningPublicKey,
+        /// What the registry says about it.
+        status: KeyStatus,
+    },
 }
 
 /// Builds the verifier the host checks its own enclave against.
@@ -98,32 +107,51 @@ pub async fn register_signing_key(
     let mut current: Option<SigningPublicKey> = None;
 
     loop {
-        let mut failures: u32 = 0;
+        // The two phases want opposite things from a failure. With nothing registered the host
+        // serves no traffic, so a wedged registry should be backed off hard. Once a key is live
+        // the cost reverses: every second spent retrying is a second of serving on a key the
+        // registry may no longer describe, so one attempt per tick and the next tick is the
+        // retry. Backing off here would stretch that window to the cap.
+        let result = if current.is_none() {
+            let mut failures: u32 = 0;
 
-        let result = (|| register_once(enclave_client.as_ref(), registry.as_ref(), &verifier))
-            .retry(backoff())
-            .notify(|error, delay| {
-                failures = failures.saturating_add(1);
-                tracing::warn!(
-                    %error,
-                    attempt = failures,
-                    retry_in = ?delay,
-                    dependency = "key-registry",
-                    "could not confirm this boot's signing key is registered; readiness stays red"
-                );
-            })
-            .await;
+            (|| register_once(enclave_client.as_ref(), registry.as_ref(), &verifier))
+                .retry(backoff())
+                .notify(|error, delay| {
+                    failures = failures.saturating_add(1);
+                    tracing::warn!(
+                        %error,
+                        attempt = failures,
+                        retry_in = ?delay,
+                        dependency = "key-registry",
+                        "could not confirm this boot's signing key is registered; readiness stays red"
+                    );
+                })
+                .await
+        } else {
+            register_once(enclave_client.as_ref(), registry.as_ref(), &verifier).await
+        };
 
         match result {
             Ok(public_key) => {
                 reconcile(registry.as_ref(), &mut current, public_key, &registered).await;
             }
-            // The schedule has no attempt cap, so this is unreachable in practice. Logged rather
-            // than asserted, since a silent exit here would leave readiness red with no reason why.
-            Err(error) => tracing::error!(
+            // Retired or revoked is a decision, not an outage: no retry will change it, and
+            // nothing this enclave signs can be verified while it stands. Serving on the key
+            // published before would be reporting healthy on exactly the thing that is wrong.
+            Err(error @ RegistrationError::NotActive { .. }) => {
+                tracing::error!(
+                    %error,
+                    dependency = "key-registry",
+                    "the enclave's signing key is not active in the registry; taking this host out of service"
+                );
+                current = None;
+                let _ = registered.send(None);
+            }
+            Err(error) => tracing::warn!(
                 %error,
                 dependency = "key-registry",
-                "stopped trying to confirm this boot's signing key is registered; readiness stays red"
+                "could not confirm the enclave's signing key is registered; retrying on the next poll"
             ),
         }
 
@@ -237,9 +265,31 @@ async fn register_once(
     let entry = entry_from(document, &attestation)?;
     let public_key = entry.public_key;
 
-    registry.set(&entry).await?;
+    ensure_registered(registry, &entry).await?;
 
     Ok(public_key)
+}
+
+/// Writes `entry` only if the registry does not already hold that key.
+///
+/// Written once, not on every poll. A key already in the registry is either still active, which
+/// this has nothing to add to, or it is retired or revoked — and writing it back `active` would
+/// undo the only claim the registry exists to make, within one poll and saying nothing about it.
+async fn ensure_registered(
+    registry: &dyn KeyRegistry,
+    entry: &RegistryEntry,
+) -> Result<(), RegistrationError> {
+    match registry.get(entry.public_key).await? {
+        None => registry
+            .set(entry)
+            .await
+            .map_err(RegistrationError::Registry),
+        Some(existing) if existing.status == KeyStatus::Active => Ok(()),
+        Some(existing) => Err(RegistrationError::NotActive {
+            public_key: entry.public_key,
+            status: existing.status,
+        }),
+    }
 }
 
 /// Builds the row from the *verified* document, never from anything the host chose.
@@ -276,7 +326,8 @@ mod tests {
     use tokio::sync::watch;
 
     use super::{
-        RegistrationError, entry_from, reconcile, register_signing_key, retire_signing_key,
+        RegistrationError, ensure_registered, entry_from, reconcile, register_signing_key,
+        retire_signing_key,
     };
     use crate::key_registry::{
         InMemoryKeyRegistry, KeyRegistry, KeyStatus, RegistryEntry, SigningPublicKey,
@@ -474,6 +525,119 @@ mod tests {
             KeyStatus::Retired,
             "the enclave that held the old key is gone"
         );
+    }
+
+    /// The reconcile loop re-runs registration every poll. Rewriting the row each time would
+    /// undo a revocation within one interval, which is the one thing the registry is for.
+    #[tokio::test]
+    async fn registering_does_not_walk_back_a_revocation() {
+        let registry = InMemoryKeyRegistry::new();
+        let key = SigningPublicKey::from_bytes([7; 32]);
+        registry
+            .set(&entry(key, KeyStatus::Revoked))
+            .await
+            .expect("should write");
+
+        let error = ensure_registered(&registry, &entry(key, KeyStatus::Active))
+            .await
+            .expect_err("a revoked key must not be re-registered as active");
+
+        assert!(matches!(
+            error,
+            RegistrationError::NotActive {
+                status: KeyStatus::Revoked,
+                ..
+            }
+        ));
+        let stored = registry
+            .get(key)
+            .await
+            .expect("should read")
+            .expect("a row");
+        assert_eq!(stored.status, KeyStatus::Revoked);
+    }
+
+    /// Same for a retired row: the enclave that held the key is gone, and a poll saying
+    /// otherwise would resurrect it.
+    #[tokio::test]
+    async fn registering_does_not_resurrect_a_retired_key() {
+        let registry = InMemoryKeyRegistry::new();
+        let key = SigningPublicKey::from_bytes([7; 32]);
+        registry
+            .set(&RegistryEntry {
+                retired_at: Some(1_780_000_900),
+                ..entry(key, KeyStatus::Retired)
+            })
+            .await
+            .expect("should write");
+
+        let error = ensure_registered(&registry, &entry(key, KeyStatus::Active))
+            .await
+            .expect_err("a retired key must not be re-registered as active");
+
+        assert!(matches!(
+            error,
+            RegistrationError::NotActive {
+                status: KeyStatus::Retired,
+                ..
+            }
+        ));
+        let stored = registry
+            .get(key)
+            .await
+            .expect("should read")
+            .expect("a row");
+        assert_eq!(stored.status, KeyStatus::Retired);
+        assert_eq!(stored.retired_at, Some(1_780_000_900));
+    }
+
+    #[tokio::test]
+    async fn registering_writes_a_key_the_registry_has_never_seen() {
+        let registry = InMemoryKeyRegistry::new();
+        let key = SigningPublicKey::from_bytes([7; 32]);
+
+        ensure_registered(&registry, &entry(key, KeyStatus::Active))
+            .await
+            .expect("a new key should be written");
+
+        let stored = registry
+            .get(key)
+            .await
+            .expect("should read")
+            .expect("a row");
+        assert_eq!(stored.status, KeyStatus::Active);
+    }
+
+    /// Polling an already-active key must not rewrite it — the row carries the attestation and
+    /// `valid_from` from the boot that made it, and a poll has nothing newer to say.
+    #[tokio::test]
+    async fn registering_an_active_key_again_leaves_the_row_alone() {
+        let registry = InMemoryKeyRegistry::new();
+        let key = SigningPublicKey::from_bytes([7; 32]);
+        registry
+            .set(&RegistryEntry {
+                valid_from: 1_780_000_000,
+                ..entry(key, KeyStatus::Active)
+            })
+            .await
+            .expect("should write");
+
+        ensure_registered(
+            &registry,
+            &RegistryEntry {
+                valid_from: 1_999_999_999,
+                ..entry(key, KeyStatus::Active)
+            },
+        )
+        .await
+        .expect("an active key needs nothing doing");
+
+        let stored = registry
+            .get(key)
+            .await
+            .expect("should read")
+            .expect("a row");
+        assert_eq!(stored.valid_from, 1_780_000_000);
     }
 
     /// The whole point of the background task: a host whose key is not registered never reports
