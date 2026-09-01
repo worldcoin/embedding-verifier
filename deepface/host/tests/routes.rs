@@ -57,10 +57,14 @@ fn assignment_request() -> Request<Body> {
         .expect("request should be valid")
 }
 
-/// Builds a match request with a well-formed challenge URL.
-fn match_request(url: &str) -> Request<Body> {
+/// A well-formed challenge id. The route never parses it — the fetcher does — so the stub sources
+/// below answer regardless, and this only has to be shaped like what a client would send.
+const CHALLENGE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
+/// Builds a match request with a well-formed challenge id.
+fn match_request(id: &str) -> Request<Body> {
     let body = format!(
-        r#"{{"challenge_image_url":"{url}","ciphertext":"{}"}}"#,
+        r#"{{"challenge_image_id":"{id}","ciphertext":"{}"}}"#,
         STANDARD.encode("sealed")
     );
 
@@ -188,11 +192,7 @@ async fn matches_relays_the_sealed_request_and_the_fetched_challenge() {
         StubChallengeSource::returning(b"challenge-ciphertext"),
     );
 
-    let (status, body) = send(
-        state,
-        match_request("https://bucket.example.com/challenge-images/a"),
-    )
-    .await;
+    let (status, body) = send(state, match_request(CHALLENGE_ID)).await;
 
     assert_eq!(status, StatusCode::OK);
     // Both fields are relayed opaquely: the host encodes, it does not interpret.
@@ -208,9 +208,9 @@ async fn matches_rejects_a_non_base64_ciphertext() {
         .method(Method::POST)
         .uri("/v1/matches")
         .header("content-type", "application/json")
-        .body(Body::from(
-            r#"{"challenge_image_url":"https://bucket.example.com/challenge-images/a","ciphertext":"not base64!"}"#,
-        ))
+        .body(Body::from(format!(
+            r#"{{"challenge_image_id":"{CHALLENGE_ID}","ciphertext":"not base64!"}}"#
+        )))
         .expect("request should be valid");
 
     let (status, body) = send(state, request).await;
@@ -221,8 +221,8 @@ async fn matches_rejects_a_non_base64_ciphertext() {
 
 #[tokio::test]
 async fn matches_attributes_fetch_failures_outward() {
-    // The RP's bucket is an availability dependency of this path, so its failures are a 502 and
-    // never an enclave fault.
+    // The bucket is an availability dependency of this path, so its failures are a 502 and never
+    // an enclave fault.
     let cases = [
         (
             FetchError::Unreachable,
@@ -237,9 +237,9 @@ async fn matches_attributes_fetch_failures_outward() {
             false,
         ),
         (
-            FetchError::Malformed,
+            FetchError::InvalidId,
             StatusCode::BAD_REQUEST,
-            "invalid_challenge_url",
+            "invalid_challenge_id",
             false,
         ),
     ];
@@ -250,11 +250,7 @@ async fn matches_attributes_fetch_failures_outward() {
             StubChallengeSource::failing(error),
         );
 
-        let (status, body) = send(
-            state,
-            match_request("https://bucket.example.com/challenge-images/a"),
-        )
-        .await;
+        let (status, body) = send(state, match_request(CHALLENGE_ID)).await;
 
         assert_eq!(status, expected_status, "for {error:?}");
         assert_eq!(body["error"]["code"], expected_code, "for {error:?}");
@@ -274,11 +270,7 @@ async fn matches_maps_an_unopenable_request_to_conflict() {
         ..StubEnclaveClient::default()
     });
 
-    let (status, body) = send(
-        state,
-        match_request("https://bucket.example.com/challenge-images/a"),
-    )
-    .await;
+    let (status, body) = send(state, match_request(CHALLENGE_ID)).await;
 
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["error"]["code"], "reassign_required");
@@ -296,11 +288,7 @@ async fn matches_answers_200_whatever_the_sealed_result_says() {
         ..StubEnclaveClient::default()
     });
 
-    let (status, body) = send(
-        state,
-        match_request("https://bucket.example.com/challenge-images/a"),
-    )
-    .await;
+    let (status, body) = send(state, match_request(CHALLENGE_ID)).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["response_ciphertext"], STANDARD.encode([9u8; 48]));

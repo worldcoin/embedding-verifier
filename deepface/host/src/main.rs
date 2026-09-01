@@ -22,7 +22,10 @@ async fn main() -> anyhow::Result<()> {
         environment.enclave_cid(),
         environment.enclave_port(),
     ));
-    let challenge_source = Arc::new(ChallengeFetcher::new()?);
+    // A missing or broken base URL fails the boot, not the first request.
+    let challenge_source = Arc::new(ChallengeFetcher::new(
+        &environment.challenge_image_base_url(),
+    )?);
 
     // KEY_REGISTRY names the store, so a missing table is a startup panic rather than a host that
     // looks healthy while signing against a registry that dies with it.

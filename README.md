@@ -69,13 +69,15 @@ done
 
 ```bash
 # Run the host on http://localhost:8000
-# ENCLAVE_CID, ENCLAVE_PORT and ENCLAVE_PCR0 are required; the process panics without them.
+# ENCLAVE_CID, ENCLAVE_PORT, ENCLAVE_PCR0 and CHALLENGE_IMAGE_BASE_URL are required; the
+# process panics without them.
 # A `--debug-mode` enclave measures all zeros, which only ALLOW_DEBUG_MEASUREMENTS accepts.
 # KEY_REGISTRY defaults to dynamodb and then requires KEY_REGISTRY_TABLE; in-memory is
 # development-only and the keys die with the process.
 RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 \
   ENCLAVE_PCR0=$(printf '0%.0s' {1..96}) ALLOW_DEBUG_MEASUREMENTS=true \
   KEY_REGISTRY=in-memory \
+  CHALLENGE_IMAGE_BASE_URL=https://bucket.example.com/challenges/ \
   cargo run --bin deepface-host
 curl http://localhost:8000/health
 
@@ -157,14 +159,13 @@ VERIFIER_CONFIG=./client.json cargo run --bin deepface-e2e -- <credential> <live
 frame. The host relays but cannot read either input:
 
 ```json
-{ "challenge_image_url": "https://…", "ciphertext": "<base64 enc || ciphertext>" }
+{ "challenge_image_id": "<uuid>", "ciphertext": "<base64 enc || ciphertext>" }
 ```
 
 `ciphertext` is the match inputs sealed to the enclave's attested encryption key — both
 images, `hashes.json`, and the AES-256-GCM key and IV for the challenge image. The challenge
-image itself never travels: the RP uploads it encrypted, and the host fetches that blob from
-`challenge_image_url` holding no key for it. A substituted URL or swapped object therefore
-fails inside the enclave rather than changing the result.
+image itself never travels: it is uploaded encrypted, and the host fetches that blob holding no
+key for it. A swapped object therefore fails inside the enclave rather than changing the result.
 
 ```json
 { "response_ciphertext": "<base64 nonce || ciphertext>", "key_attestation": "<base64 COSE_Sign1>" }
@@ -184,7 +185,7 @@ code.
 | --- | --- |
 | `200` | The enclave answered; the sealed payload holds the outcome |
 | `409` `reassign_required` | The request did not open, so there was no channel to reply on; re-assign and re-seal, once |
-| `400` `invalid_challenge_url` | The URL was rejected before any request was made |
+| `400` `invalid_challenge_id` | The id was not a UUID, and was rejected before any request was made |
 | `502` `challenge_fetch_failed` | The challenge image could not be fetched |
 | `500` `internal_error` | Enclave fault |
 
@@ -192,10 +193,19 @@ code.
 nothing to seal a reply into. Everything else the host might want — how often matches fail, how often
 the RP's objects are stale — has to come from enclave-side metrics rather than from status codes.
 
-> **No SSRF destination control.** `challenge_image_url` is only constrained in shape — HTTPS,
-> a domain rather than an IP literal, no credentials, no redirects, a 5s timeout and a 4 MiB
-> cap. Nothing pins *where* a fetch may go, so this endpoint must not take untrusted callers
-> as-is. See `TODO(SSRF)` in `deepface/host/src/challenge_fetcher.rs`.
+### The challenge fetch
+
+The caller names an object, not a destination. `CHALLENGE_IMAGE_BASE_URL` — an HTTPS URL ending in
+`/`, e.g. `https://<bucket>.s3.<region>.amazonaws.com/challenges/` — is the only thing deciding
+where a fetch goes, and the id is resolved against it after parsing as a UUID. Nothing a client
+sends can change the host, scheme, port or path, which is what closes the SSRF surface rather than
+filtering it. There is no default: without the variable the host refuses to start.
+
+The id is a locator, not a capability. Presenting someone else's id yields a blob that will not
+decrypt under the key in the caller's own sealed payload, and the RP's `challenger_image_hash`
+check rejects the resulting proof regardless.
+
+Around that: no redirect following, a 5s deadline, and a 4 MiB ceiling enforced while streaming.
 
 ## Nitro-enabled development host
 

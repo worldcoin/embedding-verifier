@@ -86,15 +86,15 @@ impl AppError {
 
     /// Maps a challenge-image fetch failure.
     ///
-    /// The RP's bucket is an availability dependency, so its failures are `502` and never an
-    /// enclave fault. A rejected URL is the caller's problem, and not retryable.
+    /// The bucket is an availability dependency, so its failures are `502` and never an enclave
+    /// fault. A rejected id is the caller's problem, and not retryable.
     #[must_use]
     pub fn challenge_fetch(error: FetchError) -> Self {
         match error {
-            FetchError::Malformed => Self::new(
+            FetchError::InvalidId => Self::new(
                 StatusCode::BAD_REQUEST,
-                "invalid_challenge_url",
-                "The challenge image URL was rejected",
+                "invalid_challenge_id",
+                "The challenge image id was rejected",
                 false,
             ),
             FetchError::TooLarge => Self::new(

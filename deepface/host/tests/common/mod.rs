@@ -60,8 +60,8 @@ impl EnclaveClient for StubEnclaveClient {
 
 /// A [`ChallengeSource`] answering from a fixed result.
 ///
-/// The real fetcher rejects plain HTTP and IP literals by design, so a local test server could
-/// not be fetched from; stubbing at this seam is what keeps the route testable.
+/// The real fetcher resolves ids against a configured bucket, so a local test server could not be
+/// reached; stubbing at this seam is what keeps the route testable.
 pub struct StubChallengeSource {
     pub result: Result<Vec<u8>, FetchError>,
 }
@@ -86,7 +86,7 @@ impl Default for StubChallengeSource {
 
 #[async_trait]
 impl ChallengeSource for StubChallengeSource {
-    async fn fetch(&self, _url: &str) -> Result<Vec<u8>, FetchError> {
+    async fn fetch(&self, _id: &str) -> Result<Vec<u8>, FetchError> {
         self.result.clone()
     }
 }

@@ -29,6 +29,9 @@ fn instant() -> SystemTime {
     UNIX_EPOCH + Duration::from_millis(1_758_628_609_915)
 }
 
+/// The challenge object the RP uploaded. Opaque to the client, which only relays it.
+const CHALLENGE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
 fn config(base_url: &str) -> Config {
     let pcrs = vec![PcrMeasurement::new(
         0,
@@ -188,7 +191,7 @@ async fn a_sealed_rejection_round_trips() {
         .request_match(
             &assignment_for(&responder),
             &inputs(),
-            "https://bucket.example.com/challenge-images/a",
+            CHALLENGE_ID,
             instant(),
         )
         .await
@@ -198,10 +201,7 @@ async fn a_sealed_rejection_round_trips() {
 
     // The wire shape the host reads.
     let body = seen.lock().expect("lock should be held").clone().unwrap();
-    assert_eq!(
-        body["challenge_image_url"],
-        "https://bucket.example.com/challenge-images/a"
-    );
+    assert_eq!(body["challenge_image_id"], CHALLENGE_ID);
     assert!(
         STANDARD
             .decode(body["ciphertext"].as_str().unwrap())
@@ -211,7 +211,7 @@ async fn a_sealed_rejection_round_trips() {
     assert_eq!(
         body.as_object().map(serde_json::Map::len),
         Some(2),
-        "the request carries the URL and the ciphertext, nothing else"
+        "the request carries the id and the ciphertext, nothing else"
     );
 }
 
@@ -225,7 +225,7 @@ async fn a_reply_from_another_exchange_cannot_be_opened() {
         .request_match(
             &assignment_for(&responder),
             &inputs(),
-            "https://example.com/a",
+            CHALLENGE_ID,
             instant(),
         )
         .await
@@ -244,7 +244,7 @@ async fn a_stale_assignment_asks_for_a_reassignment() {
         .request_match(
             &assignment_for(&responder),
             &inputs(),
-            "https://example.com/a",
+            CHALLENGE_ID,
             instant(),
         )
         .await
@@ -266,7 +266,7 @@ async fn other_envelopes_keep_their_code_and_retry_flag() {
         .request_match(
             &assignment_for(&responder),
             &inputs(),
-            "https://example.com/a",
+            CHALLENGE_ID,
             instant(),
         )
         .await
@@ -300,7 +300,7 @@ async fn a_status_without_an_envelope_still_surfaces() {
         .request_match(
             &assignment_for(&responder),
             &inputs(),
-            "https://example.com/a",
+            CHALLENGE_ID,
             instant(),
         )
         .await
