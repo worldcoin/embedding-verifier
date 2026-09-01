@@ -1,0 +1,103 @@
+# Three cargo workspaces, each with its own lockfile. Dependency auditing is supply-chain.yml.
+name: Rust CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  RUST_BACKTRACE: 1
+
+jobs:
+  cargo-clippy:
+    name: clippy (${{ matrix.workspace }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [".", "deepface/enclave", "di/enclave"]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: ./.github/actions/setup-rust
+        with:
+          workspace: ${{ matrix.workspace }}
+          app-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
+          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
+      - name: fmt
+        run: cargo fmt --manifest-path ${{ matrix.workspace }}/Cargo.toml --all -- --check
+      - name: clippy
+        run: cargo clippy --manifest-path ${{ matrix.workspace }}/Cargo.toml --locked --all-targets --all-features --
+
+  cargo-tests:
+    name: tests (${{ matrix.workspace }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [".", "deepface/enclave", "di/enclave"]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: ./.github/actions/setup-rust
+        with:
+          workspace: ${{ matrix.workspace }}
+          app-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
+          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
+      - name: tests
+        run: cargo test --manifest-path ${{ matrix.workspace }}/Cargo.toml --locked --all --all-features --verbose
+
+  # The cargo jobs never read flake.nix, and verify-measurements.yml skips PRs that touch nothing
+  # an enclave reaches. Evaluating every output catches a stale flake.lock or a path dependency
+  # missing from flake.nix without spending the 90-minute EIF build.
+  flake:
+    name: Flake eval
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
+          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
+          owner: worldcoin
+          repositories: biometric-engines
+      # crane fetches the private dependency with `builtins.fetchGit`, which uses the host's git
+      # credentials. A helper rather than `insteadOf`, whose behaviour depends on Nix's git backend.
+      - name: Authorize git for biometric-engines
+        env:
+          GH_APP_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          # shellcheck disable=SC2016  # the helper must expand GH_APP_TOKEN when git runs it.
+          git config --global credential."https://github.com".helper \
+            '!f() { echo username=x-access-token; echo "password=${GH_APP_TOKEN}"; }; f'
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      # --no-update-lock-file: otherwise a new flake.nix input resolves against upstream right
+      # now and the lock is quietly rewritten.
+      - name: Evaluate the enclave and EIF derivations
+        env:
+          GH_APP_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          for output in di-enclave deepface-enclave di-eif deepface-eif; do
+            drv="$(nix eval --raw --no-update-lock-file ".#packages.x86_64-linux.$output.drvPath")"
+            echo "$output -> $drv"
+          done
+      # Eval alone missed the enclaves moving into their own workspaces: the derivation built and
+      # cargo failed inside it. di is public and small, so build it; deepface stays eval-only.
+      - name: Build the di enclave
+        run: nix build --no-link --no-update-lock-file .#packages.x86_64-linux.di-enclave
