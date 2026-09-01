@@ -1,13 +1,15 @@
 [package]
 name = "deepface-types"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-publish.workspace = true
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.0"
+license = "MIT"
+publish = false
 
+# In the deepface-enclave graph, so nothing here is inherited from the root workspace.
+# See the note in the root Cargo.toml.
 [dependencies]
-enclave-types.workspace = true
-pontifex = { workspace = true }
-serde = { workspace = true }
-serde_bytes.workspace = true
+enclave-types = { path = "../../shared/enclave-types" }
+pontifex = { version = "1.1.2", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"

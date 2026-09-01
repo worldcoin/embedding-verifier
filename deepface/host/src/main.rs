@@ -5,13 +5,12 @@ use deepface_host::{
     AppState, Environment, challenge_fetcher::ChallengeFetcher, enclave::PontifexEnclaveClient,
 };
 use tokio::sync::watch;
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    // Keep the guard alive until the server stops so buffered spans are flushed.
+    let _telemetry = telemetry_batteries::init()
+        .map_err(|error| anyhow::anyhow!("failed to initialize telemetry: {error:?}"))?;
 
     let environment = Environment::from_env();
     tracing::info!(?environment, "Starting API");

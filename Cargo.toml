@@ -1,19 +1,33 @@
+# Host-side workspace: the HTTP hosts, the attestation-verifying client, the e2e harness, and
+# the crates the enclaves share with them.
+#
+# Each enclave is its own workspace with its own lockfile (deepface/enclave, di/enclave), so
+# nothing resolved here can move an EIF's PCRs. The crates in both graphs — attested-channel,
+# enclave-types, deepface-protocol, deepface-types, di-types — are members here, but inherit
+# nothing: not the dependency versions in [workspace.dependencies], and not the package
+# metadata in [workspace.package]. Both tables below therefore reach only the four host-side
+# crates. Inherited `edition` would change how an enclave compiles, and an inherited `version`
+# bump would strand both enclave lockfiles against `--locked`.
 [workspace]
 members = [
     "deepface/client",
     "deepface/e2e",
-    "deepface/enclave",
     "deepface/host",
     "deepface/protocol",
     "deepface/types",
-    "di/enclave",
     "di/host",
     "di/types",
     "shared/attested-channel",
     "shared/enclave-types",
 ]
+exclude = [
+    "deepface/enclave",
+    "di/enclave",
+]
 resolver = "3"
 
+# Inherited only by deepface-client, deepface-e2e, deepface-host and di-host. The crates an
+# enclave reaches spell their metadata out themselves.
 [workspace.package]
 edition = "2024"
 rust-version = "1.97.0"
@@ -21,63 +35,36 @@ version = "0.1.0"
 license = "MIT"
 publish = false
 
+# Only the host-side-only crates inherit from here: deepface-client, deepface-e2e,
+# deepface-host, di-host. Adding a dependency for one of them cannot change an enclave build.
 [workspace.dependencies]
-# The workspace's only AEAD, covering three jobs: the match channel's HPKE suite, the
-# exporter-derived response half, and challenge images. The RP already writes AES-256-GCM blobs
-# to S3, so that job fixes the algorithm; the other two follow it rather than adding a second
-# AEAD to the enclave image.
-aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
 anyhow = "1.0"
-ark-babyjubjub = { package = "taceo-ark-babyjubjub", version = "0.5" }
-ark-ff = "0.5"
 async-trait = "0.1"
 attested-channel = { path = "shared/attested-channel" }
-deepface-protocol = { path = "deepface/protocol" }
-deepface-types = { path = "deepface/types" }
-di-types = { path = "di/types" }
-# Attestation crates are pinned to bedrock's versions so the two verifiers cannot drift.
-aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
 aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
 aws-sdk-dynamodb = { version = "1", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
 axum = "0.8"
 backon = { version = "1", default-features = false, features = ["std", "tokio-sleep"] }
 base64 = "0.22"
-ciborium = "0.2"
-coset = "0.4.2"
 deepface-client = { path = "deepface/client" }
-eddsa-babyjubjub = { package = "taceo-eddsa-babyjubjub", version = "0.5" }
+deepface-protocol = { path = "deepface/protocol" }
+deepface-types = { path = "deepface/types" }
+di-types = { path = "di/types" }
 enclave-types = { path = "shared/enclave-types" }
-face-engine = { git = "https://github.com/worldcoin/biometric-engines", rev = "face-engine-v2.16.0", default-features = false, features = ["tract"] }
+getrandom = { version = "0.4", features = ["sys_rng"] }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 hex-literal = "1.1"
-# HKDF for the response derivation in RFC 9458 §4.4. Pinned to the 0.13 line because that is what
-# `hpke` already resolves for its own HKDF-SHA256, so this adds no crate to the enclave image.
-hkdf = "0.13"
-# rust-hpke: the only Rust HPKE implementation with an independent security review. Default
-# features are off so `mlkem` does not drag ml-kem, x-wing and sha3 into the enclave image;
-# `x25519` transitively enables `hkdfsha2`, which the DHKEM(X25519, HKDF-SHA256) suite needs.
-# `aes` rather than `chacha` so the suite reuses the AEAD the challenge-image path already
-# requires. Revisit `mlkem`/`x-wing` if the KEM ever needs to be post-quantum hybrid.
-hpke = { version = "0.14", default-features = false, features = ["alloc", "getrandom", "x25519", "aes"] }
-image = { version = "=0.25.6", default-features = false, features = ["jpeg", "png", "webp"] }
 moka = { version = "0.12", features = ["future"] }
-p384 = { version = "0.13", default-features = false, features = ["ecdsa", "sha384"] }
-getrandom = { version = "0.4", features = ["sys_rng"] }
 pontifex = { version = "1.1.2", default-features = false }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
-poseidon2 = { package = "taceo-poseidon2", version = "0.2" }
 serde = { version = "1.0", features = ["derive"] }
-serde_bytes = "0.11"
 serde_json = "1.0"
 sha2 = { version = "0.10", default-features = false }
 thiserror = "2"
 tokio = { version = "1.48", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["trace"] }
+telemetry-batteries = { version = "0.4.0", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2", features = ["serde"] }
-webpki = "0.22"
-x509-cert = "0.2.5"
-zeroize = { version = "1", default-features = false }
