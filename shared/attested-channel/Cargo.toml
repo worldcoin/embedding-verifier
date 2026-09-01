@@ -1,0 +1,62 @@
+# In both enclave graphs. Nothing here is inherited from the root workspace — not the package
+# metadata below, not the dependency versions — so an edit there cannot reach an EIF.
+[package]
+name = "attested-channel"
+description = "Verifying an enclave's attestation and opening an HPKE channel to the enclave it attests"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.0"
+license = "MIT"
+publish = false
+
+[features]
+attestation = [
+    "dep:aws-nitro-enclaves-nsm-api",
+    "dep:base64",
+    "dep:ciborium",
+    "dep:coset",
+    "dep:hex",
+    "dep:p384",
+    "dep:serde",
+    "dep:thiserror",
+    "dep:webpki",
+    "dep:x509-cert",
+]
+
+# In both enclave graphs, so versions are pinned here rather than inherited from the root
+# workspace table — an edit there must not be able to move an EIF's PCRs.
+[dependencies]
+# The HPKE suite's AEAD and the exporter-derived response half. AES-256-GCM because the RP
+# already writes AES-256-GCM blobs to S3 for the challenge image, so the enclave links one AEAD
+# rather than two. `deepface-protocol` pins the same version for that job.
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+# HKDF for the response derivation in RFC 9458 §4.4. Pinned to the 0.13 line because that is what
+# `hpke` already resolves for its own HKDF-SHA256, so this adds no crate to the enclave image.
+hkdf = "0.13"
+getrandom = { version = "0.4", features = ["sys_rng"] }
+# rust-hpke: the only Rust HPKE implementation with an independent security review. Default
+# features are off so `mlkem` does not drag ml-kem, x-wing and sha3 into the enclave image;
+# `x25519` transitively enables `hkdfsha2`, which the DHKEM(X25519, HKDF-SHA256) suite needs.
+# `aes` rather than `chacha` so the suite reuses the AEAD the challenge-image path already
+# requires. Revisit `mlkem`/`x-wing` if the KEM ever needs to be post-quantum hybrid.
+hpke = { version = "0.14", default-features = false, features = ["alloc", "getrandom", "x25519", "aes"] }
+# Deliberately not 0.10 (which the image-hashing users are on): this must match the generation
+# `hpke` already resolves for HKDF-SHA256, so the enclave links one SHA-256 rather than two.
+# Verify with `cargo tree -p attested-channel`.
+sha2 = "0.11"
+zeroize = { version = "1", default-features = false, features = ["alloc"] }
+
+# Attestation crates are pinned to bedrock's versions so the two verifiers cannot drift.
+aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false, optional = true }
+base64 = { version = "0.22", optional = true }
+ciborium = { version = "0.2", optional = true }
+coset = { version = "0.4.2", optional = true }
+hex = { version = "0.4", default-features = false, features = ["alloc", "serde"], optional = true }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "sha384"], optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+thiserror = { version = "2", optional = true }
+webpki = { version = "0.22", optional = true }
+x509-cert = { version = "0.2.5", optional = true }
+
+[dev-dependencies]
+hex-literal = "1.1"

@@ -1,44 +1,110 @@
 # Embedding Verifier
 
-Rust workspace for the embedding verifier host and secure enclave.
+Rust workspaces for the embedding verifier host and secure enclave.
 
 ## Structure
 
-One directory per workspace member, named after the crate it holds.
+Two workloads over the same host/enclave shape — the `DeepFace` verifier and the
+`DeepIdentifier` migration. Each owns a top-level directory; what both would duplicate
+lives in `shared/`. Crate names compose from the path: `deepface/host` is `deepface-host`.
 
 ```text
 embedding-verifier/
-├── host/              # Axum HTTP API — the untrusted side of the boundary
-├── enclave/           # Nitro enclave workload — the trusted side
-├── enclave-types/     # Wire contract carried over vsock between the two
-├── attested-channel/  # Client↔enclave channel and the attestation it rests on; destined for pontifex
-├── deepface-protocol/ # Match inputs and outputs; travels sealed, the host links none of it. Will likely move to `world-id-protocol`.
-├── client/            # Attestation-verifying client
-└── e2e/               # End-to-end harness driving host and enclave together
+├── Cargo.toml             # Host-side workspace  -> Cargo.lock
+├── shared/
+│   ├── attested-channel/  # Client↔enclave channel and the attestation it rests on; destined for pontifex
+│   └── enclave-types/     # The vsock contract both workloads share: health, errors, key attestation
+├── deepface/
+│   ├── host/              # Axum HTTP API — the untrusted side of the boundary
+│   ├── enclave/           # Nitro enclave workload — the trusted side. Own workspace -> own Cargo.lock
+│   ├── types/             # The match's own vsock contract
+│   ├── protocol/          # Match inputs and outputs; travels sealed, the host links none of it. Will likely move to `world-id-protocol`.
+│   ├── client/            # Attestation-verifying client
+│   └── e2e/               # End-to-end harness driving host and enclave together
+└── di/                    # Skeleton — dirs and crates only, no behaviour yet
+    ├── host/
+    ├── enclave/           # Own workspace -> own Cargo.lock
+    └── types/
 ```
+
+Splitting the types is what keeps one workload out of the other's enclave image. `di-host`
+and `di-enclave` log and exit non-zero — a skeleton that idled would read as healthy. See
+[Spec: DeepIdentifier Migration TEE Setup v1](https://app.notion.com/p/worldcoin/Spec-DeepIdentifier-Migration-TEE-Setup-v1-3c08614bdf8c8014b7ddf50f3cac4e4b)
+for what goes in them.
+
+### Three workspaces, three lockfiles
+
+Each enclave is its own cargo workspace. One lockfile for the whole repository meant a
+`deepface-host` dependency bump re-resolved the enclave graph and moved PCR0, which clients
+pin. Now an EIF's inputs are its own `Cargo.toml`, the `Cargo.lock` beside it, and the path
+crates they name.
+
+`attested-channel`, `enclave-types`, `deepface-protocol`, `deepface-types` and `di-types` are
+in both an enclave graph and the host-side one. They are members of the root workspace but
+inherit nothing from it — not `[workspace.dependencies]`, not `[workspace.package]` — so the
+root manifest cannot reach an enclave graph either. Treat them as standalone crates: write the
+version, and the `edition`, in their own manifest.
+
+Package metadata matters as much as the dependency versions here. An inherited `edition` would
+change how an enclave compiles when the root workspace moved, and bumping the root
+`[workspace.package].version` would leave both enclave lockfiles stale against `--locked`.
+
+`face-engine` now lives only in `deepface/enclave`, so it is the one build that needs a token
+for `worldcoin/biometric-engines`. CI runs the other lanes without one, which is what keeps
+that true.
 
 ## Development
 
+Every command takes a `--manifest-path`, because there are three workspaces:
+
 ```bash
-# Run formatting and lint checks
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features --
+# From the repository root — cargo-deny reads deny.toml from the working directory.
+for ws in . deepface/enclave di/enclave; do
+  cargo fmt    --manifest-path "$ws/Cargo.toml" --all -- --check
+  cargo clippy --manifest-path "$ws/Cargo.toml" --all-targets --all-features --
+  cargo test   --manifest-path "$ws/Cargo.toml" --all
+  cargo deny   --manifest-path "$ws/Cargo.toml" --all-features check
+done
+```
 
-# Build and test the workspace
-cargo build
-cargo test --all
-
+```bash
 # Run the host on http://localhost:8000
-# ENCLAVE_CID, ENCLAVE_PORT and CHALLENGE_IMAGE_BASE_URL are required; the process
-# panics without them.
+# ENCLAVE_CID, ENCLAVE_PORT, ENCLAVE_PCR0 and CHALLENGE_IMAGE_BASE_URL are required; the
+# process panics without them.
+# A `--debug-mode` enclave measures all zeros, which only ALLOW_DEBUG_MEASUREMENTS accepts.
+# KEY_REGISTRY defaults to dynamodb and then requires KEY_REGISTRY_TABLE; in-memory is
+# development-only and the keys die with the process.
 RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 \
+  ENCLAVE_PCR0=$(printf '0%.0s' {1..96}) ALLOW_DEBUG_MEASUREMENTS=true \
+  KEY_REGISTRY=in-memory \
   CHALLENGE_IMAGE_BASE_URL=https://bucket.example.com/challenges/ \
-  cargo run --bin host
+  cargo run --bin deepface-host
 curl http://localhost:8000/health
 
 # Run the secure enclave placeholder
-RUST_LOG=info cargo run --bin enclave
+RUST_LOG=info cargo run --manifest-path deepface/enclave/Cargo.toml --bin deepface-enclave
 ```
+
+## Building images
+
+Each workload has a host image and an enclave image. `build-docker.yml` builds all four
+on every PR but publishes only the hosts — an enclave image is an input to the EIF, and
+it is the EIF's PCRs that clients attest.
+
+```bash
+# EIF + PCRs. Linux x86_64 + Docker; Nitro hardware only needed to run, not to build.
+scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcrs.json
+scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pcrs.json
+
+# Carrier image that launches an EIF on a Nitro node
+docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif target/eif
+```
+
+`GIT_HUB_TOKEN` and `HUGGING_FACE_TOKEN` are both `deepface`-only. A build now resolves one
+enclave's workspace rather than the whole repository, and nothing in `di`'s graph is private.
+
+`di-enclave` exits non-zero on start, so its EIF builds and measures but will not stay
+running, until the boot sequence lands.
 
 ## Enclave assignment
 
@@ -59,7 +125,7 @@ Attest errors do not block serving until the document is older than `MAX_SERVABL
 at which point the refresh task exits and the enclave process exits. The cache is boot-scoped,
 so a restart takes it along and there is nothing for the host to invalidate.
 
-`client` verifies the document — the COSE signature, the certificate chain up to the
+`deepface-client` verifies the document — the COSE signature, the certificate chain up to the
 pinned AWS Nitro root, and the expected measurements. It is configured by a JSON file, in the
 shape `world-id-protocol` uses for an authenticator:
 
@@ -67,7 +133,7 @@ shape `world-id-protocol` uses for an authenticator:
 {
   "host_url": "http://localhost:8000",
   "allowed_pcr_configs": [
-    [{ "index": 0, "value": "<PCR0 hex from scripts/build-eif.sh>" }]
+    [{ "index": 0, "value": "<PCR0 hex from deepface-pcrs.json>" }]
   ],
   "max_attestation_age_millis": 3600000,
   "allow_debug_measurements": false
@@ -80,11 +146,11 @@ proves a document came from *some* enclave. A `--debug-mode` enclave reports all
 its memory is readable from the parent instance, so it is rejected unless
 `allow_debug_measurements` is set.
 
-`e2e` reads that file from `VERIFIER_CONFIG` and fetches its encryption key
+`deepface-e2e` reads that file from `VERIFIER_CONFIG` and fetches its encryption key
 through the host, exercising the assignment route and the client together:
 
 ```bash
-VERIFIER_CONFIG=./client.json cargo run --bin e2e -- <credential> <live> <challenge>
+VERIFIER_CONFIG=./client.json cargo run --bin deepface-e2e -- <credential> <live> <challenge>
 ```
 
 ## Matches
@@ -172,13 +238,13 @@ nitro-cli describe-enclaves
 docker version
 ```
 
-Install Rust and the components used by this workspace:
+Install Rust and the components these workspaces use:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 rustup component add rustfmt clippy
-cargo test --all
+for ws in . deepface/enclave di/enclave; do cargo test --manifest-path "$ws/Cargo.toml" --all; done
 ```
 
 For private repository access, install and authenticate the GitHub CLI using its

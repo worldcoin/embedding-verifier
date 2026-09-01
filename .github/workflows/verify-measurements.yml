@@ -1,0 +1,181 @@
+# Verifies measurements.json against what the source actually measures to.
+#
+# The EIF is built by flake.nix, so the PCRs depend on the commit and nothing else —
+# this job rebuilds them and fails when the committed values no longer match. It
+# surfaces the fresh values but never commits them: rotating a measurement, and
+# re-registering it with clients, stays a human act.
+name: verify-measurements
+
+permissions:
+  contents: read
+
+# Two cold Rust builds per run, so a re-dispatch replaces the run in flight rather than
+# doubling up alongside it.
+concurrency:
+  group: verify-measurements-${{ github.ref }}
+  cancel-in-progress: true
+
+# Runs on every PR that can move a measurement, and on main. Each enclave is its own workspace
+# and flake.nix feeds each build only the crates that workload reaches, so a change under
+# deepface/ leaves di's PCRs alone — but the matrix rebuilds both anyway, because deciding which
+# one a diff can move is exactly the judgement this job exists to replace.
+#
+# The root Cargo.toml and Cargo.lock are deliberately not listed: they resolve the hosts, and
+# flake.nix hands neither to an enclave build. A host-side dependency bump cannot move a PCR,
+# and triggering on one would spend two cold 90-minute builds saying so.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "deepface/**"
+      - "di/**"
+      - "shared/**"
+      - "rust-toolchain.toml"
+      - "flake.nix"
+      - "flake.lock"
+      - "measurements.json"
+      - "scripts/build-eif.sh"
+      - ".github/workflows/verify-measurements.yml"
+  push:
+    branches:
+      - main
+
+jobs:
+  verify-pcrs:
+    name: verify PCRs match source (${{ matrix.workload }})
+    # Deliberately ubuntu-latest: the fleet is heterogeneous, so every run doubles as a check
+    # that the measurements reproduce on hardware nobody picked.
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        workload: [deepface, di]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Mint biometric-engines access token
+        id: biometric-engines-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
+          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
+          owner: worldcoin
+          repositories: biometric-engines
+
+      # crane resolves the private face-engine dependency with `builtins.fetchGit`, which runs
+      # on the host and uses the host's git credentials. A credential helper rather than
+      # `url.insteadOf`, because the rewrite depends on which git backend Nix was built with.
+      - name: Authorize git for biometric-engines
+        env:
+          GH_APP_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
+        run: |
+          git config --global credential."https://github.com".helper \
+            '!f() { echo username=x-access-token; echo "password=${GH_APP_TOKEN}"; }; f'
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      # GH_APP_TOKEN again: the helper written above expands it when git runs, which is
+      # here, not in the step that wrote it. Passed per-step rather than written into
+      # ~/.gitconfig so the token never lands on the runner's disk.
+      - name: Build EIF and measure
+        env:
+          GH_APP_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
+          HUGGING_FACE_TOKEN: ${{ secrets.HUGGING_FACE_TOKEN }}
+        run: scripts/build-eif.sh --workload ${{ matrix.workload }} target/eif
+
+      # When the PCRs drift, this says which layer drifted: the narHash of every layer the EIF
+      # is assembled from. Diff two runs and the first differing line is the cause — without it
+      # a mismatch only tells you the final number changed.
+      - name: Record layer hashes
+        env:
+          WORKLOAD: ${{ matrix.workload }}
+        run: |
+          set -euo pipefail
+          eif_drv=$(nix path-info --derivation --no-update-lock-file ".#${WORKLOAD}-eif")
+          {
+            for d in $(nix-store --query --references "$eif_drv" | grep '\.drv$'); do
+              for o in $(nix-store --query --outputs "$d"); do
+                if nix-store --query --hash "$o" >/dev/null 2>&1; then
+                  printf '%s  %s\n' "$(nix-store --query --hash "$o")" "$(basename "$o")"
+                fi
+              done
+            done
+            for out in "${WORKLOAD}-enclave" "${WORKLOAD}-eif"; do
+              p=$(nix build --no-link --no-update-lock-file --print-out-paths ".#${out}")
+              printf '%s  %s\n' "$(nix-store --query --hash "$p")" "$(basename "$p")"
+            done
+          } | sort -u -k2 | tee "closure-$WORKLOAD.txt"
+
+          # Localize a binary difference without shipping the binary: this repo is public and
+          # the enclave links private face-engine code. Size plus per-chunk hashes say whether
+          # the divergence is a few embedded bytes or a whole-layout shift.
+          bin="$(nix build --no-link --no-update-lock-file --print-out-paths \
+                 ".#${WORKLOAD}-enclave")/bin/${WORKLOAD}-enclave"
+          echo "size $(stat -c%s "$bin")" | tee -a "closure-$WORKLOAD.txt"
+          split -b 1M -d -a 3 "$bin" chunk.
+          sha256sum chunk.* | tee -a "closure-$WORKLOAD.txt" > /dev/null
+          rm -f chunk.*
+
+      - name: Upload closure hashes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: layer-hashes-${{ matrix.workload }}
+          path: closure-${{ matrix.workload }}.txt
+
+      - name: Verify PCRs
+        env:
+          WORKLOAD: ${{ matrix.workload }}
+        run: |
+          set -euo pipefail
+          committed=$(jq -S --arg w "$WORKLOAD" '.[$w]' measurements.json)
+          measured=$(jq -S --arg w "$WORKLOAD" '.[$w]' target/eif/measurements.json)
+
+          # jq -e, not a string comparison: a missing workload key makes `committed` the
+          # literal `null`, and `to_entries` on null exits 5. Inside a [[ ]] substitution that
+          # error does not trip `set -e`, so the branch would be taken off a jq stack trace
+          # rather than a check. This asserts the shape the clients actually pin.
+          if ! jq -e '
+                type == "object"
+                and ([.pcr0, .pcr1, .pcr2]
+                     | all(type == "string" and test("^0x[0-9a-f]{96}$")))
+              ' >/dev/null <<<"$committed"; then
+            {
+              echo "## \`$WORKLOAD\` has no usable registered measurements"
+              echo "Paste these into \`measurements.json\` under \`.$WORKLOAD\`, and register them"
+              echo "with every client before the enclave is deployed:"
+              echo '```json'
+              echo "$measured"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "ERROR: .$WORKLOAD in measurements.json is unset or malformed." >&2
+            exit 1
+          fi
+
+          if [[ "$committed" == "$measured" ]]; then
+            echo "PCRs match measurements.json for $WORKLOAD." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "## Committed \`$WORKLOAD\` measurements are stale"
+            echo '```diff'
+            diff -u <(echo "$committed") <(echo "$measured") || true
+            echo '```'
+            echo "Fresh values — paste into \`measurements.json\`:"
+            echo '```json'
+            echo "$measured"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "ERROR: .$WORKLOAD in measurements.json is out of date." >&2
+          exit 1
+
+      - name: Upload fresh measurements
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fresh-measurements-${{ matrix.workload }}
+          path: target/eif/measurements.json
+          if-no-files-found: ignore

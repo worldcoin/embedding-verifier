@@ -1,12 +1,16 @@
-# Builds the `host` image and pushes it to the GitHub Container
-# Registry (attested).
+# Builds and publishes the host images to GHCR (attested).
+#
+# Enclaves are not here: they are built by flake.nix, not Docker, so that their PCRs
+# depend on the commit alone. See scripts/build-eif.sh and verify-measurements.yml.
 name: Build and Push Docker Image
 
 on:
   pull_request:
     paths:
-      - "host/**"
-      - "enclave-types/**"
+      - "deepface/**"
+      - "di/**"
+      - "shared/**"
+      - "scripts/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -29,8 +33,18 @@ permissions:
 
 jobs:
   docker-build:
-    name: Docker build
+    name: Docker build (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: deepface-host
+            dockerfile: deepface/host/Dockerfile
+            image: embedding-verifier
+          - name: di-host
+            dockerfile: di/host/Dockerfile
+            image: embedding-verifier-di-host
     permissions:
       contents: read
       id-token: write
@@ -42,6 +56,7 @@ jobs:
 
       - name: Mint biometric-engines access token
         id: biometric-engines-token
+        if: matrix.name == 'deepface-enclave'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
@@ -72,7 +87,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || steps.version.outputs.is_stable == 'true' }}
             type=sha
@@ -94,7 +109,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: host/Dockerfile
+          file: ${{ matrix.dockerfile }}
           # Publish on push/tag/dispatch; PRs build only (validation).
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -110,5 +125,5 @@ jobs:
         uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
         with:
           push-to-registry: true
-          subject-name: ghcr.io/${{ github.repository }}
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
