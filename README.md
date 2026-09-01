@@ -71,6 +71,7 @@ done
 # Run the host on http://localhost:8000
 # ENCLAVE_CID, ENCLAVE_PORT and ENCLAVE_PCR0 are required; the process panics without them.
 # A `--debug-mode` enclave measures all zeros, which only ALLOW_DEBUG_MEASUREMENTS accepts.
+# Without KEY_REGISTRY_TABLE the signing keys stay in memory, which development allows.
 RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 \
   ENCLAVE_PCR0=$(printf '0%.0s' {1..96}) ALLOW_DEBUG_MEASUREMENTS=true \
   cargo run --bin deepface-host
