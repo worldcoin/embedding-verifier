@@ -4,7 +4,8 @@ use deepface_host::key_registry::{
     DynamoKeyRegistry, InMemoryKeyRegistry, KeyRegistry, register_signing_key, verifier,
 };
 use deepface_host::{
-    AppState, Environment, challenge_fetcher::ChallengeFetcher, enclave::PontifexEnclaveClient,
+    AppState, Environment, KeyRegistryStore, challenge_fetcher::ChallengeFetcher,
+    enclave::PontifexEnclaveClient,
 };
 use tokio::sync::watch;
 
@@ -23,14 +24,14 @@ async fn main() -> anyhow::Result<()> {
     ));
     let challenge_source = Arc::new(ChallengeFetcher::new()?);
 
-    // A development run without a table keeps the registry in memory; every other environment
-    // has already panicked on the unset variable by here.
-    let key_registry: Arc<dyn KeyRegistry> = match environment.key_registry_table() {
-        Some(table) => Arc::new(DynamoKeyRegistry::new(table).await),
-        None => {
-            tracing::warn!(
-                "no KEY_REGISTRY_TABLE; the registry is in memory and dies with this process"
-            );
+    // KEY_REGISTRY names the store, so a missing table is a startup panic rather than a host that
+    // looks healthy while signing against a registry that dies with it.
+    let key_registry: Arc<dyn KeyRegistry> = match environment.key_registry() {
+        KeyRegistryStore::DynamoDb => {
+            Arc::new(DynamoKeyRegistry::new(environment.key_registry_table()).await)
+        }
+        KeyRegistryStore::InMemory => {
+            tracing::warn!("KEY_REGISTRY=in-memory; the registry dies with this process");
             Arc::new(InMemoryKeyRegistry::new())
         }
     };
