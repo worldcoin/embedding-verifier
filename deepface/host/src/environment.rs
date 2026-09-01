@@ -2,6 +2,9 @@
 
 use std::env;
 
+/// Length of a Nitro PCR0, which is a SHA-384 digest.
+const PCR0_LEN: usize = 48;
+
 /// Runtime environment for the API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
@@ -63,15 +66,25 @@ impl Environment {
     ///
     /// # Panics
     ///
-    /// Panics when `ENCLAVE_PCR0` is unset or is not hex.
+    /// Panics when `ENCLAVE_PCR0` is unset, is not hex, or is not 48 bytes.
     #[must_use]
     pub fn enclave_pcr0(&self) -> Vec<u8> {
         let value = Self::required("ENCLAVE_PCR0");
         let value = value.trim();
         let digits = value.strip_prefix("0x").unwrap_or(value);
 
-        hex::decode(digits)
-            .unwrap_or_else(|_| panic!("ENCLAVE_PCR0 environment variable is not hex"))
+        let pcr0 = hex::decode(digits)
+            .unwrap_or_else(|_| panic!("ENCLAVE_PCR0 environment variable is not hex"));
+
+        // A shorter value is hex that decodes fine and then matches no enclave, which would show
+        // up as registration retrying a misconfiguration forever with readiness red.
+        assert!(
+            pcr0.len() == PCR0_LEN,
+            "ENCLAVE_PCR0 is {} bytes, not {PCR0_LEN}",
+            pcr0.len()
+        );
+
+        pcr0
     }
 
     /// Whether to accept a `--debug-mode` enclave, whose measurements are all zero.

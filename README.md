@@ -69,8 +69,11 @@ done
 
 ```bash
 # Run the host on http://localhost:8000
-# ENCLAVE_CID and ENCLAVE_PORT are required; the process panics without them.
-RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin deepface-host
+# ENCLAVE_CID, ENCLAVE_PORT and ENCLAVE_PCR0 are required; the process panics without them.
+# A `--debug-mode` enclave measures all zeros, which only ALLOW_DEBUG_MEASUREMENTS accepts.
+RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 \
+  ENCLAVE_PCR0=$(printf '0%.0s' {1..96}) ALLOW_DEBUG_MEASUREMENTS=true \
+  cargo run --bin deepface-host
 curl http://localhost:8000/health
 
 # Run the secure enclave placeholder
