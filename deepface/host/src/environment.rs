@@ -16,6 +16,15 @@ pub enum Environment {
     Development,
 }
 
+/// Store backing the `Signing Key` registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyRegistryStore {
+    /// `DynamoDB` table named by `KEY_REGISTRY_TABLE`.
+    DynamoDb,
+    /// Process-local map that dies with the host.
+    InMemory,
+}
+
 impl Environment {
     /// Resolves the runtime environment from `APP_ENV`.
     ///
@@ -57,6 +66,53 @@ impl Environment {
     #[must_use]
     pub fn enclave_port(&self) -> u32 {
         Self::required_u32("ENCLAVE_PORT")
+    }
+
+    /// Returns the store backing the `Signing Key` registry.
+    ///
+    /// Defaults to `DynamoDB`, so a host that names no store fails on the missing table instead
+    /// of serving from a registry that dies with the process.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `KEY_REGISTRY` is not `dynamodb` or `in-memory`, and when `in-memory` is
+    /// selected outside development.
+    #[must_use]
+    pub fn key_registry(&self) -> KeyRegistryStore {
+        let store = env::var("KEY_REGISTRY")
+            .unwrap_or_else(|_| "dynamodb".to_owned())
+            .trim()
+            .to_lowercase();
+
+        let store = match store.as_str() {
+            "dynamodb" => KeyRegistryStore::DynamoDb,
+            "in-memory" => KeyRegistryStore::InMemory,
+            _ => panic!("invalid KEY_REGISTRY: {store}"),
+        };
+
+        assert!(
+            store == KeyRegistryStore::DynamoDb || *self == Self::Development,
+            "KEY_REGISTRY=in-memory is development-only"
+        );
+
+        store
+    }
+
+    /// Returns the `DynamoDB` table holding the `Signing Key` registry.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `KEY_REGISTRY_TABLE` is unset or empty.
+    #[must_use]
+    pub fn key_registry_table(&self) -> String {
+        let table = Self::required("KEY_REGISTRY_TABLE");
+
+        assert!(
+            !table.trim().is_empty(),
+            "KEY_REGISTRY_TABLE environment variable is empty"
+        );
+
+        table
     }
 
     /// Returns the PCR0 this host's enclave must attest.

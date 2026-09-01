@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use deepface_host::key_registry::{
-    InMemoryKeyRegistry, KeyRegistry, register_signing_key, verifier,
+    DynamoKeyRegistry, InMemoryKeyRegistry, KeyRegistry, register_signing_key, verifier,
 };
 use deepface_host::{
-    AppState, Environment, challenge_fetcher::ChallengeFetcher, enclave::PontifexEnclaveClient,
+    AppState, Environment, KeyRegistryStore, challenge_fetcher::ChallengeFetcher,
+    enclave::PontifexEnclaveClient,
 };
 use tokio::sync::watch;
 
@@ -23,7 +24,17 @@ async fn main() -> anyhow::Result<()> {
     ));
     let challenge_source = Arc::new(ChallengeFetcher::new()?);
 
-    let key_registry: Arc<dyn KeyRegistry> = Arc::new(InMemoryKeyRegistry::new());
+    // KEY_REGISTRY names the store, so a missing table is a startup panic rather than a host that
+    // looks healthy while signing against a registry that dies with it.
+    let key_registry: Arc<dyn KeyRegistry> = match environment.key_registry() {
+        KeyRegistryStore::DynamoDb => {
+            Arc::new(DynamoKeyRegistry::new(environment.key_registry_table()).await)
+        }
+        KeyRegistryStore::InMemory => {
+            tracing::warn!("KEY_REGISTRY=in-memory; the registry dies with this process");
+            Arc::new(InMemoryKeyRegistry::new())
+        }
+    };
 
     // Registration runs in the background and readiness waits on it, so a registry outage leaves
     // this host out of the load balancer rather than signing statements nobody can verify.

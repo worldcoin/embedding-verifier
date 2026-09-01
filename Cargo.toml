@@ -41,6 +41,8 @@ publish = false
 anyhow = "1.0"
 async-trait = "0.1"
 attested-channel = { path = "shared/attested-channel" }
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
 axum = "0.8"
 backon = { version = "1", default-features = false, features = ["std", "tokio-sleep"] }
 base64 = "0.22"

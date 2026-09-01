@@ -71,8 +71,11 @@ done
 # Run the host on http://localhost:8000
 # ENCLAVE_CID, ENCLAVE_PORT and ENCLAVE_PCR0 are required; the process panics without them.
 # A `--debug-mode` enclave measures all zeros, which only ALLOW_DEBUG_MEASUREMENTS accepts.
+# KEY_REGISTRY defaults to dynamodb and then requires KEY_REGISTRY_TABLE; in-memory is
+# development-only and the keys die with the process.
 RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 \
   ENCLAVE_PCR0=$(printf '0%.0s' {1..96}) ALLOW_DEBUG_MEASUREMENTS=true \
+  KEY_REGISTRY=in-memory \
   cargo run --bin deepface-host
 curl http://localhost:8000/health
 
@@ -82,36 +85,21 @@ RUST_LOG=info cargo run --manifest-path deepface/enclave/Cargo.toml --bin deepfa
 
 ## Building images
 
-Hosts are Docker images, published by `build-docker.yml`. Enclaves are not: their EIFs are
-built by `flake.nix`, so the PCRs a client attests depend on the commit and nothing else —
-no Docker daemon and no `nitro-cli` on the measured path.
+Each workload has a host image and an enclave image. `build-docker.yml` builds all four
+on every PR but publishes only the hosts — an enclave image is an input to the EIF, and
+it is the EIF's PCRs that clients attest.
 
 ```bash
-# EIF + PCRs. Needs x86_64-linux, natively or through a remote builder.
-scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, measurements.json
-scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, measurements.json
+# EIF + PCRs. Linux x86_64 + Docker; Nitro hardware only needed to run, not to build.
+scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcrs.json
+scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pcrs.json
 
 # Carrier image that launches an EIF on a Nitro node
 docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif target/eif
 ```
 
-`face-engine` is private, so a `deepface` build needs git credentials for
-`worldcoin/biometric-engines` — an ssh agent or a credential helper, not an environment
-variable. Nothing in `di`'s graph is private, and neither is the host-side workspace, so those
-build without a token. `HUGGING_FACE_TOKEN` is `deepface`-only and is used by the script
-itself, never inside a build.
-
-`flake.nix` hands each enclave build only the crates that workload reaches — its own manifest
-and lockfile plus the path crates they name, and no root manifest. A path dependency added to
-an enclave has to be added to that list too, or the build fails to find it.
-
-`measurements.json` records the PCRs each workload measures to. `verify-measurements.yml`
-rebuilds them on every PR that can move one and fails when they drift, so a PR that changes an
-enclave updates the file in the same commit. Updating it, and re-registering the values with
-clients, stays a human act. A host-side change cannot move a PCR and does not trigger it.
-
-The enclaves build with LLVM's LICM scalar promotion disabled (see `flake.nix`): rustc
-otherwise emits address-dependent code, and the PCRs would vary by machine.
+`GIT_HUB_TOKEN` and `HUGGING_FACE_TOKEN` are both `deepface`-only. A build now resolves one
+enclave's workspace rather than the whole repository, and nothing in `di`'s graph is private.
 
 `di-enclave` exits non-zero on start, so its EIF builds and measures but will not stay
 running, until the boot sequence lands.
@@ -143,7 +131,7 @@ shape `world-id-protocol` uses for an authenticator:
 {
   "host_url": "http://localhost:8000",
   "allowed_pcr_configs": [
-    [{ "index": 0, "value": "<PCR0 hex from measurements.json>" }]
+    [{ "index": 0, "value": "<PCR0 hex from deepface-pcrs.json>" }]
   ],
   "max_attestation_age_millis": 3600000,
   "allow_debug_measurements": false
