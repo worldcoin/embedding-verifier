@@ -100,10 +100,34 @@ impl EnclaveAttestationVerifier {
         self.verify(&bytes, now)
     }
 
-    /// Verifies a raw COSE-encoded attestation document.
+    /// Verifies a base64-encoded document kept after its enclave has gone.
+    ///
+    /// See [`Self::verify_stored`] for what this does and does not check.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EnclaveAttestationError`] if the input is not valid base64, or if
+    /// verification fails for any reason.
+    pub fn verify_stored_base64(
+        &self,
+        attestation_doc_base64: &str,
+        now: SystemTime,
+    ) -> EnclaveAttestationResult<VerifiedAttestation> {
+        let bytes = STANDARD.decode(attestation_doc_base64).map_err(|error| {
+            EnclaveAttestationError::AttestationDocumentParseError(format!(
+                "failed to decode base64 attestation document: {error}"
+            ))
+        })?;
+
+        self.verify_stored(&bytes, now)
+    }
+
+    /// Verifies a raw COSE-encoded attestation document produced just now.
     ///
     /// Fails closed: nothing is returned until the signature, the chain, the measurements and
-    /// the freshness all check out.
+    /// the freshness all check out. Use this whenever the answer needs the enclave to be
+    /// running — an assignment being sealed to, say. For a document kept after the enclave is
+    /// gone, see [`Self::verify_stored`].
     ///
     /// # Errors
     ///
@@ -114,18 +138,77 @@ impl EnclaveAttestationVerifier {
         now: SystemTime,
     ) -> EnclaveAttestationResult<VerifiedAttestation> {
         let now_millis = unix_millis(now)?;
+        let (cose_sign1, attestation) = Self::parse(attestation_doc_bytes)?;
 
-        // 1. Syntactical validation.
+        self.check_attestation_freshness(&attestation, now_millis)?;
+
+        self.verify_signed_document(&cose_sign1, attestation, now_millis)
+    }
+
+    /// Verifies a document kept after the enclave that issued it has gone.
+    ///
+    /// A Nitro document is built to prove liveness: its leaf certificate lives hours, and its
+    /// timestamp exists to be checked against the clock. Neither survives storage, so a
+    /// registry row verified with [`Self::verify`] stops verifying about an hour after the
+    /// boot that wrote it. This answers the question a stored document can actually answer —
+    /// was the chain valid when the document was signed — and leaves liveness to the caller,
+    /// who is the only one who knows whether it matters.
+    ///
+    /// The timestamp is the document's own. It is authenticated, so nobody can edit it without
+    /// the leaf key, but whoever holds that key chooses it. So this trusts the issuer's clock
+    /// where [`Self::verify`] trusts yours, and the difference shows if a leaf key leaks after
+    /// its certificate expires: backdated documents would verify here and not there. Closing
+    /// that needs a witness to when the document was first seen, which the document cannot
+    /// carry. Revocation is likewise not a question any document answers — that is what the
+    /// registry's status is for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EnclaveAttestationError`] describing the first check that failed, including a
+    /// timestamp in the future — a document cannot have been signed after now.
+    pub fn verify_stored(
+        &self,
+        attestation_doc_bytes: &[u8],
+        now: SystemTime,
+    ) -> EnclaveAttestationResult<VerifiedAttestation> {
+        let now_millis = unix_millis(now)?;
+        let (cose_sign1, attestation) = Self::parse(attestation_doc_bytes)?;
+
+        if attestation.timestamp > now_millis {
+            return Err(EnclaveAttestationError::AttestationInvalidTimestamp(
+                format!(
+                    "attestation timestamp is {}ms in the future",
+                    attestation.timestamp.saturating_sub(now_millis)
+                ),
+            ));
+        }
+
+        let signed_at = attestation.timestamp;
+
+        self.verify_signed_document(&cose_sign1, attestation, signed_at)
+    }
+
+    /// Parses a document without checking anything about it.
+    fn parse(
+        attestation_doc_bytes: &[u8],
+    ) -> EnclaveAttestationResult<(CoseSign1, Box<AttestationDoc>)> {
         let cose_sign1 = Self::parse_cose_sign1(attestation_doc_bytes)?;
         let attestation = Self::parse_cbor_payload(&cose_sign1)?;
 
-        // 2. Semantic validation.
-        let leaf_cert = self.verify_certificate_chain(&attestation, now_millis)?;
+        Ok((cose_sign1, Box::new(attestation)))
+    }
 
-        // 3. Cryptographic validation.
-        Self::verify_cose_signature(&cose_sign1, &leaf_cert)?;
+    /// Everything both entry points check, with the chain read at `chain_valid_at`.
+    fn verify_signed_document(
+        &self,
+        cose_sign1: &CoseSign1,
+        attestation: Box<AttestationDoc>,
+        chain_valid_at: u64,
+    ) -> EnclaveAttestationResult<VerifiedAttestation> {
+        let leaf_cert = self.verify_certificate_chain(&attestation, chain_valid_at)?;
+
+        Self::verify_cose_signature(cose_sign1, &leaf_cert)?;
         self.validate_pcr_values(&attestation)?;
-        self.check_attestation_freshness(&attestation, now_millis)?;
         let public_key = Self::extract_public_key(&attestation)?;
 
         Ok(VerifiedAttestation {
