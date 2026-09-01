@@ -155,17 +155,27 @@
       # there. Taking it from the root workspace would put a host-side version bump in the PCRs.
       versionOf = manifest: (builtins.fromTOML (builtins.readFile manifest)).package.version;
 
+      # Two deviations from a stock crane build, both forced by the workspace being nested
+      # inside the source rather than at its root:
+      #
+      # `cd` into the workspace instead of passing --manifest-path. crane's install step reads
+      # `cargo metadata` with no arguments to decide which artifacts belong to the workspace, so
+      # from the source root it finds no Cargo.toml and the build fails after compiling. Running
+      # cargo from the workspace directory is what that step expects. postPatch, because it runs
+      # before crane's own hooks and the working directory carries into every later phase.
+      #
       # cargoArtifacts = null builds dependencies and crate in one derivation instead of
-      # splitting them across a `buildDepsOnly` dummy build. The split saves nothing on the
-      # cold build that PCRs are measured from, and crane's dummy source generation assumes the
-      # workspace is at the source root, which these nested workspaces are not.
+      # splitting them across a `buildDepsOnly` dummy build. The split saves nothing on the cold
+      # build that PCRs are measured from, and crane's dummy source generation has the same
+      # root-of-source assumption.
       buildEnclaveBin = { pname, workspace, crates, cargoVendorDir, extraArgs ? { } }:
         craneLib.buildPackage (commonArgs // extraArgs // {
           inherit pname cargoVendorDir;
           version = versionOf (./. + "/${workspace}/Cargo.toml");
           src = srcFor crates;
+          postPatch = "cd ${workspace}";
           cargoArtifacts = null;
-          cargoExtraArgs = "--locked --manifest-path ${workspace}/Cargo.toml --bin ${pname}";
+          cargoExtraArgs = "--locked --bin ${pname}";
         });
 
       nitroBlobs = nitro-util.lib.${system}.blobs.x86_64;
