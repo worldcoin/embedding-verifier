@@ -188,7 +188,7 @@ async fn a_sealed_rejection_round_trips() {
         .request_match(
             &assignment_for(&responder),
             &inputs(),
-            "https://bucket.example.com/challenge-images/a",
+            "00112233445566778899aabbccddeeff",
             instant(),
         )
         .await
@@ -198,10 +198,7 @@ async fn a_sealed_rejection_round_trips() {
 
     // The wire shape the host reads.
     let body = seen.lock().expect("lock should be held").clone().unwrap();
-    assert_eq!(
-        body["challenge_image_url"],
-        "https://bucket.example.com/challenge-images/a"
-    );
+    assert_eq!(body["challenge_id"], "00112233445566778899aabbccddeeff");
     assert!(
         STANDARD
             .decode(body["ciphertext"].as_str().unwrap())
@@ -211,7 +208,7 @@ async fn a_sealed_rejection_round_trips() {
     assert_eq!(
         body.as_object().map(serde_json::Map::len),
         Some(2),
-        "the request carries the URL and the ciphertext, nothing else"
+        "the request carries the challenge id and the ciphertext, nothing else"
     );
 }
 
@@ -225,7 +222,7 @@ async fn a_reply_from_another_exchange_cannot_be_opened() {
         .request_match(
             &assignment_for(&responder),
             &inputs(),
-            "https://example.com/a",
+            "00112233445566778899aabbccddeeff",
             instant(),
         )
         .await
@@ -244,7 +241,7 @@ async fn a_stale_assignment_asks_for_a_reassignment() {
         .request_match(
             &assignment_for(&responder),
             &inputs(),
-            "https://example.com/a",
+            "00112233445566778899aabbccddeeff",
             instant(),
         )
         .await
@@ -258,7 +255,12 @@ async fn a_stale_assignment_asks_for_a_reassignment() {
 
 #[tokio::test]
 async fn other_envelopes_keep_their_code_and_retry_flag() {
-    let base_url = serve_error(StatusCode::BAD_GATEWAY, "challenge_fetch_failed", true).await;
+    let base_url = serve_error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "challenge_store_unavailable",
+        true,
+    )
+    .await;
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
     let responder = Responder::generate(&mut UnwrapErr(SysRng));
 
@@ -266,7 +268,7 @@ async fn other_envelopes_keep_their_code_and_retry_flag() {
         .request_match(
             &assignment_for(&responder),
             &inputs(),
-            "https://example.com/a",
+            "00112233445566778899aabbccddeeff",
             instant(),
         )
         .await
@@ -278,8 +280,8 @@ async fn other_envelopes_keep_their_code_and_retry_flag() {
             code,
             allow_retry,
         } => {
-            assert_eq!(status, 502);
-            assert_eq!(code, "challenge_fetch_failed");
+            assert_eq!(status, 503);
+            assert_eq!(code, "challenge_store_unavailable");
             assert!(allow_retry);
         }
         other => panic!("expected an envelope, got {other:?}"),
@@ -300,7 +302,7 @@ async fn a_status_without_an_envelope_still_surfaces() {
         .request_match(
             &assignment_for(&responder),
             &inputs(),
-            "https://example.com/a",
+            "00112233445566778899aabbccddeeff",
             instant(),
         )
         .await

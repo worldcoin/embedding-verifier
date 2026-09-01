@@ -4,16 +4,17 @@ use deepface_types as enclave;
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
+use crate::challenge_store::ChallengeId;
 use crate::error::AppError;
 
 /// A match request.
 ///
-/// `challenge_image_url` is plaintext so the host can fetch immediately; `ciphertext` is the
-/// sealed request, which the host relays without being able to read it.
+/// `challenge_id` names the ciphertext the RP pushed to `POST /v1/challenges`; `ciphertext` is
+/// the sealed request, which the host relays without being able to read it.
 #[derive(Debug, Deserialize)]
 pub struct MatchRequestBody {
-    /// Where the RP put the encrypted challenge image.
-    challenge_image_url: String,
+    /// Where the RP's encrypted challenge image is stored.
+    challenge_id: String,
     /// The sealed match request, base64.
     ciphertext: String,
 }
@@ -35,8 +36,8 @@ pub struct MatchResponseBody {
 ///
 /// # Errors
 ///
-/// Returns [`AppError`] if the challenge image cannot be fetched or the enclave rejects the
-/// request.
+/// Returns [`AppError`] if no live challenge is stored under `challenge_id` or the enclave
+/// rejects the request.
 pub async fn handler(
     State(state): State<AppState>,
     Json(body): Json<MatchRequestBody>,
@@ -50,11 +51,17 @@ pub async fn handler(
         )
     })?;
 
+    let challenge_id: ChallengeId = body
+        .challenge_id
+        .trim()
+        .parse()
+        .map_err(|_| AppError::invalid_challenge_id())?;
     let challenge_ciphertext = state
-        .challenge_source()
-        .fetch(&body.challenge_image_url)
+        .challenge_store()
+        .get(&challenge_id)
         .await
-        .map_err(AppError::challenge_fetch)?;
+        .map_err(|error| AppError::challenge_store(&error))?
+        .ok_or_else(AppError::unknown_challenge)?;
 
     let key_attestation = state
         .enclave_client()

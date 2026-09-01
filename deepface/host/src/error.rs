@@ -13,7 +13,7 @@ use axum::{
 use enclave_types::EnclaveError;
 use serde::Serialize;
 
-use crate::challenge_fetcher::FetchError;
+use crate::challenge_store::StoreError;
 use crate::enclave::EnclaveClientError;
 
 /// Error envelope returned to clients.
@@ -83,33 +83,48 @@ impl AppError {
         self.code
     }
 
-    /// Maps a challenge-image fetch failure.
-    ///
-    /// The RP's bucket is an availability dependency, so its failures are `502` and never an
-    /// enclave fault. A rejected URL is the caller's problem, and not retryable.
+    /// Maps a challenge-store failure. Never a miss: an unreachable store must not read as an
+    /// unknown challenge, which is terminal for the caller while an outage is retryable.
     #[must_use]
-    pub fn challenge_fetch(error: FetchError) -> Self {
+    pub fn challenge_store(error: &StoreError) -> Self {
         match error {
-            FetchError::Malformed => Self::new(
-                StatusCode::BAD_REQUEST,
-                "invalid_challenge_url",
-                "The challenge image URL was rejected",
-                false,
+            StoreError::Full => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "challenge_store_full",
+                "The challenge store is full; retry later",
+                true,
             ),
-            FetchError::TooLarge => Self::new(
-                StatusCode::BAD_GATEWAY,
-                "challenge_fetch_failed",
-                "The challenge image was too large",
-                false,
-            ),
-            FetchError::Unreachable => Self::new(
-                StatusCode::BAD_GATEWAY,
-                "challenge_fetch_failed",
-                "The challenge image could not be fetched",
+            StoreError::Unavailable(_) => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "challenge_store_unavailable",
+                "The challenge store is unavailable",
                 true,
             ),
         }
         .with_detail(format!("{error:?}"))
+    }
+
+    /// The path parameter was not a challenge id. The caller's problem, not retryable.
+    #[must_use]
+    pub const fn invalid_challenge_id() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_challenge_id",
+            "The challenge id was not 32 hex characters",
+            false,
+        )
+    }
+
+    /// No live challenge is stored under the given id: never pushed, or expired. Terminal — the
+    /// RP has to issue a fresh challenge, so retrying the same request cannot succeed.
+    #[must_use]
+    pub const fn unknown_challenge() -> Self {
+        Self::new(
+            StatusCode::NOT_FOUND,
+            "unknown_challenge",
+            "No challenge is stored under this id; it may have expired",
+            false,
+        )
     }
 
     /// Maps an enclave failure on the assignment route.

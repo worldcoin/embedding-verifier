@@ -17,18 +17,18 @@ axum.workspace = true
 base64.workspace = true
 deepface-types.workspace = true
 enclave-types.workspace = true
-futures-util = "0.3"
 hex = { workspace = true, features = ["serde"] }
 pontifex = { workspace = true, features = ["client"] }
-reqwest.workspace = true
+rand.workspace = true
 serde.workspace = true
+thiserror.workspace = true
 telemetry-batteries.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-url.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 http-body-util = "0.1"
 serde_json.workspace = true
 tower.workspace = true

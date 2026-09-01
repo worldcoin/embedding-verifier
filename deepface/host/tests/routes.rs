@@ -5,12 +5,16 @@
 
 mod common;
 
+use std::sync::Arc;
+
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use common::{StubChallengeSource, StubEnclaveClient, state_with, state_with_source};
+use common::{FailingChallengeStore, StubEnclaveClient, state_with, state_with_store};
 use deepface_host::AppState;
-use deepface_host::challenge_fetcher::FetchError;
+use deepface_host::challenge_store::{
+    ChallengeStore, InMemoryChallengeStore, MAX_CHALLENGE_BYTES, StoreError,
+};
 use deepface_host::enclave::EnclaveClientError;
 use deepface_host::routes;
 use enclave_types::EnclaveError;
@@ -37,7 +41,7 @@ async fn send(state: AppState, request: Request<Body>) -> (StatusCode, Value) {
     let body = if bytes.is_empty() {
         Value::Null
     } else {
-        serde_json::from_slice(&bytes).expect("responses should be JSON")
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
     };
 
     (status, body)
@@ -51,10 +55,20 @@ fn assignment_request() -> Request<Body> {
         .expect("request should be valid")
 }
 
-/// Builds a match request with a well-formed challenge URL.
-fn match_request(url: &str) -> Request<Body> {
+/// Builds a challenge push carrying `ciphertext` as its raw body.
+fn challenge_request(ciphertext: &[u8]) -> Request<Body> {
+    Request::builder()
+        .method(Method::POST)
+        .uri("/v1/challenges")
+        .header("content-type", "application/octet-stream")
+        .body(Body::from(ciphertext.to_vec()))
+        .expect("request should be valid")
+}
+
+/// Builds a match request naming a stored challenge.
+fn match_request(challenge_id: &str) -> Request<Body> {
     let body = format!(
-        r#"{{"challenge_image_url":"{url}","ciphertext":"{}"}}"#,
+        r#"{{"challenge_id":"{challenge_id}","ciphertext":"{}"}}"#,
         STANDARD.encode("sealed")
     );
 
@@ -64,6 +78,15 @@ fn match_request(url: &str) -> Request<Body> {
         .header("content-type", "application/json")
         .body(Body::from(body))
         .expect("request should be valid")
+}
+
+/// Stores a challenge blob and returns the id a match can name it by.
+async fn stored_challenge(store: &InMemoryChallengeStore, bytes: &[u8]) -> String {
+    store
+        .put(bytes.to_vec())
+        .await
+        .expect("the in-memory store should accept a test blob")
+        .to_string()
 }
 
 /// Serves only the encryption key. The stub panics on anything else, so this doubles as an
@@ -165,11 +188,73 @@ async fn assignment_surfaces_enclave_failures_as_structured_errors() {
     }
 }
 
+#[tokio::test]
+async fn challenges_stores_a_blob_and_returns_its_id() {
+    let state = state_with(StubEnclaveClient::default());
+
+    let (status, body) = send(state, challenge_request(b"challenge-ciphertext")).await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    let id = body["challenge_id"]
+        .as_str()
+        .expect("id should be a string");
+    assert_eq!(id.len(), 32, "ids are 32 hex characters");
+    assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_eq!(
+        body.as_object().map(serde_json::Map::len),
+        Some(1),
+        "the push returns the id and nothing else"
+    );
+}
+
+#[tokio::test]
+async fn challenges_rejects_an_empty_body() {
+    let state = state_with(StubEnclaveClient::default());
+
+    let (status, body) = send(state, challenge_request(b"")).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "invalid_challenge");
+}
+
+#[tokio::test]
+async fn challenges_refuses_an_oversized_blob() {
+    let state = state_with(StubEnclaveClient::default());
+
+    // One byte over the cap. Axum's body limit answers without an error envelope; the status
+    // is the contract.
+    let (status, _) = send(
+        state,
+        challenge_request(&vec![0u8; MAX_CHALLENGE_BYTES + 1]),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn challenges_attributes_a_full_store_outward() {
+    let state = state_with_store(
+        StubEnclaveClient::default(),
+        Arc::new(FailingChallengeStore {
+            error: StoreError::Full,
+        }),
+    );
+
+    let (status, body) = send(state, challenge_request(b"challenge-ciphertext")).await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["error"]["code"], "challenge_store_full");
+    assert_eq!(body["allowRetry"], true);
+}
+
 /// Only the signing key is configured, so this also pins that the match route never asks for the
 /// encryption key it has no use for.
 #[tokio::test]
-async fn matches_relays_the_sealed_request_and_the_fetched_challenge() {
-    let state = state_with_source(
+async fn matches_relays_the_sealed_request_and_the_stored_challenge() {
+    let store = Arc::new(InMemoryChallengeStore::new());
+    let challenge_id = stored_challenge(&store, b"challenge-ciphertext").await;
+    let state = state_with_store(
         StubEnclaveClient {
             signing_key: Some(Ok(vec![4, 5, 6])),
             match_result: Some(Ok(deepface_types::MatchResponse {
@@ -179,14 +264,10 @@ async fn matches_relays_the_sealed_request_and_the_fetched_challenge() {
             expected_challenge: Some(b"challenge-ciphertext".to_vec()),
             ..StubEnclaveClient::default()
         },
-        StubChallengeSource::returning(b"challenge-ciphertext"),
+        store,
     );
 
-    let (status, body) = send(
-        state,
-        match_request("https://bucket.example.com/challenge-images/a"),
-    )
-    .await;
+    let (status, body) = send(state, match_request(&challenge_id)).await;
 
     assert_eq!(status, StatusCode::OK);
     // Both fields are relayed opaquely: the host encodes, it does not interpret.
@@ -203,7 +284,7 @@ async fn matches_rejects_a_non_base64_ciphertext() {
         .uri("/v1/matches")
         .header("content-type", "application/json")
         .body(Body::from(
-            r#"{"challenge_image_url":"https://bucket.example.com/challenge-images/a","ciphertext":"not base64!"}"#,
+            r#"{"challenge_id":"00112233445566778899aabbccddeeff","ciphertext":"not base64!"}"#,
         ))
         .expect("request should be valid");
 
@@ -214,65 +295,61 @@ async fn matches_rejects_a_non_base64_ciphertext() {
 }
 
 #[tokio::test]
-async fn matches_attributes_fetch_failures_outward() {
-    // The RP's bucket is an availability dependency of this path, so its failures are a 502 and
-    // never an enclave fault.
-    let cases = [
-        (
-            FetchError::Unreachable,
-            StatusCode::BAD_GATEWAY,
-            "challenge_fetch_failed",
-            true,
-        ),
-        (
-            FetchError::TooLarge,
-            StatusCode::BAD_GATEWAY,
-            "challenge_fetch_failed",
-            false,
-        ),
-        (
-            FetchError::Malformed,
-            StatusCode::BAD_REQUEST,
-            "invalid_challenge_url",
-            false,
-        ),
-    ];
+async fn matches_rejects_a_malformed_challenge_id() {
+    let state = state_with(StubEnclaveClient::default());
 
-    for (error, expected_status, expected_code, retryable) in cases {
-        let state = state_with_source(
-            StubEnclaveClient::default(),
-            StubChallengeSource::failing(error),
-        );
+    let (status, body) = send(state, match_request("not-a-challenge-id")).await;
 
-        let (status, body) = send(
-            state,
-            match_request("https://bucket.example.com/challenge-images/a"),
-        )
-        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "invalid_challenge_id");
+}
 
-        assert_eq!(status, expected_status, "for {error:?}");
-        assert_eq!(body["error"]["code"], expected_code, "for {error:?}");
-        assert_eq!(body["allowRetry"], retryable, "for {error:?}");
-    }
+#[tokio::test]
+async fn matches_answers_404_for_a_challenge_that_was_never_pushed() {
+    // Terminal for the caller: the RP has to issue a fresh challenge, so no retry can succeed.
+    let state = state_with(StubEnclaveClient::default());
+
+    let (status, body) = send(state, match_request("00112233445566778899aabbccddeeff")).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"]["code"], "unknown_challenge");
+    assert_eq!(body["allowRetry"], false);
+}
+
+#[tokio::test]
+async fn matches_never_reports_a_store_outage_as_an_unknown_challenge() {
+    let state = state_with_store(
+        StubEnclaveClient::default(),
+        Arc::new(FailingChallengeStore {
+            error: StoreError::Unavailable("boom".to_owned()),
+        }),
+    );
+
+    let (status, body) = send(state, match_request("00112233445566778899aabbccddeeff")).await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["error"]["code"], "challenge_store_unavailable");
+    assert_eq!(body["allowRetry"], true);
 }
 
 #[tokio::test]
 async fn matches_maps_an_unopenable_request_to_conflict() {
     // Re-assign and re-seal: the client cannot tell this from a corrupt ciphertext, which is why
     // the retry has to be bounded client-side.
-    let state = state_with(StubEnclaveClient {
-        signing_key: Some(Ok(vec![2])),
-        match_result: Some(Err(EnclaveClientError::Operation(
-            EnclaveError::RequestNotOpened,
-        ))),
-        ..StubEnclaveClient::default()
-    });
+    let store = Arc::new(InMemoryChallengeStore::new());
+    let challenge_id = stored_challenge(&store, b"challenge-ciphertext").await;
+    let state = state_with_store(
+        StubEnclaveClient {
+            signing_key: Some(Ok(vec![2])),
+            match_result: Some(Err(EnclaveClientError::Operation(
+                EnclaveError::RequestNotOpened,
+            ))),
+            ..StubEnclaveClient::default()
+        },
+        store,
+    );
 
-    let (status, body) = send(
-        state,
-        match_request("https://bucket.example.com/challenge-images/a"),
-    )
-    .await;
+    let (status, body) = send(state, match_request(&challenge_id)).await;
 
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["error"]["code"], "reassign_required");
@@ -282,19 +359,20 @@ async fn matches_maps_an_unopenable_request_to_conflict() {
 async fn matches_answers_200_whatever_the_sealed_result_says() {
     // A quality failure, a below-threshold match and a malformed payload are all sealed now, so
     // the host cannot distinguish them from a statement -- and must not try.
-    let state = state_with(StubEnclaveClient {
-        signing_key: Some(Ok(vec![2])),
-        match_result: Some(Ok(deepface_types::MatchResponse {
-            ciphertext: vec![9u8; 48],
-        })),
-        ..StubEnclaveClient::default()
-    });
+    let store = Arc::new(InMemoryChallengeStore::new());
+    let challenge_id = stored_challenge(&store, b"challenge-ciphertext").await;
+    let state = state_with_store(
+        StubEnclaveClient {
+            signing_key: Some(Ok(vec![2])),
+            match_result: Some(Ok(deepface_types::MatchResponse {
+                ciphertext: vec![9u8; 48],
+            })),
+            ..StubEnclaveClient::default()
+        },
+        store,
+    );
 
-    let (status, body) = send(
-        state,
-        match_request("https://bucket.example.com/challenge-images/a"),
-    )
-    .await;
+    let (status, body) = send(state, match_request(&challenge_id)).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["response_ciphertext"], STANDARD.encode([9u8; 48]));
@@ -303,4 +381,32 @@ async fn matches_answers_200_whatever_the_sealed_result_says() {
         Some(2),
         "the relay exposes the ciphertext and the attestation, nothing else"
     );
+}
+
+/// The push-then-match round trip through the real router and the real store: what an RP and
+/// an authenticator do between them.
+#[tokio::test]
+async fn a_pushed_challenge_is_the_one_the_enclave_receives() {
+    let store = Arc::new(InMemoryChallengeStore::new());
+    let state = state_with_store(
+        StubEnclaveClient {
+            signing_key: Some(Ok(vec![2])),
+            match_result: Some(Ok(deepface_types::MatchResponse {
+                ciphertext: vec![9u8; 48],
+            })),
+            expected_challenge: Some(b"rp-pushed-bytes".to_vec()),
+            ..StubEnclaveClient::default()
+        },
+        store,
+    );
+
+    let (status, body) = send(state.clone(), challenge_request(b"rp-pushed-bytes")).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let challenge_id = body["challenge_id"]
+        .as_str()
+        .expect("id should be a string")
+        .to_owned();
+
+    let (status, _) = send(state, match_request(&challenge_id)).await;
+    assert_eq!(status, StatusCode::OK);
 }

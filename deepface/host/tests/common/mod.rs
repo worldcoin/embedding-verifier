@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use deepface_host::challenge_fetcher::{ChallengeSource, FetchError};
+use deepface_host::challenge_store::{
+    ChallengeId, ChallengeStore, InMemoryChallengeStore, StoreError,
+};
 use deepface_host::enclave::{EnclaveClient, EnclaveClientError};
 use deepface_host::{AppState, Environment};
 use deepface_types::{MatchRequest, MatchResponse};
@@ -18,7 +20,7 @@ pub struct StubEnclaveClient {
     pub match_result: Option<Result<MatchResponse, EnclaveClientError>>,
     /// Asserted against the sealed body the route forwards, if set.
     pub expected_body: Option<Vec<u8>>,
-    /// Asserted against the fetched challenge blob the route forwards, if set.
+    /// Asserted against the stored challenge blob the route forwards, if set.
     pub expected_challenge: Option<Vec<u8>>,
 }
 
@@ -54,45 +56,28 @@ impl EnclaveClient for StubEnclaveClient {
     }
 }
 
-/// A [`ChallengeSource`] answering from a fixed result.
-///
-/// The real fetcher rejects plain HTTP and IP literals by design, so a local test server could
-/// not be fetched from; stubbing at this seam is what keeps the route testable.
-pub struct StubChallengeSource {
-    pub result: Result<Vec<u8>, FetchError>,
-}
-
-impl StubChallengeSource {
-    pub fn returning(bytes: &[u8]) -> Self {
-        Self {
-            result: Ok(bytes.to_vec()),
-        }
-    }
-
-    pub const fn failing(error: FetchError) -> Self {
-        Self { result: Err(error) }
-    }
-}
-
-impl Default for StubChallengeSource {
-    fn default() -> Self {
-        Self::returning(b"challenge-ciphertext")
-    }
+/// A [`ChallengeStore`] that fails every call, for pinning that an outage is never a miss.
+pub struct FailingChallengeStore {
+    pub error: StoreError,
 }
 
 #[async_trait]
-impl ChallengeSource for StubChallengeSource {
-    async fn fetch(&self, _url: &str) -> Result<Vec<u8>, FetchError> {
-        self.result.clone()
+impl ChallengeStore for FailingChallengeStore {
+    async fn put(&self, _ciphertext: Vec<u8>) -> Result<ChallengeId, StoreError> {
+        Err(self.error.clone())
+    }
+
+    async fn get(&self, _id: &ChallengeId) -> Result<Option<Vec<u8>>, StoreError> {
+        Err(self.error.clone())
     }
 }
 
-/// Builds an [`AppState`] backed by `client` and a challenge source that always succeeds.
+/// Builds an [`AppState`] backed by `client` and a fresh in-memory challenge store.
 pub fn state_with(client: StubEnclaveClient) -> AppState {
-    state_with_source(client, StubChallengeSource::default())
+    state_with_store(client, Arc::new(InMemoryChallengeStore::new()))
 }
 
-/// Builds an [`AppState`] with both doubles chosen explicitly.
-pub fn state_with_source(client: StubEnclaveClient, source: StubChallengeSource) -> AppState {
-    AppState::new(Environment::Development, Arc::new(client), Arc::new(source))
+/// Builds an [`AppState`] with both dependencies chosen explicitly.
+pub fn state_with_store(client: StubEnclaveClient, store: Arc<dyn ChallengeStore>) -> AppState {
+    AppState::new(Environment::Development, Arc::new(client), store)
 }

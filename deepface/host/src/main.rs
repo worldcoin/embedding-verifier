@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use deepface_host::{
-    AppState, Environment, challenge_fetcher::ChallengeFetcher, enclave::PontifexEnclaveClient,
+    AppState, Environment, challenge_store::InMemoryChallengeStore, enclave::PontifexEnclaveClient,
 };
 
 #[tokio::main]
@@ -17,8 +17,9 @@ async fn main() -> anyhow::Result<()> {
         environment.enclave_cid(),
         environment.enclave_port(),
     ));
-    let challenge_source = Arc::new(ChallengeFetcher::new()?);
-    let state = AppState::new(environment, enclave_client, challenge_source);
+    // In-memory pending the shared (S3) store: single-host only, see `challenge_store`.
+    let challenge_store = Arc::new(InMemoryChallengeStore::new());
+    let state = AppState::new(environment, enclave_client, challenge_store);
 
     deepface_host::server::start(state).await
 }

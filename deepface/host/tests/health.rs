@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{body::Body, http::Request};
 use deepface_host::{
-    AppState, Environment, challenge_fetcher::ChallengeFetcher, enclave::PontifexEnclaveClient,
+    AppState, Environment, challenge_store::InMemoryChallengeStore, enclave::PontifexEnclaveClient,
     routes,
 };
 use tower::ServiceExt;
@@ -12,7 +12,7 @@ async fn health_returns_ok() {
     let state = AppState::new(
         Environment::Development,
         Arc::new(PontifexEnclaveClient::new(0, 0)),
-        Arc::new(ChallengeFetcher::new().expect("the HTTP client should build")),
+        Arc::new(InMemoryChallengeStore::new()),
     );
     let response = routes::handler()
         .with_state(state)

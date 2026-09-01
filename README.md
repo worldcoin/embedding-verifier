@@ -145,20 +145,38 @@ through the host, exercising the assignment route and the client together:
 VERIFIER_CONFIG=./client.json cargo run --bin deepface-e2e -- <credential> <live> <challenge>
 ```
 
+## Challenges
+
+`POST /v1/challenges` takes the RP's encrypted challenge image as a raw body (AES-256-GCM
+ciphertext, 4 MiB cap) and stores it for one hour:
+
+```json
+{ "challenge_id": "<32 hex characters>" }
+```
+
+The RP pushes before handing the id to the authenticator, so the host never fetches a
+caller-supplied URL — the match looks the blob up in a store this service owns. The service
+holds ciphertext it has no key for; only the enclave receives the key, sealed inside the match
+request.
+
+> **No ingest authentication yet.** The size cap, the TTL, and the store's byte budget bound
+> the abuse to storage churn, but the route takes any caller. Before untrusted exposure it
+> needs RP authentication. See `TODO(AUTH)` in `deepface/host/src/challenge_store.rs`.
+
 ## Matches
 
 `POST /v1/matches` compares a credential image against a live frame and the RP's challenge
 frame. The host relays but cannot read either input:
 
 ```json
-{ "challenge_image_url": "https://…", "ciphertext": "<base64 enc || ciphertext>" }
+{ "challenge_id": "<32 hex characters>", "ciphertext": "<base64 enc || ciphertext>" }
 ```
 
 `ciphertext` is the match inputs sealed to the enclave's attested encryption key — both
 images, `hashes.json`, and the AES-256-GCM key and IV for the challenge image. The challenge
-image itself never travels: the RP uploads it encrypted, and the host fetches that blob from
-`challenge_image_url` holding no key for it. A substituted URL or swapped object therefore
-fails inside the enclave rather than changing the result.
+image itself never travels here: the RP pushed it, and `challenge_id` names it in a store the
+host holds no key for. A substituted id or blob therefore fails inside the enclave rather than
+changing the result.
 
 ```json
 { "response_ciphertext": "<base64 nonce || ciphertext>", "key_attestation": "<base64 COSE_Sign1>" }
@@ -178,18 +196,14 @@ code.
 | --- | --- |
 | `200` | The enclave answered; the sealed payload holds the outcome |
 | `409` `reassign_required` | The request did not open, so there was no channel to reply on; re-assign and re-seal, once |
-| `400` `invalid_challenge_url` | The URL was rejected before any request was made |
-| `502` `challenge_fetch_failed` | The challenge image could not be fetched |
+| `400` `invalid_challenge_id` | The id was not 32 hex characters |
+| `404` `unknown_challenge` | No live challenge under this id — never pushed, or expired. Terminal |
+| `503` `challenge_store_unavailable` | The store could not be read; never reported as `404` |
 | `500` `internal_error` | Enclave fault |
 
 `409` is the only input failure with a status of its own, because with no channel open there is
 nothing to seal a reply into. Everything else the host might want — how often matches fail, how often
 the RP's objects are stale — has to come from enclave-side metrics rather than from status codes.
-
-> **No SSRF destination control.** `challenge_image_url` is only constrained in shape — HTTPS,
-> a domain rather than an IP literal, no credentials, no redirects, a 5s timeout and a 4 MiB
-> cap. Nothing pins *where* a fetch may go, so this endpoint must not take untrusted callers
-> as-is. See `TODO(SSRF)` in `deepface/host/src/challenge_fetcher.rs`.
 
 ## Nitro-enabled development host
 
