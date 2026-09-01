@@ -3,6 +3,9 @@
 # Enclave images build but do not publish: they are inputs to scripts/build-eif.sh,
 # and what gets deployed is the EIF. Built here so a broken enclave Dockerfile
 # fails on the PR that breaks it.
+#
+# Only deepface-enclave resolves anything private, because each enclave is its own cargo
+# workspace. It is the only build handed a token or a Hugging Face secret.
 name: Build and Push Docker Image
 
 on:
@@ -67,6 +70,7 @@ jobs:
 
       - name: Mint biometric-engines access token
         id: biometric-engines-token
+        if: matrix.name == 'deepface-enclave'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
@@ -127,10 +131,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
-          # HUGGING_FACE_TOKEN is only mounted by deepface/enclave/Dockerfile.
+          # deepface/enclave/Dockerfile is the only one that mounts either secret; the blank
+          # lines the other builds produce here are dropped by build-push-action.
           secrets: |
-            GITHUB_TOKEN=${{ steps.biometric-engines-token.outputs.token }}
-            HUGGING_FACE_TOKEN=${{ secrets.HUGGING_FACE_TOKEN }}
+            ${{ matrix.name == 'deepface-enclave' && format('GITHUB_TOKEN={0}', steps.biometric-engines-token.outputs.token) || '' }}
+            ${{ matrix.name == 'deepface-enclave' && format('HUGGING_FACE_TOKEN={0}', secrets.HUGGING_FACE_TOKEN) || '' }}
 
       - name: Attest build provenance
         if: github.event_name != 'pull_request' && matrix.publish

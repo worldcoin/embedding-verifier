@@ -62,6 +62,12 @@ pub async fn handler(
         .await
         .map_err(|error| AppError::enclave_match(&error))?;
 
+    tracing::info!(
+        sealed_request_bytes = ciphertext.len(),
+        challenge_ciphertext_bytes = challenge_ciphertext.len(),
+        "forwarding sealed match request to enclave"
+    );
+
     let response = state
         .enclave_client()
         .run_match(enclave::MatchRequest {

@@ -4,9 +4,9 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use anyhow::Context;
+use telemetry_batteries::tracing::middleware::TraceLayer;
 use tokio::net::TcpListener;
 use tokio::time::timeout;
-use tower_http::trace::TraceLayer;
 
 use crate::key_registry::{retire_signing_key, unix_seconds};
 use crate::{AppState, routes};
@@ -38,7 +38,7 @@ pub async fn start(state: AppState) -> anyhow::Result<()> {
         listener,
         routes::handler()
             .with_state(state.clone())
-            .layer(TraceLayer::new_for_http())
+            .layer(TraceLayer::new())
             .into_make_service(),
     )
     .with_graceful_shutdown(shutdown_signal())
