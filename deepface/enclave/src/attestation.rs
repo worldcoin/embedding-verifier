@@ -265,14 +265,11 @@ mod tests {
         tokio::task::yield_now().await;
         tokio::time::advance(MAX_SERVABLE_AGE).await;
 
-        for _ in 0..100 {
-            if refresh.is_finished() {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
+        // Awaiting the handle lets the runtime go idle, which is what drives the refresh loop's
+        // blocking attest to completion. Spinning on `is_finished` instead kept the runtime busy
+        // and failed whenever the blocking pool needed longer than the spin.
+        refresh.await.expect("refresh task should not panic");
 
-        assert!(refresh.is_finished());
         assert!(attestor.calls() >= 2);
     }
 }

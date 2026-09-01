@@ -15,6 +15,7 @@ use serde::Serialize;
 
 use crate::challenge_fetcher::FetchError;
 use crate::enclave::EnclaveClientError;
+use crate::key_registry::{InvalidSigningPublicKey, RegistryError};
 
 /// Error envelope returned to clients.
 #[derive(Debug, Serialize)]
@@ -172,6 +173,48 @@ impl AppError {
         }
     }
 
+    /// The path was not a signing key at all, which is the caller's mistake rather than a verdict
+    /// on any key.
+    #[must_use]
+    pub fn invalid_signing_public_key(error: &InvalidSigningPublicKey) -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_public_key",
+            "The path is not a signing key",
+            false,
+        )
+        .with_detail(error.to_string())
+    }
+
+    /// This `Service` never issued the key.
+    ///
+    /// A hard verification failure: whatever signed the statement was not one of our enclaves,
+    /// and no amount of retrying turns that into a pass.
+    #[must_use]
+    pub const fn unknown_signing_key() -> Self {
+        Self::new(
+            StatusCode::NOT_FOUND,
+            "unknown_signing_key",
+            "Not a signing key of this service",
+            false,
+        )
+    }
+
+    /// Maps a registry failure.
+    ///
+    /// Never `404`. An unknown key is terminal for the caller, so a store the host could not read
+    /// must not be able to produce that answer.
+    #[must_use]
+    pub fn key_registry(error: &RegistryError) -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "key_registry_unavailable",
+            "The signing key registry could not be read",
+            true,
+        )
+        .with_detail(error.to_string())
+    }
+
     /// The request never reached a working enclave.
     fn enclave_unreachable(error: &EnclaveClientError) -> Self {
         match error {
@@ -242,6 +285,28 @@ mod tests {
 
     use super::AppError;
     use crate::enclave::EnclaveClientError;
+    use crate::key_registry::RegistryError;
+
+    /// The one mapping the spec pins outright: `404` means "not a key of this Service", and a
+    /// registry the host could not read must never be able to say that.
+    #[test]
+    fn a_registry_that_cannot_be_read_is_never_an_unknown_key() {
+        let mapped = AppError::key_registry(&RegistryError::Unavailable("timed out".to_string()));
+
+        assert_ne!(mapped.status(), StatusCode::NOT_FOUND);
+        assert!(mapped.status().is_server_error());
+        assert!(mapped.allow_retry, "an outage is worth retrying");
+    }
+
+    /// A hard verification failure. A client that retried it into a pass would accept a statement
+    /// signed by a key this `Service` never issued.
+    #[test]
+    fn an_unknown_signing_key_is_not_retryable() {
+        let mapped = AppError::unknown_signing_key();
+
+        assert_eq!(mapped.status(), StatusCode::NOT_FOUND);
+        assert!(!mapped.allow_retry);
+    }
 
     #[test]
     fn assignment_maps_transport_failures_to_retryable_statuses() {
