@@ -2,6 +2,12 @@
 //!
 //! §7.1: the host reads the enclave's signing-key attestation and appends it. Until that lands
 //! no verifier can check a statement this enclave signs, so readiness stays red until it does.
+//!
+//! The enclave sidecar can restart on its own — the host container is a separate process in the
+//! same pod and keeps running. A fresh enclave boot attests a fresh key, so registration keeps
+//! polling after it first lands and re-registers whenever the attested key changes, retiring the
+//! row it replaces. Without this, readiness would keep reporting the pod ready on the strength of
+//! a key no enclave can still sign with.
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -13,7 +19,8 @@ use backon::{ExponentialBuilder, Retryable as _};
 use tokio::sync::watch;
 
 use super::{
-    InvalidSigningPublicKey, KeyRegistry, KeyStatus, RegistryEntry, RegistryError, SigningPublicKey,
+    InvalidSigningPublicKey, KeyRegistry, KeyStatus, RegistryEntry, RegistryError,
+    SigningPublicKey, unix_seconds,
 };
 use crate::enclave::{EnclaveClient, EnclaveClientError};
 
@@ -28,6 +35,13 @@ const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 /// Cap on the wait between attempts. Registration is a boot step, not a request path, so a
 /// minute between attempts costs nothing but keeps a wedged store from being hammered.
 const MAX_BACKOFF: Duration = Duration::from_mins(1);
+
+/// How often to re-check the enclave's attested key after the first registration lands.
+///
+/// The enclave answers from its attestation cache, not a fresh NSM call, so this is a cheap vsock
+/// round trip. Matches the readiness probe's default period, so a sidecar-only enclave restart is
+/// caught about as fast as `/ready` polls.
+const RECONCILE_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Why this boot's key is not in the registry.
 #[derive(Debug, thiserror::Error)]
@@ -70,50 +84,90 @@ pub fn verifier(pcr0: Vec<u8>, allow_debug_measurements: bool) -> EnclaveAttesta
     verifier
 }
 
-/// Registers this boot's signing key, retrying until it lands, then publishes it on `registered`.
+/// Keeps this boot's signing key registered for as long as the host runs.
 ///
-/// Runs as a background task. Nothing else reports the host ready, so an unreachable registry
-/// leaves readiness red and the load balancer sends this host no traffic.
+/// Registers on first success, publishing it on `registered`, then keeps polling the enclave's
+/// attested key and re-registers whenever it changes — the enclave sidecar can reboot without the
+/// host, which attests a new key the registry has never seen. Never returns.
 pub async fn register_signing_key(
     enclave_client: Arc<dyn EnclaveClient>,
     registry: Arc<dyn KeyRegistry>,
     verifier: EnclaveAttestationVerifier,
     registered: watch::Sender<Option<SigningPublicKey>>,
 ) {
-    let mut failures: u32 = 0;
+    let mut current: Option<SigningPublicKey> = None;
 
-    let result = (|| register_once(enclave_client.as_ref(), registry.as_ref(), &verifier))
-        .retry(backoff())
-        .notify(|error, delay| {
-            failures = failures.saturating_add(1);
+    loop {
+        let mut failures: u32 = 0;
+
+        let result = (|| register_once(enclave_client.as_ref(), registry.as_ref(), &verifier))
+            .retry(backoff())
+            .notify(|error, delay| {
+                failures = failures.saturating_add(1);
+                tracing::warn!(
+                    %error,
+                    attempt = failures,
+                    retry_in = ?delay,
+                    dependency = "key-registry",
+                    "could not confirm this boot's signing key is registered; readiness stays red"
+                );
+            })
+            .await;
+
+        match result {
+            Ok(public_key) => {
+                reconcile(registry.as_ref(), &mut current, public_key, &registered).await;
+            }
+            // The schedule has no attempt cap, so this is unreachable in practice. Logged rather
+            // than asserted, since a silent exit here would leave readiness red with no reason why.
+            Err(error) => tracing::error!(
+                %error,
+                dependency = "key-registry",
+                "stopped trying to confirm this boot's signing key is registered; readiness stays red"
+            ),
+        }
+
+        tokio::time::sleep(RECONCILE_INTERVAL).await;
+    }
+}
+
+/// Publishes `attested_key` if it differs from `current`, retiring the row it replaces.
+///
+/// A changed key means the enclave this host talks to rebooted on its own: whatever held
+/// `current` is gone, so its row is retired rather than left `active` for a key nothing can still
+/// sign with. Retirement is best-effort, matching the graceful-shutdown path in `server.rs`: a
+/// failure here leaves a stale row `active`, which is wrong but not unsafe.
+async fn reconcile(
+    registry: &dyn KeyRegistry,
+    current: &mut Option<SigningPublicKey>,
+    attested_key: SigningPublicKey,
+    registered: &watch::Sender<Option<SigningPublicKey>>,
+) {
+    if *current == Some(attested_key) {
+        return;
+    }
+
+    if let Some(previous) = current.replace(attested_key) {
+        tracing::warn!(
+            previous = %previous,
+            public_key = %attested_key,
+            "enclave's attested signing key changed; retiring the previous boot's key"
+        );
+
+        if let Err(error) = retire_signing_key(registry, previous, unix_seconds()).await {
             tracing::warn!(
                 %error,
-                attempt = failures,
-                retry_in = ?delay,
+                public_key = %previous,
                 dependency = "key-registry",
-                "could not register this boot's signing key; readiness stays red"
+                "failed to retire the signing key this boot replaced; it stays active in the registry"
             );
-        })
-        .await;
-
-    match result {
-        Ok(public_key) => {
-            tracing::info!(
-                %public_key,
-                attempt = failures.saturating_add(1),
-                "registered this boot's signing key"
-            );
-            // The receiver lives in the app state, which outlives this task.
-            let _ = registered.send(Some(public_key));
         }
-        // The schedule has no attempt cap, so this is unreachable in practice. Logged rather
-        // than asserted, since a silent exit here would leave readiness red with no reason why.
-        Err(error) => tracing::error!(
-            %error,
-            dependency = "key-registry",
-            "stopped trying to register this boot's signing key; readiness stays red"
-        ),
+    } else {
+        tracing::info!(%attested_key, "registered this boot's signing key");
     }
+
+    // The receiver lives in the app state, which outlives this task.
+    let _ = registered.send(*current);
 }
 
 /// Retry schedule for registration: exponential with jitter, and no cap on attempts.
@@ -221,7 +275,9 @@ mod tests {
     use attested_channel::nitro::VerifiedAttestation;
     use tokio::sync::watch;
 
-    use super::{RegistrationError, entry_from, register_signing_key, retire_signing_key};
+    use super::{
+        RegistrationError, entry_from, reconcile, register_signing_key, retire_signing_key,
+    };
     use crate::key_registry::{
         InMemoryKeyRegistry, KeyRegistry, KeyStatus, RegistryEntry, SigningPublicKey,
     };
@@ -332,6 +388,92 @@ mod tests {
             .expect_err("there is nothing to retire");
 
         assert!(matches!(error, RegistrationError::NotRegistered(_)));
+    }
+
+    #[tokio::test]
+    async fn reconcile_publishes_the_first_key_without_retiring_anything() {
+        let registry = InMemoryKeyRegistry::new();
+        let key = SigningPublicKey::from_bytes([1; 32]);
+        registry
+            .set(&entry(key, KeyStatus::Active))
+            .await
+            .expect("should write");
+        let mut current = None;
+        let (sender, receiver) = watch::channel(None);
+
+        reconcile(&registry, &mut current, key, &sender).await;
+
+        assert_eq!(current, Some(key));
+        assert_eq!(*receiver.borrow(), Some(key));
+    }
+
+    #[tokio::test]
+    async fn reconcile_does_nothing_when_the_attested_key_has_not_changed() {
+        let registry = InMemoryKeyRegistry::new();
+        let key = SigningPublicKey::from_bytes([1; 32]);
+        registry
+            .set(&entry(key, KeyStatus::Active))
+            .await
+            .expect("should write");
+        let mut current = Some(key);
+        let (sender, receiver) = watch::channel(None);
+
+        reconcile(&registry, &mut current, key, &sender).await;
+
+        assert_eq!(current, Some(key));
+        assert_eq!(
+            *receiver.borrow(),
+            None,
+            "nothing is published when the key did not change"
+        );
+        let stored = registry
+            .get(key)
+            .await
+            .expect("should read")
+            .expect("a row");
+        assert_eq!(
+            stored.status,
+            KeyStatus::Active,
+            "an unchanged key must not be retired"
+        );
+    }
+
+    /// Catches an enclave sidecar that rebooted without the host: the new boot's key was already
+    /// registered active by `register_once`, and reconciliation must retire the row it replaced.
+    #[tokio::test]
+    async fn reconcile_retires_the_replaced_key_and_publishes_the_new_one() {
+        let registry = InMemoryKeyRegistry::new();
+        let old_key = SigningPublicKey::from_bytes([1; 32]);
+        let new_key = SigningPublicKey::from_bytes([2; 32]);
+        registry
+            .set(&entry(old_key, KeyStatus::Active))
+            .await
+            .expect("should write");
+        registry
+            .set(&entry(new_key, KeyStatus::Active))
+            .await
+            .expect("should write");
+        let mut current = Some(old_key);
+        let (sender, receiver) = watch::channel(None);
+
+        reconcile(&registry, &mut current, new_key, &sender).await;
+
+        assert_eq!(current, Some(new_key));
+        assert_eq!(
+            *receiver.borrow(),
+            Some(new_key),
+            "readiness must see the enclave's live key, not the stale one"
+        );
+        let old_row = registry
+            .get(old_key)
+            .await
+            .expect("should read")
+            .expect("a row");
+        assert_eq!(
+            old_row.status,
+            KeyStatus::Retired,
+            "the enclave that held the old key is gone"
+        );
     }
 
     /// The whole point of the background task: a host whose key is not registered never reports
