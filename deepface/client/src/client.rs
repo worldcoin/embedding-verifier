@@ -240,11 +240,6 @@ impl FaceVerifierClient {
     ///
     /// Returns [`ClientError`] if the HTTP client cannot be built.
     pub fn new(config: Config) -> Result<Self, ClientError> {
-        // An assignment attests one enclave boot's encryption key, and only the pod holding that
-        // enclave can open what was sealed to it. Behind a load balancer the match has to reach
-        // the same pod, which it does by returning the affinity cookie the assignment set. Losing
-        // it is not a correctness problem — the host answers `reassign_required` — but every miss
-        // costs a fresh attestation, so the jar lives as long as the client.
         let http = reqwest::Client::builder()
             .cookie_store(true)
             .connect_timeout(config.connect_timeout())
