@@ -1228,6 +1228,7 @@ dependencies = [
  "base64",
  "deepface-protocol",
  "getrandom 0.4.3",
+ "hex",
  "hex-literal",
  "reqwest 0.12.28",
  "serde",
