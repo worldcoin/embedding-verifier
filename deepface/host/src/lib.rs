@@ -14,6 +14,7 @@ mod environment;
 pub mod challenge_fetcher;
 pub mod enclave;
 pub mod error;
+pub mod key_registry;
 pub mod routes;
 pub mod server;
 
