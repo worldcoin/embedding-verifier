@@ -1,7 +1,8 @@
 # Builds and publishes the host images to GHCR (attested).
 #
-# Enclaves are not here: they are built by flake.nix, not Docker, so that their PCRs
-# depend on the commit alone. See scripts/build-eif.sh and verify-measurements.yml.
+# Enclave workload images are built reproducibly by flake.nix instead of Dockerfiles.
+# Docker is only used later as the transport into AWS nitro-cli's converter. See
+# scripts/build-eif.sh and verify-measurements.yml.
 name: Build and Push Docker Image
 
 on:
