@@ -15,8 +15,8 @@ anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
-deepface-types.workspace = true
-enclave-types.workspace = true
+deepface-api-types.workspace = true
+deepface-enclave-types.workspace = true
 futures-util = "0.3"
 pontifex = { workspace = true, features = ["client"] }
 reqwest.workspace = true

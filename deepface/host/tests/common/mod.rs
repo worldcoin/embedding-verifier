@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use deepface_enclave_types::{MatchRequest, MatchResponse};
 use deepface_host::challenge_fetcher::{ChallengeSource, FetchError};
 use deepface_host::enclave::{EnclaveClient, EnclaveClientError};
 use deepface_host::{AppState, Environment};
-use deepface_types::{MatchRequest, MatchResponse};
 
 /// An [`EnclaveClient`] answering from fixed results.
 ///
@@ -16,7 +16,6 @@ pub struct StubEnclaveClient {
     /// `None` is healthy, so only a test about readiness has to say anything.
     pub health: Option<Result<(), EnclaveClientError>>,
     pub encryption_key: Option<Result<Vec<u8>, EnclaveClientError>>,
-    pub signing_key: Option<Result<Vec<u8>, EnclaveClientError>>,
     pub match_result: Option<Result<MatchResponse, EnclaveClientError>>,
     /// Asserted against the sealed body the route forwards, if set.
     pub expected_body: Option<Vec<u8>>,
@@ -34,12 +33,6 @@ impl EnclaveClient for StubEnclaveClient {
         self.encryption_key
             .clone()
             .expect("route asked for the encryption key but the stub was not configured to answer")
-    }
-
-    async fn signing_key_attestation(&self) -> Result<Vec<u8>, EnclaveClientError> {
-        self.signing_key
-            .clone()
-            .expect("route asked for the signing key but the stub was not configured to answer")
     }
 
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError> {

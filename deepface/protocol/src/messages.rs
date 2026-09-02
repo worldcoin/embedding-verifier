@@ -69,6 +69,12 @@ pub struct MatchInputs {
     /// Raw credential image bytes (the Orb PCP thumbnail).
     #[serde(with = "serde_bytes")]
     pub credential_image: Vec<u8>,
+    /// The second liveness frame `LightGuard` analyses, if the requester captured one.
+    ///
+    /// Absent selects vanilla mode — the credential-against-live-and-challenge flow. Present
+    /// selects the `LightGuard` flow, which the enclave does not implement yet.
+    #[serde(default, with = "serde_bytes")]
+    pub light_guard_image: Option<Vec<u8>>,
     /// Raw `hashes.json` bytes from the PCP.
     #[serde(with = "serde_bytes")]
     pub hashes_json: Vec<u8>,
@@ -112,6 +118,22 @@ impl MatchInputs {
     }
 }
 
+/// A held match: the signed statement, and the document attesting the key that signed it.
+///
+/// The two travel together because nothing else binds them. The token's `kid` names a key; only
+/// this document says an enclave running a measured image generated it.
+///
+/// Separate from the encryption key's attestation on purpose. This one outlives the exchange and
+/// is carried into the `DeepFace` proof; that one is transport setup, discarded with the channel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttestedStatement {
+    /// The signed statement.
+    pub token: MatchToken,
+    /// Raw COSE attestation document for the key that signed [`Self::token`].
+    #[serde(with = "serde_bytes")]
+    pub signing_key_attestation: Vec<u8>,
+}
+
 /// The authoritative result of a match.
 ///
 /// Everything the enclave learns after opening the request travels in here rather than in the error
@@ -123,9 +145,9 @@ impl MatchInputs {
 /// issued. It is *not* a transport error, and a client must not treat it as one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MatchResult {
-    /// The match held; carries the signed statement.
-    Success(MatchToken),
-    /// No statement was issued; carries why.
+    /// The match held; carries the signed statement and the attestation for its key.
+    Success(AttestedStatement),
+    /// No statement was issued; carries why. No attestation: nothing to verify.
     Failed(FailureReason),
 }
 
@@ -186,8 +208,8 @@ mod tests {
     use attested_channel::channel::CHANNEL_VERSION;
 
     use super::{
-        CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, Error, FailureReason, MatchInputs, MatchResult,
-        decrypt_challenge, encrypt_challenge,
+        AttestedStatement, CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, Error, FailureReason, MatchInputs,
+        MatchResult, decrypt_challenge, encrypt_challenge,
     };
 
     use crate::match_token::MatchToken;
@@ -203,6 +225,7 @@ mod tests {
             version: CHANNEL_VERSION,
             live_image: b"liveness-frame".to_vec(),
             credential_image: b"credential-thumbnail".to_vec(),
+            light_guard_image: None,
             hashes_json: br#"{"thumbnail.png":"aa"}"#.to_vec(),
             challenge_image_key: [7u8; CHALLENGE_KEY_LEN],
             challenge_image_iv: [9u8; CHALLENGE_IV_LEN],
@@ -218,12 +241,27 @@ mod tests {
 
         assert_eq!(decoded.live_image, inputs().live_image);
         assert_eq!(decoded.credential_image, inputs().credential_image);
+        assert_eq!(decoded.light_guard_image, inputs().light_guard_image);
         assert_eq!(decoded.hashes_json, inputs().hashes_json);
         assert_eq!(decoded.challenge_image_key, inputs().challenge_image_key);
         assert_eq!(decoded.challenge_image_iv, inputs().challenge_image_iv);
         assert_eq!(
             decoded.match_threshold.to_bits(),
             inputs().match_threshold.to_bits()
+        );
+    }
+
+    #[test]
+    fn a_light_guard_image_round_trips() {
+        let mut inputs = inputs();
+        inputs.light_guard_image = Some(b"second-liveness-frame".to_vec());
+        let encoded = inputs.to_cbor().expect("encoding should succeed");
+
+        let decoded = MatchInputs::from_cbor(&encoded).expect("decoding should succeed");
+
+        assert_eq!(
+            decoded.light_guard_image.as_deref(),
+            Some(&b"second-liveness-frame"[..])
         );
     }
 
@@ -297,7 +335,10 @@ mod tests {
 
     #[test]
     fn results_round_trip_every_variant() {
-        let success = MatchResult::Success(MatchToken::from_bytes(b"cose-sign1".to_vec()));
+        let success = MatchResult::Success(AttestedStatement {
+            token: MatchToken::from_bytes(b"cose-sign1".to_vec()),
+            signing_key_attestation: b"cose-attestation-document".to_vec(),
+        });
         let below = MatchResult::Failed(FailureReason::MatchBelowThreshold);
         let malformed = MatchResult::Failed(FailureReason::MalformedInputs);
 
@@ -309,6 +350,36 @@ mod tests {
                 result
             );
         }
+    }
+
+    /// A round trip that dropped the document would leave a token nothing can verify.
+    #[test]
+    fn a_statement_carries_its_attestation_through_cbor() {
+        let document: Vec<u8> = (0..=255u8).cycle().take(5_000).collect();
+        let result = MatchResult::Success(AttestedStatement {
+            token: MatchToken::from_bytes(b"cose-sign1".to_vec()),
+            signing_key_attestation: document.clone(),
+        });
+
+        let encoded = result.to_cbor().expect("encoding should succeed");
+        let MatchResult::Success(decoded) =
+            MatchResult::from_cbor(&encoded).expect("decoding should succeed")
+        else {
+            panic!("a held match decodes as a statement");
+        };
+
+        assert_eq!(decoded.signing_key_attestation, document);
+        assert_eq!(decoded.token.as_bytes(), b"cose-sign1");
+    }
+
+    /// A rejection has no statement, so there is nothing for a document to attest.
+    #[test]
+    fn a_rejection_carries_no_attestation() {
+        let encoded = MatchResult::Failed(FailureReason::MatchBelowThreshold)
+            .to_cbor()
+            .expect("encoding should succeed");
+
+        assert!(encoded.len() < 64, "a rejection stays small: {encoded:?}");
     }
 
     #[test]

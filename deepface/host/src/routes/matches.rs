@@ -1,34 +1,10 @@
 use axum::{Json, extract::State, http::StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use deepface_types as enclave;
-use serde::{Deserialize, Serialize};
+use deepface_api_types::{MatchRequestBody, MatchResponseBody};
+use deepface_enclave_types as enclave;
 
 use crate::AppState;
 use crate::error::AppError;
-
-/// A match request.
-///
-/// `challenge_image_id` is plaintext so the host can fetch immediately; `ciphertext` is the
-/// sealed request, which the host relays without being able to read it.
-#[derive(Debug, Deserialize)]
-pub struct MatchRequestBody {
-    /// Which object in the configured bucket holds the encrypted challenge image.
-    challenge_image_id: String,
-    /// The sealed match request, base64.
-    ciphertext: String,
-}
-
-/// A match response.
-///
-/// Both fields are opaque to this host.
-#[derive(Debug, Serialize)]
-pub struct MatchResponseBody {
-    /// The sealed outcome, base64.
-    response_ciphertext: String,
-    /// The signing-key attestation, base64, so a client can verify the statement it just
-    /// received. With no registry to look the key up in, this is the only way it reaches anyone.
-    key_attestation: String,
-}
 
 /// Relays a sealed match request to the enclave.
 ///
@@ -55,12 +31,6 @@ pub async fn handler(
         .await
         .map_err(AppError::challenge_fetch)?;
 
-    let key_attestation = state
-        .enclave_client()
-        .signing_key_attestation()
-        .await
-        .map_err(|error| AppError::enclave_match(&error))?;
-
     tracing::info!(
         sealed_request_bytes = ciphertext.len(),
         challenge_ciphertext_bytes = challenge_ciphertext.len(),
@@ -81,7 +51,6 @@ pub async fn handler(
         StatusCode::OK,
         Json(MatchResponseBody {
             response_ciphertext: STANDARD.encode(response.ciphertext),
-            key_attestation: STANDARD.encode(key_attestation),
         }),
     ))
 }

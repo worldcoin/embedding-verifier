@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use attested_channel::channel::{SealedRequest, SealedResponse, UnwrapErr};
+use deepface_enclave_types::{EnclaveError, MatchRequest, MatchResponse};
 use deepface_protocol::Error as ProtocolError;
 use deepface_protocol::match_token::MatchClaims;
-use deepface_protocol::messages::{FailureReason, MatchInputs, MatchResult, decrypt_challenge};
-use deepface_types::{MatchRequest, MatchResponse};
-use enclave_types::EnclaveError;
+use deepface_protocol::messages::{
+    AttestedStatement, FailureReason, MatchInputs, MatchResult, decrypt_challenge,
+};
 use getrandom::SysRng;
 use pontifex::Request;
 use sha2::{Digest, Sha256};
@@ -38,8 +39,16 @@ pub async fn handler(
             EnclaveError::RequestNotOpened
         })?;
 
+    // Read before `run`, which is sync. A clone of the cached document, not an attest.
+    let signing_key_attestation = state.signing_key_attestation().await;
+
     // Past this point there is a channel to answer on, so every input-derived failure is sealed.
-    let result = run(&state, &request.challenge_ciphertext, &plaintext)?;
+    let result = run(
+        &state,
+        &request.challenge_ciphertext,
+        &plaintext,
+        &signing_key_attestation,
+    )?;
 
     Ok(MatchResponse {
         ciphertext: seal(sealer, &result)?.into_bytes(),
@@ -56,6 +65,7 @@ fn run(
     state: &EnclaveState,
     challenge_ciphertext: &[u8],
     plaintext: &[u8],
+    signing_key_attestation: &[u8],
 ) -> Result<MatchResult, EnclaveError> {
     let inputs = match MatchInputs::from_cbor(plaintext) {
         Ok(inputs) => inputs,
@@ -91,17 +101,34 @@ fn run(
     };
 
     match evaluate(state, &inputs, &challenge_image) {
-        Ok(claims) => Ok(MatchResult::Success(sign(state, &claims)?)),
+        // Only a held match carries the document; a rejection has no statement to check.
+        Ok(claims) => Ok(MatchResult::Success(AttestedStatement {
+            token: sign(state, &claims)?,
+            signing_key_attestation: signing_key_attestation.to_vec(),
+        })),
         Err(reason) => Ok(MatchResult::Failed(reason)),
     }
 }
 
 /// Evaluates the opened inputs. Every failure here is a fact about the plaintext, so it is sealed.
+///
+/// # Panics
+///
+/// Panics if the inputs carry a `LightGuard` image. The flow behind it does not exist yet, and
+/// there is no sensible fallback: silently running the vanilla comparison would answer a
+/// `LightGuard` request with a statement that never saw the second frame.
 fn evaluate(
     state: &EnclaveState,
     inputs: &MatchInputs,
     challenge_image: &[u8],
 ) -> Result<MatchClaims, FailureReason> {
+    // TODO: Add LightGuard here. A second liveness frame selects the challenge-response spoof
+    // detection the biometrics team owns; everything below is vanilla mode. Until that pipeline
+    // lands, the enclave must not answer such a request at all — see the panic note above.
+    if inputs.light_guard_image.is_some() {
+        unimplemented!("LightGuard matching over the second liveness image");
+    }
+
     // Binds the credential image to the hash its PCP commits. A commitment, not proof of
     // enrollment — nothing here checks who issued the PCP.
     let credential_claim =
@@ -179,13 +206,12 @@ mod tests {
     use attested_channel::channel::{
         CHANNEL_VERSION, Requester, ResponseOpener, SealedResponse, UnwrapErr,
     };
+    use deepface_enclave_types::{EnclaveError, MatchRequest};
     use deepface_protocol::match_token;
     use deepface_protocol::messages::{
         CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, FailureReason, MatchInputs, MatchResult,
         encrypt_challenge,
     };
-    use deepface_types::MatchRequest;
-    use enclave_types::EnclaveError;
     use getrandom::SysRng;
     use sha2::{Digest, Sha256};
 
@@ -261,6 +287,7 @@ mod tests {
             version: CHANNEL_VERSION,
             live_image: LIVE.to_vec(),
             credential_image: credential.to_vec(),
+            light_guard_image: None,
             hashes_json: hashes_json_for(credential),
             challenge_image_key: key_and_iv().0,
             challenge_image_iv: key_and_iv().1,
@@ -303,14 +330,21 @@ mod tests {
         let plaintext = opener
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("the requester should open its own response");
-        let MatchResult::Success(token) =
+        let MatchResult::Success(attested) =
             MatchResult::from_cbor(&plaintext).expect("result should decode")
         else {
             panic!("a held match should carry a statement");
         };
 
+        // Without the document the requester cannot tell which enclave signed the token.
+        assert_eq!(
+            attested.signing_key_attestation,
+            signer.signing_key_attestation().await,
+            "the sealed document must be this boot's signing-key attestation"
+        );
+
         // The statement verifies under the key this boot attests, and commits to every input.
-        let statement = match_token::verify(&token, signer.signing_public_key())
+        let statement = match_token::verify(&attested.token, signer.signing_public_key())
             .expect("statement should verify");
         assert_eq!(statement.live_image_hash, Sha256::digest(LIVE).as_slice());
         assert_eq!(
@@ -497,6 +531,26 @@ mod tests {
             MatchResult::from_cbor(&plaintext).expect("should decode"),
             MatchResult::Failed(FailureReason::InvalidHashesJson)
         );
+    }
+
+    /// Vanilla mode is the absent-field flow, and nothing above changes it: the engine is still
+    /// asked for the same three images.
+    #[tokio::test]
+    async fn no_light_guard_image_runs_the_vanilla_flow() {
+        let state = state_with(MockFaceEngine::scoring(0.92, 0.87));
+        let inputs = inputs(CREDENTIAL, 0.5);
+        assert_eq!(inputs.light_guard_image, None);
+        let (opener, request) = request_for(&state, &inputs);
+
+        let response = handler(state, request).await.expect("match should succeed");
+
+        let plaintext = opener
+            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .expect("should open");
+        assert!(matches!(
+            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::Success(_)
+        ));
     }
 
     #[tokio::test]

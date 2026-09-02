@@ -12,23 +12,24 @@ lives in `shared/`. Crate names compose from the path: `deepface/host` is `deepf
 embedding-verifier/
 ├── Cargo.toml             # Host-side workspace  -> Cargo.lock
 ├── shared/
-│   ├── attested-channel/  # Client↔enclave channel and the attestation it rests on; destined for pontifex
-│   └── enclave-types/     # The vsock contract both workloads share: health, errors, key attestation
+│   └── attested-channel/  # Client↔enclave channel and the attestation it rests on; destined for pontifex
 ├── deepface/
 │   ├── host/              # Axum HTTP API — the untrusted side of the boundary
 │   ├── enclave/           # Nitro enclave workload — the trusted side. Own workspace -> own Cargo.lock
-│   ├── types/             # The match's own vsock contract
+│   ├── api-types/         # Client↔host HTTP contract; stops at the host, so no enclave links it
+│   ├── enclave-types/     # Host↔enclave vsock contract: health, errors, key attestation, the match exchange
 │   ├── protocol/          # Match inputs and outputs; travels sealed, the host links none of it. Will likely move to `world-id-protocol`.
 │   ├── client/            # Attestation-verifying client
 │   └── e2e/               # End-to-end harness driving host and enclave together
 └── di/                    # Skeleton — dirs and crates only, no behaviour yet
     ├── host/
-    ├── enclave/           # Own workspace -> own Cargo.lock
-    └── types/
+    └── enclave/           # Own workspace -> own Cargo.lock
 ```
 
-Splitting the types is what keeps one workload out of the other's enclave image. `di-host`
-and `di-enclave` log and exit non-zero — a skeleton that idled would read as healthy. See
+One crate per boundary, in the graphs that boundary reaches. Nothing is shared between
+`deepface/` and `di/`, because a shared crate means a `deepface` edit rotates `di`'s PCR0.
+
+`di-host` and `di-enclave` log and exit non-zero — a skeleton that idled would read as healthy. See
 [Spec: DeepIdentifier Migration TEE Setup v1](https://app.notion.com/p/worldcoin/Spec-DeepIdentifier-Migration-TEE-Setup-v1-3c08614bdf8c8014b7ddf50f3cac4e4b)
 for what goes in them.
 
@@ -39,11 +40,14 @@ Each enclave is its own cargo workspace. One lockfile for the whole repository m
 pin. Now an EIF's inputs are its own `Cargo.toml`, the `Cargo.lock` beside it, and the path
 crates they name.
 
-`attested-channel`, `enclave-types`, `deepface-protocol`, `deepface-types` and `di-types` are
-in both an enclave graph and the host-side one. They are members of the root workspace but
-inherit nothing from it — not `[workspace.dependencies]`, not `[workspace.package]` — so the
-root manifest cannot reach an enclave graph either. Treat them as standalone crates: write the
-version, and the `edition`, in their own manifest.
+`attested-channel`, `deepface-protocol` and `deepface-enclave-types` are in both an enclave
+graph and the host-side one. They are members of the root workspace but inherit nothing from it
+— not `[workspace.dependencies]`, not `[workspace.package]` — so the root manifest cannot reach
+an enclave graph either. Treat them as standalone crates: write the version, and the `edition`,
+in their own manifest. `deepface-api-types` is host-side only and inherits normally.
+
+`nix/enclave-binaries.nix` lists the crates each EIF build sees. A new path dependency has to be
+added there or the build fails.
 
 Package metadata matters as much as the dependency versions here. An inherited `edition` would
 change how an enclave compiles when the root workspace moved, and bumping the root
@@ -173,13 +177,22 @@ images, `hashes.json`, and the AES-256-GCM key and IV for the challenge image. T
 image itself never travels: it is uploaded encrypted, and the host fetches that blob holding no
 key for it. A swapped object therefore fails inside the enclave rather than changing the result.
 
+The sealed payload also carries an optional `light_guard_image`, a second liveness frame. Omitting
+it selects vanilla mode, the flow described here. Sending one selects LightGuard — challenge-response
+spoof detection — which **is not implemented**: the enclave panics on such a request today.
+
 ```json
-{ "response_ciphertext": "<base64 nonce || ciphertext>", "key_attestation": "<base64 COSE_Sign1>" }
+{ "response_ciphertext": "<base64 nonce || ciphertext>" }
 ```
 
 The sealed response carries either a `COSE_Sign1` match statement or the reason no statement was
-issued; `key_attestation` is the signing key's attestation, so a client can verify the statement it
-just received. Only the requester can open it — a second channel to the same enclave key cannot.
+issued. A statement travels with the signing key's attestation sealed beside it, since that
+document is the only thing saying which enclave signed it. A rejection carries no document.
+Only the requester can open any of it — a second channel to the same enclave key cannot.
+
+The signing key's attestation is a separate document from the encryption key's on purpose: it
+outlives the exchange and is carried into the `DeepFace` proof, while the encryption key's is
+transport setup discarded with the channel.
 
 
 The host learns only that the enclave answered. Once a request has been opened there is a sealed

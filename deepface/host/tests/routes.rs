@@ -9,11 +9,11 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use common::{StubChallengeSource, StubEnclaveClient, state_with, state_with_source};
+use deepface_enclave_types::EnclaveError;
 use deepface_host::AppState;
 use deepface_host::challenge_fetcher::FetchError;
 use deepface_host::enclave::EnclaveClientError;
 use deepface_host::routes;
-use enclave_types::EnclaveError;
 use http_body_util::BodyExt as _;
 use serde_json::Value;
 use tower::ServiceExt as _;
@@ -109,8 +109,8 @@ async fn assignment_is_not_reachable_by_get() {
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
 }
 
-/// Enclave keys are not exposed as their own route. The signing-key attestation belongs to
-/// the Key Registry, and the encryption key is only served as part of an assignment.
+/// Enclave keys are not exposed as their own route: the encryption key is served only as part
+/// of an assignment, and the signing key's attestation only inside the sealed match response.
 #[tokio::test]
 async fn enclave_keys_are_not_served_as_a_route() {
     let state = state_with(encryption_key(vec![1, 2, 3]));
@@ -169,14 +169,12 @@ async fn assignment_surfaces_enclave_failures_as_structured_errors() {
     }
 }
 
-/// Only the signing key is configured, so this also pins that the match route never asks for the
-/// encryption key it has no use for.
+/// No key is configured, and the stub panics if asked: the match route makes no key call.
 #[tokio::test]
 async fn matches_relays_the_sealed_request_and_the_fetched_challenge() {
     let state = state_with_source(
         StubEnclaveClient {
-            signing_key: Some(Ok(vec![4, 5, 6])),
-            match_result: Some(Ok(deepface_types::MatchResponse {
+            match_result: Some(Ok(deepface_enclave_types::MatchResponse {
                 ciphertext: vec![9u8; 48],
             })),
             expected_body: Some(b"sealed".to_vec()),
@@ -189,9 +187,14 @@ async fn matches_relays_the_sealed_request_and_the_fetched_challenge() {
     let (status, body) = send(state, match_request(CHALLENGE_ID)).await;
 
     assert_eq!(status, StatusCode::OK);
-    // Both fields are relayed opaquely: the host encodes, it does not interpret.
+    // Relayed opaquely: the host encodes, it does not interpret.
     assert_eq!(body["response_ciphertext"], STANDARD.encode([9u8; 48]));
-    assert_eq!(body["key_attestation"], STANDARD.encode([4, 5, 6]));
+    // The attestation travels sealed inside the ciphertext, so nothing else is exposed.
+    assert_eq!(
+        body.as_object().map(serde_json::Map::len),
+        Some(1),
+        "the host must not add cleartext fields beside the sealed outcome"
+    );
 }
 
 #[tokio::test]
@@ -257,7 +260,6 @@ async fn matches_maps_an_unopenable_request_to_conflict() {
     // Re-assign and re-seal: the client cannot tell this from a corrupt ciphertext, which is why
     // the retry has to be bounded client-side.
     let state = state_with(StubEnclaveClient {
-        signing_key: Some(Ok(vec![2])),
         match_result: Some(Err(EnclaveClientError::Operation(
             EnclaveError::RequestNotOpened,
         ))),
@@ -275,8 +277,7 @@ async fn matches_answers_200_whatever_the_sealed_result_says() {
     // A quality failure, a below-threshold match and a malformed payload are all sealed now, so
     // the host cannot distinguish them from a statement -- and must not try.
     let state = state_with(StubEnclaveClient {
-        signing_key: Some(Ok(vec![2])),
-        match_result: Some(Ok(deepface_types::MatchResponse {
+        match_result: Some(Ok(deepface_enclave_types::MatchResponse {
             ciphertext: vec![9u8; 48],
         })),
         ..StubEnclaveClient::default()
@@ -288,8 +289,8 @@ async fn matches_answers_200_whatever_the_sealed_result_says() {
     assert_eq!(body["response_ciphertext"], STANDARD.encode([9u8; 48]));
     assert_eq!(
         body.as_object().map(serde_json::Map::len),
-        Some(2),
-        "the relay exposes the ciphertext and the attestation, nothing else"
+        Some(1),
+        "the relay exposes the ciphertext and nothing else"
     );
 }
 

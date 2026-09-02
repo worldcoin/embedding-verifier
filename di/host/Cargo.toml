@@ -11,6 +11,5 @@ name = "di-host"
 path = "src/main.rs"
 
 [dependencies]
-di-types.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

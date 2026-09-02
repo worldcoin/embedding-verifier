@@ -191,8 +191,6 @@ in
     workspace = "di/enclave";
     crates = [
       (root + "/di/enclave")
-      (root + "/di/types")
-      (root + "/shared/enclave-types")
     ];
     cargoVendorDir = diVendorDir;
   };
@@ -201,10 +199,9 @@ in
     workspace = "deepface/enclave";
     crates = [
       (root + "/deepface/enclave")
+      (root + "/deepface/enclave-types")
       (root + "/deepface/protocol")
-      (root + "/deepface/types")
       (root + "/shared/attested-channel")
-      (root + "/shared/enclave-types")
     ];
     cargoVendorDir = deepfaceVendorDir;
     extraArgs = faceEngineArgs;

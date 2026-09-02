@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use attested_channel::channel::{ENCRYPTION_KEY_LEN, Responder, UnwrapErr};
+use deepface_enclave_types::EnclaveError;
 use eddsa_babyjubjub::EdDSAPublicKey;
-use enclave_types::EnclaveError;
 use getrandom::SysRng;
 use tokio::task::JoinHandle;
 
@@ -128,7 +128,7 @@ impl EnclaveState {
 mod tests {
     use std::sync::Arc;
 
-    use enclave_types::EnclaveError;
+    use deepface_enclave_types::EnclaveError;
 
     use super::EnclaveState;
     use crate::test_support::{EchoAttestor, FailingAttestor, UnusedFaceEngine, state_with};
