@@ -135,9 +135,14 @@ The published OCI image closes that gap. It is the exact input the EIF is conver
 converting it with the pinned nitro-cli must yield the release's PCRs:
 
 ```
-skopeo copy docker://<images.enclaveOci from manifest.json> oci:enclave:<version>
-nix run github:worldcoin/embedding-verifier/<gitSha>#nitro-cli -- \
-  build-enclave --docker-uri <loaded image> --output-file enclave.eif
+# both values come from manifest.json: .images.enclaveOci and .gitSha
+skopeo --insecure-policy copy \
+  docker://ghcr.io/worldcoin/embedding-verifier-deepface-enclave-oci@sha256:<digest> \
+  docker-daemon:embedding-verifier-deepface-enclave:<version>
+
+nix run github:worldcoin/embedding-verifier/<gitSha>#nitro-cli -- build-enclave \
+  --docker-uri embedding-verifier-deepface-enclave:<version> \
+  --output-file enclave.eif
 ```
 
 This needs a Docker daemon and nothing private. It does not prove the image matches the

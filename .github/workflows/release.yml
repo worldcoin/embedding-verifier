@@ -7,11 +7,9 @@
 # pinning the untouched workload would have to re-register for nothing.
 #
 # Nothing is published until two independent builds of the same commit measure to the same
-# PCRs. A PCR only means something if anyone holding this commit can re-derive it; flake.nix
-# makes that true by construction, and `verify-reproducible` is what proves the construction
-# still holds for this release. The failure it catches is quiet: an input the flake's fileset
-# does not capture makes the build depend on something outside the pinned closure, and the
-# published PCR then describes a rootfs nobody else can reproduce.
+# PCRs. Nix pins the OCI image; the nitro-cli conversion that turns it into an EIF runs
+# through a Docker daemon that Nix does not pin, so the two builds use different runner
+# images. Agreement across them is the evidence that the daemon does not reach the PCRs.
 name: release
 
 on:
@@ -131,10 +129,8 @@ jobs:
             echo "PUBLISH=$publish"
           } >> "$GITHUB_OUTPUT"
 
-  # Two independent builds of the same commit. Neither can shortcut to the other's result:
-  # the enclave derivation is in no binary cache, so each substitutes the pinned nixpkgs
-  # closure and compiles the crate from source. Only `canonical` produces artifacts anything
-  # downstream publishes; `reproduction` exists solely to be diffed against it.
+  # Two independent builds of the same commit, on different runner images. Only `canonical`
+  # produces anything downstream publishes; `reproduction` exists to be diffed against it.
   build-enclave:
     name: build enclave (${{ matrix.attempt }} on ${{ matrix.runner }})
     needs: prepare-release
@@ -193,13 +189,9 @@ jobs:
             "target/eif/closure-$WORKLOAD.txt" \
             "target/eif/$WORKLOAD-enclave.eif"
 
-      # Build-side fingerprints rather than measurements, so they stay out of the shape the
-      # repo commits.
-      #
-      # `ociStoreHash` is the boundary Nix guarantees; `eifSha256` is what came out of AWS
-      # nitro-cli's conversion, which Nix does not pin. Recording both separately is what
-      # lets a mismatch say which half moved — the same OCI hash with a different EIF hash
-      # means the conversion is not deterministic, not that the source changed.
+      # Recorded separately so a mismatch says which half moved: `ociStoreHash` is what Nix
+      # pinned, `eifSha256` is what the conversion produced. Same OCI hash with a different
+      # EIF hash means the conversion is not deterministic, not that the source changed.
       - name: Record build provenance
         run: |
           set -euo pipefail
@@ -212,11 +204,9 @@ jobs:
             > target/eif/provenance.json
           jq . target/eif/provenance.json
 
-      # Recorded, never compared. Nix pins the OCI image and nitro-cli, but the Docker daemon
-      # that linuxkit reads the image back through is the host's, and the EIF is assembled on
-      # the far side of it. Two runner images therefore disagree here by design — and the
-      # PCRs still matching across them is the evidence that the daemon does not influence
-      # the measurement.
+      # Recorded, never compared: the two runner images disagree here by design. The PCRs
+      # matching across them anyway is what shows the Docker daemon does not reach the
+      # measurement.
       - name: Record build environment
         run: |
           set -euo pipefail
@@ -241,13 +231,11 @@ jobs:
             | jq 'map_values({url, hash})' > target/eif/face-models.json
           jq . target/eif/face-models.json
 
-      # The OCI image is the boundary Nix guarantees, and the only one a third party can
-      # verify without access to the private face-engine repository: pull it by digest, run
-      # the pinned nitro-cli conversion, compare the PCRs. Publishing it is what makes the
-      # measurement checkable by someone who cannot rebuild from source.
+      # The OCI image is the boundary Nix guarantees, and the only artifact someone without
+      # face-engine access can check a PCR against.
       #
-      # Tagged by commit here, not by version. `:vX.Y.Z` is applied after the gate, so the
-      # release tag never names an image two builds have not agreed on.
+      # Tagged by commit here. `:vX.Y.Z` is applied after the gate, so the release tag never
+      # names an image two builds have not agreed on.
       - name: Publish OCI image
         if: matrix.attempt == 'canonical' && needs.prepare-release.outputs.PUBLISH == 'true'
         id: push-oci
@@ -394,13 +382,9 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # The hook for a human gate, positioned after the build is known releasable rather than in
-  # front of it — a gate before the builds would ask someone to approve an hour before there
-  # was anything to judge.
-  #
+  # The hook for a human gate, after the build is known releasable rather than in front of it.
   # The `release` environment has no protection rules today, so this passes straight through
-  # and publishing is automatic. Adding required reviewers to that environment turns the gate
-  # on without touching this file.
+  # and publishing is automatic; adding required reviewers turns the gate on with no edit here.
   approve-publish:
     name: approve publish
     needs: [prepare-release, verify-reproducible]
@@ -568,10 +552,9 @@ jobs:
           name: eif-canonical
           path: assets
 
-      # The manifest is what a third party checks a rebuild against, and what the deploy reads
-      # PCR0 out of: the commit, the pinned flake inputs it resolves to, the measurements
-      # verbatim, and the images carrying them. `measurements` is the same object the repo
-      # commits, so a rebuild diffs against it directly.
+      # What a rebuild is checked against: the commit, the pinned flake inputs it resolves to,
+      # the measurements verbatim, and the images carrying them. `measurements` is the same
+      # object the repo commits, so a rebuild diffs against it directly.
       - name: Build manifest
         env:
           HOST_IMAGE: ${{ needs.build-host-image.outputs.image }}
@@ -657,71 +640,31 @@ jobs:
           HOST_IMAGE: ${{ needs.build-host-image.outputs.image }}
           CARRIER_IMAGE: ${{ needs.build-carrier.outputs.IMAGE }}
           OCI_IMAGE: ghcr.io/${{ github.repository_owner }}/embedding-verifier-${{ needs.prepare-release.outputs.WORKLOAD }}-enclave-oci
-          OCI_REF: ${{ needs.build-carrier.outputs.OCI_REF }}
-          LOCAL_IMAGE: embedding-verifier-${{ needs.prepare-release.outputs.WORKLOAD }}-enclave:${{ needs.prepare-release.outputs.VERSION }}
         run: |
           set -euo pipefail
-          if [[ "$WORKLOAD" == "deepface" ]]; then
-            repro_note="The enclave links private face-engine code, so rebuilding from this tag needs access most people do not have. Converting the published image needs none:"
-          else
-            repro_note="This workload has no private dependencies, so either route works — rebuild from source below, or convert the published image:"
-          fi
+          pkg() { echo "https://github.com/$GITHUB_REPOSITORY/pkgs/container/${1##*/}"; }
+          docker_icon='<img src="https://simpleicons.org/icons/docker.svg" style="width: 32px;"/>'
+
           body=$(cat <<- ENDBODY
           ## Measurements
 
-          Reproduced by two independent builds of \`$RELEASE_SHA\` before this release was cut.
+          Reproduced by two independent builds of \`$RELEASE_SHA\`.
 
           | PCR | Value |
-          |-----|-------|
+          |:---|:---|
           | PCR0 | \`$PCR0\` |
           | PCR1 | \`$PCR1\` |
           | PCR2 | \`$PCR2\` |
 
-          PCR0 is what a host and a client pin. Register it with every client **before** this
-          enclave serves traffic, and keep the previous measurement in the allow-list until
-          clients have adopted the new one.
-
           ## Images
 
-          - \`$HOST_IMAGE:v$VERSION\` — the host
-          - \`$OCI_IMAGE:v$VERSION\` — the measured enclave image, before conversion
-          - \`$CARRIER_IMAGE:v$VERSION\` — EIF carrier for the enclave sidecar
+          | | Image | Pull |
+          |:---:|:---|:---|
+          | $docker_icon | [host]($(pkg "$HOST_IMAGE")) | \`$HOST_IMAGE:v$VERSION\` |
+          | $docker_icon | [enclave]($(pkg "$OCI_IMAGE")) | \`$OCI_IMAGE:v$VERSION\` |
+          | $docker_icon | [EIF carrier]($(pkg "$CARRIER_IMAGE")) | \`$CARRIER_IMAGE:v$VERSION\` |
 
-          Pinned digests are in \`manifest.json\`.
-
-          ## Re-derive the PCRs without building from source
-
-          $repro_note
-
-          \`\`\`
-          skopeo --insecure-policy copy \\
-            docker://$OCI_REF \\
-            docker-daemon:$LOCAL_IMAGE
-
-          nix run github:$GITHUB_REPOSITORY/$RELEASE_SHA#nitro-cli -- build-enclave \\
-            --docker-uri $LOCAL_IMAGE --output-file enclave.eif
-          \`\`\`
-
-          The PCRs it prints must equal the table above. That check needs only this release
-          and a Docker daemon.
-
-          ## Verify
-
-          \`\`\`
-          gh release download $TAG -R $GITHUB_REPOSITORY
-          gh attestation verify manifest.json --repo $GITHUB_REPOSITORY \\
-             --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml
-          sha256sum -c SHA256SUMS
-          \`\`\`
-
-          Reproduce the measurements from source (x86_64-linux with Nix):
-
-          \`\`\`
-          git checkout $RELEASE_SHA
-          scripts/build-eif.sh --workload $WORKLOAD target/eif
-          diff <(jq -S '.$WORKLOAD' measurements.json) \\
-               <(jq -S '.$WORKLOAD' target/eif/measurements.json)
-          \`\`\`
+          Digests are pinned in \`manifest.json\`.
 
           ## Changes
 
