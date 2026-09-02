@@ -171,9 +171,6 @@ The sealed response carries either a `COSE_Sign1` match statement or the reason 
 issued; `key_attestation` is the signing key's attestation, so a client can verify the statement it
 just received. Only the requester can open it — a second channel to the same enclave key cannot.
 
-There is no key registry, so this is the only way the signing key reaches a verifier: a statement
-has to be checked while the enclave that signed it is still the one being assigned. Whoever needs
-to check one later has to be handed the attestation alongside it.
 
 The host learns only that the enclave answered. Once a request has been opened there is a sealed
 channel to reply on, so everything the enclave discovers from that point — a malformed payload, an
