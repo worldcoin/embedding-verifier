@@ -162,7 +162,7 @@ fn sign(
     state: &EnclaveState,
     claims: &MatchClaims,
 ) -> Result<deepface_protocol::match_token::MatchToken, EnclaveError> {
-    state.signing_key().sign_claims(claims).map_err(|error| {
+    state.signing_key().sign(claims).map_err(|error| {
         tracing::error!(?error, "failed to build the match statement");
         EnclaveError::Internal
     })

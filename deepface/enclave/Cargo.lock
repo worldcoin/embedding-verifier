@@ -871,6 +871,7 @@ dependencies = [
  "attested-channel",
  "ciborium",
  "coset",
+ "rand",
  "serde",
  "serde_bytes",
  "taceo-ark-babyjubjub",
