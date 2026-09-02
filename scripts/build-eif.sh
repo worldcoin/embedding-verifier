@@ -185,11 +185,11 @@ if ! nix run --no-update-lock-file ".#${workload}-eif" -- \
   exit 1
 fi
 
-if ! jq -e '.Measurements | type == "object"' "$build_json" \
-  > "$work_dir/measurements.json"; then
+if ! jq -e '.Measurements | type == "object"' "$build_json" >/dev/null; then
   echo "[ERROR] nitro-cli returned no Measurements object; do not register this EIF." >&2
   exit 1
 fi
+jq '.Measurements' "$build_json" > "$work_dir/measurements.json"
 install -m 0644 "$work_dir/measurements.json" "$out_dir/$workload-pcr.json"
 
 echo "[4/4] Recording measurements..."
