@@ -33,6 +33,7 @@ on:
       - "rust-toolchain.toml"
       - "flake.nix"
       - "flake.lock"
+      - "nix/**"
       - "measurements.json"
       - "scripts/build-eif.sh"
       - ".github/workflows/verify-measurements.yml"
