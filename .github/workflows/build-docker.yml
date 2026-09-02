@@ -3,6 +3,9 @@
 # Enclave workload images are built reproducibly by flake.nix instead of Dockerfiles.
 # Docker is only used later as the transport into AWS nitro-cli's converter. See
 # scripts/build-eif.sh and verify-measurements.yml.
+#
+# Tagged releases call this through workflow_call rather than a `tags:` trigger, so the
+# host image is built at the same commit the reproducibility gate measured. See release.yml.
 name: Build and Push Docker Image
 
 on:
@@ -20,32 +23,83 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version:
         description: "Version tag to publish (including v prefix, e.g. v0.1.0)"
         required: false
         type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: "Commit to build. Defaults to the calling workflow's ref."
+        required: false
+        type: string
+      version:
+        description: "Version tag to publish (including v prefix)."
+        required: false
+        type: string
+      workload:
+        description: "Build only this workload's host image. Empty builds all."
+        required: false
+        type: string
+      push:
+        description: "Push to GHCR. False builds only."
+        required: false
+        default: true
+        type: boolean
+    outputs:
+      digest:
+        description: "Digest of the selected workload's host image, when exactly one was built."
+        value: ${{ jobs.docker-build.outputs.digest }}
+      image:
+        description: "Fully-qualified name of that image, so callers need no second copy of the mapping."
+        value: ${{ jobs.docker-build.outputs.image }}
 
 permissions:
   contents: read
 
 jobs:
+  # A static matrix cannot be filtered by an input, and release.yml needs one workload at a
+  # time. Cheaper than duplicating the build job per workload.
+  resolve-matrix:
+    name: Resolve build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.matrix.outputs.include }}
+    steps:
+      - name: Select workloads
+        id: matrix
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+        run: |
+          set -euo pipefail
+          all='[
+            {"name":"deepface-host","dockerfile":"deepface/host/Dockerfile","image":"embedding-verifier","workload":"deepface"},
+            {"name":"di-host","dockerfile":"di/host/Dockerfile","image":"embedding-verifier-di-host","workload":"di"}
+          ]'
+          if [[ -n "${WORKLOAD:-}" ]]; then
+            include=$(jq -c --arg w "$WORKLOAD" 'map(select(.workload == $w))' <<<"$all")
+            if [[ "$(jq 'length' <<<"$include")" == "0" ]]; then
+              echo "::error::No host image for workload '$WORKLOAD'." >&2
+              exit 1
+            fi
+          else
+            include=$(jq -c . <<<"$all")
+          fi
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+
   docker-build:
     name: Docker build (${{ matrix.name }})
+    needs: resolve-matrix
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      image: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: deepface-host
-            dockerfile: deepface/host/Dockerfile
-            image: embedding-verifier
-          - name: di-host
-            dockerfile: di/host/Dockerfile
-            image: embedding-verifier-di-host
+        include: ${{ fromJSON(needs.resolve-matrix.outputs.include) }}
     permissions:
       contents: read
       id-token: write
@@ -54,31 +108,19 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Mint biometric-engines access token
-        id: biometric-engines-token
-        if: matrix.name == 'deepface-enclave'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
-          client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
-          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
-          owner: worldcoin
-          repositories: biometric-engines
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Resolve version
         id: version
-        if: github.ref_type == 'tag' || inputs.version != ''
+        if: inputs.version != ''
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [[ -n "$INPUT_VERSION" ]]; then
-            VERSION="$INPUT_VERSION"
-          else
-            VERSION="$GITHUB_REF_NAME"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
           # `latest` only for stable semver (no -alpha / -rc suffix).
-          if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ "$INPUT_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "is_stable=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_stable=false" >> "$GITHUB_OUTPUT"
@@ -98,7 +140,7 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && inputs.push != false
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -111,19 +153,17 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          # Publish on push/tag/dispatch; PRs build only (validation).
-          push: ${{ github.event_name != 'pull_request' }}
+          # Publish on push/tag/dispatch; PRs and dry runs build only (validation).
+          push: ${{ github.event_name != 'pull_request' && inputs.push != false }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
-          secrets: |
-            GITHUB_TOKEN=${{ steps.biometric-engines-token.outputs.token }}
 
       - name: Attest build provenance
-        if: github.event_name != 'pull_request'
-        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
+        if: github.event_name != 'pull_request' && inputs.push != false
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           push-to-registry: true
           subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
