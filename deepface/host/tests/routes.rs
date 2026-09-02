@@ -5,19 +5,13 @@
 
 mod common;
 
-use std::sync::Arc;
-
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use common::{
-    StubChallengeSource, StubEnclaveClient, UnavailableKeyRegistry, active_entry, registered_key,
-    state_before_registration, state_with, state_with_registry, state_with_source,
-};
+use common::{StubChallengeSource, StubEnclaveClient, state_with, state_with_source};
 use deepface_host::AppState;
 use deepface_host::challenge_fetcher::FetchError;
 use deepface_host::enclave::EnclaveClientError;
-use deepface_host::key_registry::{InMemoryKeyRegistry, KeyRegistry, KeyStatus, RegistryEntry};
 use deepface_host::routes;
 use enclave_types::EnclaveError;
 use http_body_util::BodyExt as _;
@@ -299,116 +293,10 @@ async fn matches_answers_200_whatever_the_sealed_result_says() {
     );
 }
 
-/// Builds a state whose registry holds `entry`.
-async fn state_holding(entry: RegistryEntry) -> AppState {
-    let registry = Arc::new(InMemoryKeyRegistry::new());
-    registry.set(&entry).await.expect("should write");
-
-    state_with_registry(
-        StubEnclaveClient::default(),
-        StubChallengeSource::default(),
-        registry,
-    )
-}
-
-fn signing_key_request(public_key: &str) -> Request<Body> {
-    Request::builder()
-        .method(Method::GET)
-        .uri(format!("/v1/signing-keys/{public_key}"))
-        .body(Body::empty())
-        .expect("request should be valid")
-}
-
+/// Readiness is not liveness: with the registry gone the enclave is the only dependency left,
+/// so readiness must follow it in both directions.
 #[tokio::test]
-async fn a_registered_key_is_served_with_its_attestation_and_status() {
-    let key = registered_key();
-    let state = state_holding(active_entry(key)).await;
-
-    let (status, body) = send(state, signing_key_request(&key.to_string())).await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["public_key"], key.to_string());
-    assert_eq!(
-        body["attestation"],
-        STANDARD.encode(b"attestation-document")
-    );
-    assert_eq!(body["pcr0"], format!("0x{}", hex::encode([9u8; 48])));
-    assert_eq!(body["valid_from"], 1_780_000_000u64);
-    assert_eq!(body["retired_at"], Value::Null);
-    assert_eq!(body["status"], "active");
-}
-
-/// `retired` and `revoked` mean different things to a verifier, so the route must not flatten
-/// either into "not active".
-#[tokio::test]
-async fn retired_and_revoked_are_served_as_themselves() {
-    for (status_value, retired_at, expected) in [
-        (KeyStatus::Retired, Some(1_780_000_900), "retired"),
-        (KeyStatus::Revoked, None, "revoked"),
-    ] {
-        let key = registered_key();
-        let state = state_holding(RegistryEntry {
-            status: status_value,
-            retired_at,
-            ..active_entry(key)
-        })
-        .await;
-
-        let (status, body) = send(state, signing_key_request(&key.to_string())).await;
-
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["status"], expected);
-    }
-}
-
-/// A key this Service never issued. Terminal for the caller, so it must not be advertised as
-/// retryable.
-#[tokio::test]
-async fn an_unregistered_key_is_a_404_that_must_not_be_retried() {
-    let state = state_with(StubEnclaveClient::default());
-
-    let (status, body) = send(state, signing_key_request(&registered_key().to_string())).await;
-
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["error"]["code"], "unknown_signing_key");
-    assert_eq!(body["allowRetry"], false);
-}
-
-/// The mapping the spec pins: a registry the host could not read is never reported as a key this
-/// Service does not know.
-#[tokio::test]
-async fn an_unreachable_registry_is_not_a_404() {
-    let state = state_with_registry(
-        StubEnclaveClient::default(),
-        StubChallengeSource::default(),
-        Arc::new(UnavailableKeyRegistry),
-    );
-
-    let (status, body) = send(state, signing_key_request(&registered_key().to_string())).await;
-
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["error"]["code"], "key_registry_unavailable");
-    assert_eq!(body["allowRetry"], true);
-}
-
-/// A malformed path is the caller's mistake, not a verdict on a key -- and a `404` here would be
-/// read as one.
-#[tokio::test]
-async fn a_path_that_is_not_a_key_is_a_400() {
-    for path in ["not-a-key", "0x00", &"ab".repeat(31)] {
-        let state = state_with(StubEnclaveClient::default());
-
-        let (status, body) = send(state, signing_key_request(path)).await;
-
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
-        assert_eq!(body["error"]["code"], "invalid_public_key", "{path}");
-    }
-}
-
-/// Readiness is not liveness: a host whose key an RP cannot look up must take no traffic, even
-/// with a healthy enclave.
-#[tokio::test]
-async fn readiness_is_red_until_the_signing_key_is_registered() {
+async fn readiness_follows_the_enclave() {
     let request = || {
         Request::builder()
             .method(Method::GET)
@@ -417,13 +305,16 @@ async fn readiness_is_red_until_the_signing_key_is_registered() {
             .expect("request should be valid")
     };
 
-    let (before, _) = send(
-        state_before_registration(StubEnclaveClient::default()),
+    let (healthy, _) = send(state_with(StubEnclaveClient::default()), request()).await;
+    assert_eq!(healthy, StatusCode::OK);
+
+    let (unreachable, _) = send(
+        state_with(StubEnclaveClient {
+            health: Some(Err(EnclaveClientError::Timeout)),
+            ..StubEnclaveClient::default()
+        }),
         request(),
     )
     .await;
-    assert_eq!(before, StatusCode::SERVICE_UNAVAILABLE);
-
-    let (after, _) = send(state_with(StubEnclaveClient::default()), request()).await;
-    assert_eq!(after, StatusCode::OK);
+    assert_eq!(unreachable, StatusCode::SERVICE_UNAVAILABLE);
 }

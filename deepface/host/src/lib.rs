@@ -14,9 +14,8 @@ mod environment;
 pub mod challenge_fetcher;
 pub mod enclave;
 pub mod error;
-pub mod key_registry;
 pub mod routes;
 pub mod server;
 
 pub use app_state::AppState;
-pub use environment::{Environment, KeyRegistryStore};
+pub use environment::Environment;

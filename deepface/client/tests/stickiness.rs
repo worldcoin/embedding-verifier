@@ -10,8 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode, header};
-use axum::routing::{get, post};
+use axum::http::{HeaderMap, header};
+use axum::routing::post;
 use deepface_client::nitro::PcrMeasurement;
 use deepface_client::{Config, FaceVerifierClient};
 use hex_literal::hex;
@@ -52,24 +52,20 @@ async fn carries_the_affinity_cookie_from_the_assignment_to_the_next_call() {
     let router = Router::new()
         .route(
             "/v1/enclave-assignment",
-            post(|| async {
-                (
-                    [(header::SET_COOKIE, AFFINITY_COOKIE)],
-                    axum::Json(
-                        serde_json::json!({ "attestation": REAL_ATTESTATION_DOC_BASE64.trim() }),
-                    ),
-                )
-            }),
-        )
-        .route(
-            "/v1/signing-keys/{public_key}",
-            get(
+            post(
                 |State(seen): State<SeenCookie>, headers: HeaderMap| async move {
+                    // Records every request, so after two calls this holds the second one's.
                     *seen.lock().expect("lock should not be poisoned") = headers
                         .get(header::COOKIE)
                         .and_then(|value| value.to_str().ok())
                         .map(str::to_owned);
-                    StatusCode::NOT_FOUND
+
+                    (
+                        [(header::SET_COOKIE, AFFINITY_COOKIE)],
+                        axum::Json(serde_json::json!({
+                            "attestation": REAL_ATTESTATION_DOC_BASE64.trim()
+                        })),
+                    )
                 },
             ),
         )
@@ -90,14 +86,12 @@ async fn carries_the_affinity_cookie_from_the_assignment_to_the_next_call() {
     let client =
         FaceVerifierClient::new(config(&format!("http://{address}"))).expect("client should build");
 
-    client
-        .request_assignment(fixture_instant())
-        .await
-        .expect("the fixture assignment should verify");
-    client
-        .signing_key(&format!("0x{}", "11".repeat(32)), fixture_instant())
-        .await
-        .expect("a 404 is an answer, not a failure");
+    for _ in 0..2 {
+        client
+            .request_assignment(fixture_instant())
+            .await
+            .expect("the fixture assignment should verify");
+    }
 
     let carried = seen
         .lock()

@@ -1,23 +1,14 @@
 //! Axum server setup and lifecycle.
 
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use anyhow::Context;
 use telemetry_batteries::tracing::middleware::TraceLayer;
 use tokio::net::TcpListener;
-use tokio::time::timeout;
 
-use crate::key_registry::{retire_signing_key, unix_seconds};
 use crate::{AppState, routes};
 
 const DEFAULT_PORT: u16 = 8000;
-
-/// Budget for marking this boot's key retired once the server has drained.
-///
-/// Short on purpose: the pod's termination grace period is the real limit, and a key left
-/// `active` costs nothing — it only ever existed in the enclave's memory, which is gone.
-const RETIRE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Starts the API server.
 ///
@@ -34,53 +25,16 @@ pub async fn start(state: AppState) -> anyhow::Result<()> {
 
     tracing::info!(%address, "API listening");
 
-    let result = axum::serve(
+    axum::serve(
         listener,
         routes::handler()
-            .with_state(state.clone())
+            .with_state(state)
             .layer(TraceLayer::new())
             .into_make_service(),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await
-    .context("API server failed");
-
-    retire(&state).await;
-
-    result
-}
-
-/// Records that this enclave shut down normally, so a verifier can tell that from a revocation.
-///
-/// Best effort. A failure here leaves the row `active`, which is wrong but not unsafe; failing
-/// the shutdown over it would be worse.
-async fn retire(state: &AppState) {
-    let Some(public_key) = state.registered_signing_key() else {
-        return;
-    };
-
-    let registry = state.key_registry();
-
-    match timeout(
-        RETIRE_TIMEOUT,
-        retire_signing_key(registry.as_ref(), public_key, unix_seconds()),
-    )
-    .await
-    {
-        Ok(Ok(())) => tracing::info!(%public_key, "retired this boot's signing key"),
-        Ok(Err(error)) => tracing::error!(
-            %public_key,
-            %error,
-            dependency = "key-registry",
-            "failed to retire this boot's signing key; it stays active in the registry"
-        ),
-        Err(_) => tracing::error!(
-            %public_key,
-            timeout = ?RETIRE_TIMEOUT,
-            dependency = "key-registry",
-            "timed out retiring this boot's signing key; it stays active in the registry"
-        ),
-    }
+    .context("API server failed")
 }
 
 /// Resolves on the first shutdown signal. SIGTERM as well as Ctrl-C, since that is what an

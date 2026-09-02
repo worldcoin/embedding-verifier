@@ -41,10 +41,7 @@ publish = false
 anyhow = "1.0"
 async-trait = "0.1"
 attested-channel = { path = "shared/attested-channel" }
-aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
-aws-sdk-dynamodb = { version = "1", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
 axum = "0.8"
-backon = { version = "1", default-features = false, features = ["std", "tokio-sleep"] }
 base64 = "0.22"
 deepface-client = { path = "deepface/client" }
 deepface-protocol = { path = "deepface/protocol" }
@@ -54,7 +51,6 @@ enclave-types = { path = "shared/enclave-types" }
 getrandom = { version = "0.4", features = ["sys_rng"] }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 hex-literal = "1.1"
-moka = { version = "0.12", features = ["future"] }
 pontifex = { version = "1.1.2", default-features = false }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["cookies", "json", "rustls-tls", "stream"] }

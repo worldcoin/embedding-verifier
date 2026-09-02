@@ -88,16 +88,16 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
       # --no-update-lock-file: otherwise a new flake.nix input resolves against upstream right
       # now and the lock is quietly rewritten.
-      - name: Evaluate the enclave and EIF derivations
+      - name: Evaluate the enclave image and converter derivations
         env:
           GH_APP_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           set -euo pipefail
-          for output in di-enclave deepface-enclave di-eif deepface-eif; do
+          for output in di-enclave deepface-enclave di-oci deepface-oci di-eif deepface-eif nitro-cli; do
             drv="$(nix eval --raw --no-update-lock-file ".#packages.x86_64-linux.$output.drvPath")"
             echo "$output -> $drv"
           done
       # Eval alone missed the enclaves moving into their own workspaces: the derivation built and
       # cargo failed inside it. di is public and small, so build it; deepface stays eval-only.
-      - name: Build the di enclave
-        run: nix build --no-link --no-update-lock-file .#packages.x86_64-linux.di-enclave
+      - name: Build the di enclave image
+        run: nix build --no-link --no-update-lock-file .#packages.x86_64-linux.di-oci
