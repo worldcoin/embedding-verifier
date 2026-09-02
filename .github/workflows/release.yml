@@ -394,8 +394,13 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Asked only once, and only once the build is known releasable. A gate in front of the
-  # builds would ask a human to approve an hour before anything is known about the result.
+  # The hook for a human gate, positioned after the build is known releasable rather than in
+  # front of it — a gate before the builds would ask someone to approve an hour before there
+  # was anything to judge.
+  #
+  # The `release` environment has no protection rules today, so this passes straight through
+  # and publishing is automatic. Adding required reviewers to that environment turns the gate
+  # on without touching this file.
   approve-publish:
     name: approve publish
     needs: [prepare-release, verify-reproducible]

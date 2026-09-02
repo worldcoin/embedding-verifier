@@ -40,9 +40,15 @@ did not change.
    git tag deepface/v0.2.0 <sha-on-main>
    git push origin deepface/v0.2.0
    ```
-5. **Approve.** Two builds run first — about 90 minutes each, in parallel. Only once they agree
-   does the run stop at the `release` environment for approval.
-6. **Review the draft**, check the PCR table, publish.
+5. **Wait for the gate.** Two builds run first — about 90 minutes each, in parallel. Nothing is
+   published unless they agree.
+6. **Review the draft**, check the PCR table, publish. The draft is the last human step: the
+   release is created unpublished, so nothing is live until someone publishes it.
+
+> The `release` GitHub environment carries no protection rules today, so `approve-publish`
+> passes straight through and images are pushed as soon as the reproducibility gate is green.
+> To require a human before anything is published, add required reviewers to that environment —
+> a settings change, no workflow edit.
 
 To exercise the pipeline without a tag, dispatch it:
 
@@ -50,7 +56,7 @@ To exercise the pipeline without a tag, dispatch it:
 gh workflow run release.yml -f workload=di -f ref=main -f dry_run=true
 ```
 
-A dry run builds, verifies and publishes nothing. It never reaches the approval gate.
+A dry run builds, verifies and publishes nothing.
 
 ## How the measurement is produced
 
