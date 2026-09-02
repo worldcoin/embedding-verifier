@@ -1,10 +1,13 @@
 [package]
 name = "deepface-client"
+description = "Attestation-verifying client for the DeepFace embedding verifier"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = true
 
 [dependencies]
 attested-channel = { workspace = true, features = ["attestation"] }

@@ -1,10 +1,13 @@
 [package]
 name = "deepface-protocol"
+description = "Sealed request, response, and match-token protocol for the DeepFace embedding verifier"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.0"
 license = "MIT"
-publish = false
+homepage = "https://github.com/worldcoin/embedding-verifier"
+repository = "https://github.com/worldcoin/embedding-verifier"
+publish = true
 
 # In the deepface-enclave graph, so nothing here is inherited from the root workspace.
 # See the note in the root Cargo.toml.
@@ -14,7 +17,7 @@ publish = false
 aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
 ark-babyjubjub = { package = "taceo-ark-babyjubjub", version = "0.5" }
 ark-ff = "0.5"
-attested-channel = { path = "../../shared/attested-channel" }
+attested-channel = { version = "0.1.0", path = "../../shared/attested-channel" }
 ciborium = "0.2"
 coset = "0.4.2"
 eddsa-babyjubjub = { package = "taceo-eddsa-babyjubjub", version = "0.5" }

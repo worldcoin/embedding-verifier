@@ -1,0 +1,27 @@
+[workspace]
+# Only the explicitly listed client crates participate in releases. The hosts, enclaves,
+# e2e harness, and internal vsock types remain private to this repository.
+release = false
+publish = false
+changelog_update = false
+git_release_enable = true
+git_release_type = "auto"
+
+# Release-plz derives the crates.io publish order from these crates' path dependencies.
+[[package]]
+name = "attested-channel"
+release = true
+publish = true
+
+[[package]]
+name = "deepface-protocol"
+release = true
+publish = true
+
+[[package]]
+name = "deepface-client"
+release = true
+publish = true
+changelog_update = true
+changelog_path = "CHANGELOG.md"
+changelog_include = ["attested-channel", "deepface-protocol"]

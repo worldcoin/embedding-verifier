@@ -32,6 +32,8 @@ edition = "2024"
 rust-version = "1.97.0"
 version = "0.1.0"
 license = "MIT"
+homepage = "https://github.com/worldcoin/embedding-verifier"
+repository = "https://github.com/worldcoin/embedding-verifier"
 publish = false
 
 # Only the host-side-only crates inherit from here: deepface-client, deepface-e2e,
@@ -39,13 +41,13 @@ publish = false
 [workspace.dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-attested-channel = { path = "shared/attested-channel" }
+attested-channel = { version = "0.1.0", path = "shared/attested-channel" }
 axum = "0.8"
 base64 = "0.22"
 deepface-api-types = { path = "deepface/api-types" }
 deepface-client = { path = "deepface/client" }
 deepface-enclave-types = { path = "deepface/enclave-types" }
-deepface-protocol = { path = "deepface/protocol" }
+deepface-protocol = { version = "0.1.0", path = "deepface/protocol" }
 getrandom = { version = "0.4", features = ["sys_rng"] }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 hex-literal = "1.1"

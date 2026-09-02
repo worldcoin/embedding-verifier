@@ -81,6 +81,30 @@ curl http://localhost:8000/health
 RUST_LOG=info cargo run --manifest-path deepface/enclave/Cargo.toml --bin deepface-enclave
 ```
 
+## Releasing client crates
+
+`attested-channel`, `deepface-protocol`, and `deepface-client` are released to crates.io by
+`.github/workflows/release-crates.yml`. Release-plz opens or updates a release PR after changes
+land on `main`; merging that PR publishes changed crates in dependency order and creates the GitHub
+releases. The workflow uses crates.io trusted publishing and has no long-lived registry token.
+
+Trusted publishing cannot create a crate. Before enabling the workflow, publish version `0.1.0`
+of each crate once with a short-lived, scoped crates.io token, in dependency order, waiting for
+crates.io to index each dependency before publishing the next:
+
+```bash
+cargo publish -p attested-channel
+cargo publish -p deepface-protocol
+cargo publish -p deepface-client
+```
+
+Then add a GitHub trusted publisher in the crates.io settings for all three crates with owner
+`worldcoin`, repository `embedding-verifier`, workflow `release-crates.yml`, and environment
+`production`. After that bootstrap, do not add a `CARGO_REGISTRY_TOKEN` GitHub secret: release-plz
+exchanges the workflow's OIDC identity for a short-lived token on each release. The repository's
+Actions settings must also allow GitHub Actions to create pull requests so release-plz can maintain
+the release PR.
+
 ## Building images
 
 Each workload has a host image and a reproducible OCI enclave image. Nix builds the OCI
