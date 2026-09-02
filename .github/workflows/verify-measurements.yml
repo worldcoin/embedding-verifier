@@ -104,7 +104,7 @@ jobs:
                 fi
               done
             done
-            for out in "${WORKLOAD}-enclave" "${WORKLOAD}-eif"; do
+            for out in "${WORKLOAD}-enclave" "${WORKLOAD}-oci" "${WORKLOAD}-eif"; do
               p=$(nix build --no-link --no-update-lock-file --print-out-paths ".#${out}")
               printf '%s  %s\n' "$(nix-store --query --hash "$p")" "$(basename "$p")"
             done

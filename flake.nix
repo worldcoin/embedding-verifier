@@ -36,7 +36,7 @@
       faceModels = import ./nix/face-models.nix {
         inherit pkgs;
       };
-      eifs = import ./nix/eif-build.nix {
+      enclaveImages = import ./nix/eif-build.nix {
         inherit
           system
           pkgs
@@ -49,9 +49,9 @@
     {
       packages.${system} =
         enclaveBins
-        // eifs
+        // enclaveImages
         // {
-          default = eifs.deepface-eif;
+          default = enclaveImages.deepface-eif;
           deepfaceModels = faceModels.package;
         };
 

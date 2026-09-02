@@ -3,9 +3,10 @@ set -euo pipefail
 
 # Build a workload's enclave EIF and emit its PCR measurements.
 #
-# The EIF is assembled entirely inside Nix (see flake.nix): enclave binary, models,
-# rootfs, ramdisks and EIF layout all come from pinned flake inputs, so the PCRs
-# depend on nothing but the commit being built — no Docker daemon, no nitro-cli.
+# Nix first constructs a reproducible OCI image, then deterministically converts its
+# rootfs into an EIF (see nix/eif-build.nix). The enclave binary, models, image layers,
+# ramdisks and EIF layout all come from pinned flake inputs, so the PCRs depend on
+# nothing but the commit being built — no Docker daemon and no nitro-cli.
 # Any machine building the same commit measures the same values.
 #
 # Needs x86_64-linux, either natively or through a remote builder.
@@ -164,7 +165,15 @@ if [[ "$workload" == "deepface" ]]; then
   done
 fi
 
-echo "[2/3] Building $workload EIF..."
+echo "[2/4] Building reproducible $workload OCI image..."
+if ! oci_store=$(nix build ".#${workload}-oci" --no-update-lock-file --no-link --print-out-paths); then
+  echo >&2
+  echo "[ERROR] OCI image build failed; the error above says why. A 'platform" >&2
+  echo "        mismatch' for x86_64-linux means this host needs a remote builder." >&2
+  exit 1
+fi
+
+echo "[3/4] Converting $workload OCI image to EIF..."
 if ! eif_store=$(nix build ".#${workload}-eif" --no-update-lock-file --no-link --print-out-paths); then
   echo >&2
   echo "[ERROR] nix build failed; the error above says why. A 'platform mismatch' for" >&2
@@ -175,7 +184,7 @@ fi
 install -m 0644 "$eif_store/image.eif" "$out_dir/$workload-enclave.eif"
 install -m 0644 "$eif_store/pcr.json" "$out_dir/$workload-pcr.json"
 
-echo "[3/3] Recording measurements..."
+echo "[4/4] Recording measurements..."
 # pcr.json is the tail of eif_build's stdout, so a change in its output format arrives here
 # as a missing key rather than an error — and jq folds a missing key into the string "0x".
 # Registering "0x" with a client would accept every attestation, so check the shape first.
@@ -208,6 +217,7 @@ jq -S --slurpfile built "$out_dir/$workload-pcr.json" --arg workload "$workload"
 install -m 0644 "$work_dir/measurements.json" "$out_dir/measurements.json"
 
 echo
+echo "OCI image:    $oci_store"
 echo "EIF:          $out_dir/$workload-enclave.eif"
 echo "Measurements: $out_dir/measurements.json"
 jq . "$out_dir/measurements.json"

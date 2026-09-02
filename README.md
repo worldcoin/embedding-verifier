@@ -83,14 +83,19 @@ RUST_LOG=info cargo run --manifest-path deepface/enclave/Cargo.toml --bin deepfa
 
 ## Building images
 
-Each workload has a host image and an enclave image. `build-docker.yml` builds all four
-on every PR but publishes only the hosts — an enclave image is an input to the EIF, and
-it is the EIF's PCRs that clients attest.
+Each workload has a host image and a reproducible OCI enclave image. Nix builds the OCI
+image first, then converts its root filesystem into the EIF whose PCRs clients attest.
+Both stages run without a Docker daemon; `build-docker.yml` only builds and publishes hosts.
 
 ```bash
-# EIF + PCRs. Linux x86_64 + Docker; Nitro hardware only needed to run, not to build.
-scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcrs.json
-scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pcrs.json
+# Reproducible OCI image -> EIF + PCRs. Linux x86_64; Nitro hardware is only needed to run.
+scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcr.json
+scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pcr.json
+
+# Build or inspect only the OCI boundary (an OCI image-layout directory in the Nix store).
+nix build .#di-oci
+skopeo inspect \
+  "oci:$(readlink -f result):$(nix eval --raw .#packages.x86_64-linux.di-enclave.version)"
 
 # Carrier image that launches an EIF on a Nitro node
 docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif target/eif
