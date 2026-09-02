@@ -3,26 +3,6 @@
 Each workload releases on its own tag: `deepface/vX.Y.Z`, `di/vX.Y.Z`. The tag is handled by
 [`.github/workflows/release.yml`](../.github/workflows/release.yml).
 
-## Why the tags are split
-
-`flake.nix` reads the version from `<workload>/enclave/Cargo.toml` and builds it into the EIF, so
-**a version bump is a PCR rotation**. Under one repo-wide tag, a deepface change would rotate di's
-PCR0 too, and every client pinning di would have to re-register a measurement for a workload that
-did not change.
-
-## What a release produces
-
-| Artifact | Notes |
-|:---|:---|
-| `manifest.json` | Binds the commit, the pinned flake inputs, the PCRs, the model hashes and the image digests. This is what the deploy reads `ENCLAVE_PCR0` from. |
-| `<workload>-enclave.eif` | The enclave image itself |
-| `ghcr.io/worldcoin/embedding-verifier-<workload>-enclave-oci` | The measured image before conversion — the one artifact an outsider can verify against |
-| `<workload>-pcr.json` | Raw `eif_build` output |
-| `closure-<workload>.txt` | narHash of every layer the EIF is assembled from |
-| `SHA256SUMS` | Covers every asset above; one build attestation is keyed to it |
-| `ghcr.io/worldcoin/embedding-verifier[-di-host]:vX.Y.Z` | The host image |
-| `ghcr.io/worldcoin/embedding-verifier-<workload>-enclave-eif:vX.Y.Z` | Carrier image for the enclave sidecar |
-
 ## Cutting a release
 
 1. **Bump the version.** Edit `package.version` in `<workload>/enclave/Cargo.toml`, then refresh
@@ -74,10 +54,6 @@ PCR0 covers the kernel, the cmdline and both ramdisks; PCR1 the kernel and boot 
 PCR2 the application ramdisk. The EIF metadata section — which carries a wall-clock
 `BuildTime` — is *not* measured, so the timestamp does not reach a PCR.
 
-Step 2 is the reason `release.yml` builds every release twice, on two different runner
-images, and refuses to publish unless both agree. The Docker daemon sits on the measured
-path; the double build is what turns "should not matter" into evidence for this commit.
-
 ## Building and measuring locally
 
 Needs x86_64-linux with Nix **and a running Docker daemon**, plus read access to
@@ -95,19 +71,6 @@ separates the Nix-pinned inputs from the EIF that came out of the conversion, so
 says which half moved before you start bisecting.
 
 `di` needs neither the token nor the models — it reaches no private repository.
-
-## What rotates a PCR
-
-- Any `*.rs`, `Cargo.toml`, `Cargo.lock`, `*.yaml`, `*.der` or `*.b64` file in the workload's
-  crate graph — that is the exact filter `nix/enclave-binaries.nix`'s file set applies
-- The enclave's `Cargo.lock`, including a transitive bump
-- `rust-toolchain.toml`, `flake.lock`, and the face-model revisions in `nix/face-models.nix`
-- **The `nix/` derivations themselves.** Every string in them is measured; a no-op edit moves
-  PCR0 and PCR2. Treat any change under `nix/` as a release event.
-- **The pinned nitro-cli version.** Its kernel and init blobs are PCR0 and PCR1 inputs, so
-  bumping `nitro-cli-src` rotates measurements for both workloads at once.
-
-A README, a workflow or a doc cannot move a PCR. They are outside the fileset.
 
 ## Rotating a measurement in production
 
@@ -127,12 +90,6 @@ bulk. That path is not built yet: nothing sets `KeyStatus::Revoked`, the IAM pol
 `UpdateItem`, and a bulk revoke needs a GSI on `pcr0`.
 
 ## Re-deriving a PCR without building from source
-
-`deepface-enclave` links private face-engine code, so "check out the tag and rebuild" is not
-available to most people, and a measurement nobody outside can reproduce is worth little.
-
-The published OCI image closes that gap. It is the exact input the EIF is converted from, so
-converting it with the pinned nitro-cli must yield the release's PCRs:
 
 ```
 # both values come from manifest.json: .images.enclaveOci and .gitSha
