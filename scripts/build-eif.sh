@@ -3,10 +3,8 @@ set -euo pipefail
 
 # Build a workload's enclave EIF and emit its PCR measurements.
 #
-# Nix first constructs a reproducible OCI image, then runs the pre-#38 AWS conversion
+# Nix first constructs a reproducible OCI image, then runs the AWS conversion
 # path with a Nix-packaged nitro-cli v1.4.2 and its bundled LinuxKit and EIF builder.
-# Docker is only the transport between the immutable OCI layout and nitro-cli; it does
-# not build the workload image.
 #
 # Needs x86_64-linux and a running Docker daemon. Nitro hardware is only needed to run.
 #
