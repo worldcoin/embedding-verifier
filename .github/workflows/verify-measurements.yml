@@ -1,9 +1,9 @@
 # Verifies measurements.json against what the source actually measures to.
 #
-# The workload OCI image and AWS converter are both pinned by flake.nix. This job rebuilds
-# the EIF through nitro-cli and fails when the committed values no longer match. It surfaces
-# fresh values but never commits them: rotating a measurement, and re-registering it with
-# clients, stays a human act.
+# The EIF is built by flake.nix, so the PCRs depend on the commit and nothing else —
+# this job rebuilds them and fails when the committed values no longer match. It
+# surfaces the fresh values but never commits them: rotating a measurement, and
+# re-registering it with clients, stays a human act.
 name: verify-measurements
 
 permissions:
@@ -36,7 +36,6 @@ on:
       - "nix/**"
       - "measurements.json"
       - "scripts/build-eif.sh"
-      - "scripts/closure-hashes.sh"
       - ".github/workflows/verify-measurements.yml"
   push:
     branches:
@@ -88,14 +87,38 @@ jobs:
           HUGGING_FACE_TOKEN: ${{ secrets.HUGGING_FACE_TOKEN }}
         run: scripts/build-eif.sh --workload ${{ matrix.workload }} target/eif
 
-      # When the PCRs drift, this says which half drifted: the Nix-pinned inputs, or the
-      # nitro-cli conversion that Nix does not pin. release.yml runs the same script on both
-      # of its builds and diffs the two files.
+      # When the PCRs drift, this says which layer drifted: the narHash of every layer the EIF
+      # is assembled from. Diff two runs and the first differing line is the cause — without it
+      # a mismatch only tells you the final number changed.
       - name: Record layer hashes
+        env:
+          WORKLOAD: ${{ matrix.workload }}
         run: |
-          scripts/closure-hashes.sh ${{ matrix.workload }} \
-            "closure-${{ matrix.workload }}.txt" \
-            "target/eif/${{ matrix.workload }}-enclave.eif"
+          set -euo pipefail
+          eif_drv=$(nix path-info --derivation --no-update-lock-file ".#${WORKLOAD}-eif")
+          {
+            for d in $(nix-store --query --references "$eif_drv" | grep '\.drv$'); do
+              for o in $(nix-store --query --outputs "$d"); do
+                if nix-store --query --hash "$o" >/dev/null 2>&1; then
+                  printf '%s  %s\n' "$(nix-store --query --hash "$o")" "$(basename "$o")"
+                fi
+              done
+            done
+            for out in "${WORKLOAD}-enclave" "${WORKLOAD}-oci" "${WORKLOAD}-eif"; do
+              p=$(nix build --no-link --no-update-lock-file --print-out-paths ".#${out}")
+              printf '%s  %s\n' "$(nix-store --query --hash "$p")" "$(basename "$p")"
+            done
+          } | sort -u -k2 | tee "closure-$WORKLOAD.txt"
+
+          # Localize a binary difference without shipping the binary: this repo is public and
+          # the enclave links private face-engine code. Size plus per-chunk hashes say whether
+          # the divergence is a few embedded bytes or a whole-layout shift.
+          bin="$(nix build --no-link --no-update-lock-file --print-out-paths \
+                 ".#${WORKLOAD}-enclave")/bin/${WORKLOAD}-enclave"
+          echo "size $(stat -c%s "$bin")" | tee -a "closure-$WORKLOAD.txt"
+          split -b 1M -d -a 3 "$bin" chunk.
+          sha256sum chunk.* | tee -a "closure-$WORKLOAD.txt" > /dev/null
+          rm -f chunk.*
 
       - name: Upload closure hashes
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

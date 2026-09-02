@@ -3,10 +3,13 @@ set -euo pipefail
 
 # Build a workload's enclave EIF and emit its PCR measurements.
 #
-# Nix first constructs a reproducible OCI image, then runs the AWS conversion
-# path with a Nix-packaged nitro-cli v1.4.2 and its bundled LinuxKit and EIF builder.
+# Nix first constructs a reproducible OCI image, then deterministically converts its
+# rootfs into an EIF (see nix/eif-build.nix). The enclave binary, models, image layers,
+# ramdisks and EIF layout all come from pinned flake inputs, so the PCRs depend on
+# nothing but the commit being built — no Docker daemon and no nitro-cli.
+# Any machine building the same commit measures the same values.
 #
-# Needs x86_64-linux and a running Docker daemon. Nitro hardware is only needed to run.
+# Needs x86_64-linux, either natively or through a remote builder.
 #
 # Usage: scripts/build-eif.sh [--workload <name>] [--allow-dirty] [output-dir]
 #        (workload defaults to deepface, output-dir to target/eif)
@@ -81,12 +84,8 @@ if [[ ! " ${WORKLOADS[*]} " == *" $workload "* ]]; then
 fi
 
 command -v nix >/dev/null || {
-  echo "[ERROR] nix not found. The OCI image and converter are built by flake.nix." >&2
-  exit 1
-}
-command -v docker >/dev/null || {
-  echo "[ERROR] docker not found. AWS nitro-cli reads the Nix-built OCI image through" >&2
-  echo "        the Docker API, matching the conversion path used before PR #38." >&2
+  echo "[ERROR] nix not found. The EIF is built by flake.nix; there is no fallback," >&2
+  echo "        because a different build path means different PCRs." >&2
   exit 1
 }
 
@@ -175,24 +174,20 @@ if ! oci_store=$(nix build ".#${workload}-oci" --no-update-lock-file --no-link -
 fi
 
 echo "[3/4] Converting $workload OCI image to EIF..."
-build_json="$out_dir/$workload-build-enclave.json"
-if ! nix run --no-update-lock-file ".#${workload}-eif" -- \
-  "$out_dir/$workload-enclave.eif" | tee "$build_json"; then
+if ! eif_store=$(nix build ".#${workload}-eif" --no-update-lock-file --no-link --print-out-paths); then
   echo >&2
-  echo "[ERROR] AWS nitro-cli failed to convert the Nix-built OCI image." >&2
+  echo "[ERROR] nix build failed; the error above says why. A 'platform mismatch' for" >&2
+  echo "        x86_64-linux means this host needs a remote builder for that system." >&2
   exit 1
 fi
 
-if ! jq -e '.Measurements | type == "object"' "$build_json" >/dev/null; then
-  echo "[ERROR] nitro-cli returned no Measurements object; do not register this EIF." >&2
-  exit 1
-fi
-jq '.Measurements' "$build_json" > "$work_dir/measurements.json"
-install -m 0644 "$work_dir/measurements.json" "$out_dir/$workload-pcr.json"
+install -m 0644 "$eif_store/image.eif" "$out_dir/$workload-enclave.eif"
+install -m 0644 "$eif_store/pcr.json" "$out_dir/$workload-pcr.json"
 
 echo "[4/4] Recording measurements..."
-# Registering a missing or malformed PCR with a client would weaken verification, so check
-# nitro-cli's output shape before copying any value into measurements.json.
+# pcr.json is the tail of eif_build's stdout, so a change in its output format arrives here
+# as a missing key rather than an error — and jq folds a missing key into the string "0x".
+# Registering "0x" with a client would accept every attestation, so check the shape first.
 for pcr in PCR0 PCR1 PCR2; do
   value="$(jq -r --arg k "$pcr" '.[$k] // ""' "$out_dir/$workload-pcr.json")"
   if [[ ! "$value" =~ ^[0-9a-f]{96}$ ]]; then
