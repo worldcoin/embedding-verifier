@@ -148,6 +148,9 @@ jobs:
             runner: ubuntu-latest
           - attempt: reproduction
             runner: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
     env:
       WORKLOAD: ${{ needs.prepare-release.outputs.WORKLOAD }}
     steps:
@@ -238,6 +241,45 @@ jobs:
             | jq 'map_values({url, hash})' > target/eif/face-models.json
           jq . target/eif/face-models.json
 
+      # The OCI image is the boundary Nix guarantees, and the only one a third party can
+      # verify without access to the private face-engine repository: pull it by digest, run
+      # the pinned nitro-cli conversion, compare the PCRs. Publishing it is what makes the
+      # measurement checkable by someone who cannot rebuild from source.
+      #
+      # Tagged by commit here, not by version. `:vX.Y.Z` is applied after the gate, so the
+      # release tag never names an image two builds have not agreed on.
+      - name: Publish OCI image
+        if: matrix.attempt == 'canonical' && needs.prepare-release.outputs.PUBLISH == 'true'
+        id: push-oci
+        env:
+          SHORT_SHA: ${{ needs.prepare-release.outputs.SHORT_SHA }}
+          VERSION: ${{ needs.prepare-release.outputs.VERSION }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          oci_store=$(nix build --no-link --no-update-lock-file --print-out-paths ".#${WORKLOAD}-oci")
+          repo="$REGISTRY/$OWNER/embedding-verifier-$WORKLOAD-enclave-oci"
+
+          # skopeo from the same nixpkgs the flake locks, so the push tool is pinned like
+          # everything else rather than taken from whatever the runner image ships.
+          nixpkgs_rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
+          nix run --no-update-lock-file "github:NixOS/nixpkgs/$nixpkgs_rev#skopeo" -- \
+            --insecure-policy copy \
+            "oci:$oci_store:$VERSION" \
+            "docker://$repo:sha-$SHORT_SHA" \
+            --dest-creds "$GHCR_USER:$GHCR_TOKEN"
+
+          digest=$(nix run --no-update-lock-file "github:NixOS/nixpkgs/$nixpkgs_rev#skopeo" -- \
+            --insecure-policy inspect "docker://$repo:sha-$SHORT_SHA" \
+            --creds "$GHCR_USER:$GHCR_TOKEN" | jq -r '.Digest')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::Bad OCI digest: $digest"; exit 1; }
+
+          jq -n --arg repo "$repo" --arg digest "$digest" \
+            '{enclaveOci: {repo: $repo, digest: $digest, ref: ($repo + "@" + $digest)}}' \
+            > target/eif/images.json
+          jq . target/eif/images.json
+
       # The EIF is hundreds of megabytes and only the canonical build's copy is ever
       # published; the reproduction leg only needs to be diffable.
       - name: Upload EIF
@@ -258,6 +300,7 @@ jobs:
             target/eif/provenance.json
             target/eif/environment.json
             target/eif/face-models.json
+            target/eif/images.json
             target/eif/${{ needs.prepare-release.outputs.WORKLOAD }}-pcr.json
             target/eif/closure-${{ needs.prepare-release.outputs.WORKLOAD }}.txt
           if-no-files-found: error
@@ -395,6 +438,7 @@ jobs:
     outputs:
       DIGEST: ${{ steps.push.outputs.digest }}
       IMAGE: ${{ steps.image.outputs.name }}
+      OCI_REF: ${{ steps.oci.outputs.REF }}
     steps:
       - name: Check Out Repo
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -406,6 +450,15 @@ jobs:
         with:
           name: eif-canonical
           path: target/eif
+
+      - name: Download measurements
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: measurements-canonical
+          path: target/eif
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
       - name: Resolve image name
         id: image
@@ -437,6 +490,36 @@ jobs:
           tags: |
             ${{ steps.image.outputs.name }}:v${{ needs.prepare-release.outputs.VERSION }}
             ${{ steps.image.outputs.name }}:sha-${{ needs.prepare-release.outputs.SHORT_SHA }}
+
+      # The image is already in the registry; this only adds a tag to the digest the gate
+      # verified. Layers are not re-uploaded.
+      - name: Tag the verified OCI image
+        id: oci
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.VERSION }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ref=$(jq -r '.enclaveOci.ref' target/eif/images.json)
+          repo=$(jq -r '.enclaveOci.repo' target/eif/images.json)
+          digest=$(jq -r '.enclaveOci.digest' target/eif/images.json)
+          nixpkgs_rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
+          nix run "github:NixOS/nixpkgs/$nixpkgs_rev#skopeo" -- \
+            --insecure-policy copy "docker://$ref" "docker://$repo:v$VERSION" \
+            --src-creds "$GHCR_USER:$GHCR_TOKEN" --dest-creds "$GHCR_USER:$GHCR_TOKEN"
+          {
+            echo "REF=$ref"
+            echo "REPO=$repo"
+            echo "DIGEST=$digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Attest OCI provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          push-to-registry: true
+          subject-name: ${{ steps.oci.outputs.REPO }}
+          subject-digest: ${{ steps.oci.outputs.DIGEST }}
 
       - name: Attest carrier provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -490,6 +573,7 @@ jobs:
           HOST_DIGEST: ${{ needs.build-host-image.outputs.digest }}
           CARRIER_IMAGE: ${{ needs.build-carrier.outputs.IMAGE }}
           CARRIER_DIGEST: ${{ needs.build-carrier.outputs.DIGEST }}
+          OCI_REF: ${{ needs.build-carrier.outputs.OCI_REF }}
         run: |
           set -euo pipefail
           face_models='{}'
@@ -507,6 +591,7 @@ jobs:
             --arg flakeLockSha256 "$(sha256sum flake.lock | cut -d' ' -f1)" \
             --arg hostImage "$HOST_IMAGE@$HOST_DIGEST" \
             --arg carrierImage "$CARRIER_IMAGE@$CARRIER_DIGEST" \
+            --arg enclaveOci "$OCI_REF" \
             --argjson flakeInputs "$(jq '.nodes | del(.root) | map_values(.locked)' flake.lock)" \
             --argjson faceModels "$face_models" \
             --slurpfile measurements workload-measurements.json \
@@ -516,13 +601,13 @@ jobs:
               measurements: $measurements[0],
               provenance: $provenance[0],
               faceModels: $faceModels,
-              images: {host: $hostImage, eifCarrier: $carrierImage}}' \
+              images: {host: $hostImage, enclaveOci: $enclaveOci, eifCarrier: $carrierImage}}' \
             > assets/manifest.json
           jq . assets/manifest.json
 
           # Cross-check rather than trust the job outputs: an empty digest interpolates to a
           # bare "image@" that reads like a pinned reference and resolves to nothing.
-          for ref in "$HOST_IMAGE@$HOST_DIGEST" "$CARRIER_IMAGE@$CARRIER_DIGEST"; do
+          for ref in "$HOST_IMAGE@$HOST_DIGEST" "$CARRIER_IMAGE@$CARRIER_DIGEST" "$OCI_REF"; do
             [[ "$ref" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "::error::Unpinned image: $ref"; exit 1; }
           done
           [[ "$PCR0" =~ ^0x[0-9a-f]{96}$ ]] || { echo "::error::Bad PCR0: $PCR0"; exit 1; }
@@ -566,6 +651,8 @@ jobs:
           CHANGELOG: ${{ steps.changelog.outputs.CHANGELOG }}
           HOST_IMAGE: ${{ needs.build-host-image.outputs.image }}
           CARRIER_IMAGE: ${{ needs.build-carrier.outputs.IMAGE }}
+          OCI_IMAGE: ghcr.io/${{ github.repository_owner }}/embedding-verifier-${{ needs.prepare-release.outputs.WORKLOAD }}-enclave-oci
+          OCI_REF: ${{ needs.build-carrier.outputs.OCI_REF }}
         run: |
           set -euo pipefail
           body=$(cat <<- ENDBODY
@@ -586,9 +673,24 @@ jobs:
           ## Images
 
           - \`$HOST_IMAGE:v$VERSION\` — the host
+          - \`$OCI_IMAGE:v$VERSION\` — the measured enclave image, before conversion
           - \`$CARRIER_IMAGE:v$VERSION\` — EIF carrier for the enclave sidecar
 
           Pinned digests are in \`manifest.json\`.
+
+          ## Re-derive the PCRs without building from source
+
+          The enclave links private code, so rebuilding from this tag needs access most
+          people do not have. Converting the published image does not:
+
+          \`\`\`
+          skopeo copy docker://$OCI_REF oci:enclave:$VERSION
+          nix run github:$GITHUB_REPOSITORY/$RELEASE_SHA#nitro-cli -- build-enclave \\
+            --docker-uri <loaded image> --output-file enclave.eif
+          \`\`\`
+
+          The PCRs it prints must equal the table above. That check needs only this release
+          and a Docker daemon.
 
           ## Verify
 

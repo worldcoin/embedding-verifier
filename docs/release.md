@@ -16,6 +16,7 @@ did not change.
 |:---|:---|
 | `manifest.json` | Binds the commit, the pinned flake inputs, the PCRs, the model hashes and the image digests. This is what the deploy reads `ENCLAVE_PCR0` from. |
 | `<workload>-enclave.eif` | The enclave image itself |
+| `ghcr.io/worldcoin/embedding-verifier-<workload>-enclave-oci` | The measured image before conversion — the one artifact an outsider can verify against |
 | `<workload>-pcr.json` | Raw `eif_build` output |
 | `closure-<workload>.txt` | narHash of every layer the EIF is assembled from |
 | `SHA256SUMS` | Covers every asset above; one build attestation is keyed to it |
@@ -118,6 +119,24 @@ overlap:
 Registry rows carry the `pcr0` they were attested under, so a withdrawn image can be revoked in
 bulk. That path is not built yet: nothing sets `KeyStatus::Revoked`, the IAM policy grants no
 `UpdateItem`, and a bulk revoke needs a GSI on `pcr0`.
+
+## Re-deriving a PCR without building from source
+
+`deepface-enclave` links private face-engine code, so "check out the tag and rebuild" is not
+available to most people, and a measurement nobody outside can reproduce is worth little.
+
+The published OCI image closes that gap. It is the exact input the EIF is converted from, so
+converting it with the pinned nitro-cli must yield the release's PCRs:
+
+```
+skopeo copy docker://<images.enclaveOci from manifest.json> oci:enclave:<version>
+nix run github:worldcoin/embedding-verifier/<gitSha>#nitro-cli -- \
+  build-enclave --docker-uri <loaded image> --output-file enclave.eif
+```
+
+This needs a Docker daemon and nothing private. It does not prove the image matches the
+source — only someone with face-engine access can check that — but it does prove the
+published PCRs describe the published image, which is what a client is pinning.
 
 ## Verifying a published release
 
