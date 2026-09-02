@@ -97,11 +97,24 @@ fn run(
 }
 
 /// Evaluates the opened inputs. Every failure here is a fact about the plaintext, so it is sealed.
+///
+/// # Panics
+///
+/// Panics if the inputs carry a `LightGuard` image. The flow behind it does not exist yet, and
+/// there is no sensible fallback: silently running the vanilla comparison would answer a
+/// `LightGuard` request with a statement that never saw the second frame.
 fn evaluate(
     state: &EnclaveState,
     inputs: &MatchInputs,
     challenge_image: &[u8],
 ) -> Result<MatchClaims, FailureReason> {
+    // TODO: Add LightGuard here. A second liveness frame selects the challenge-response spoof
+    // detection the biometrics team owns; everything below is vanilla mode. Until that pipeline
+    // lands, the enclave must not answer such a request at all — see the panic note above.
+    if inputs.light_guard_image.is_some() {
+        unimplemented!("LightGuard matching over the second liveness image");
+    }
+
     // Binds the credential image to the hash its PCP commits. A commitment, not proof of
     // enrollment — nothing here checks who issued the PCP.
     let credential_claim =
@@ -261,6 +274,7 @@ mod tests {
             version: CHANNEL_VERSION,
             live_image: LIVE.to_vec(),
             credential_image: credential.to_vec(),
+            light_guard_image: None,
             hashes_json: hashes_json_for(credential),
             challenge_image_key: key_and_iv().0,
             challenge_image_iv: key_and_iv().1,
@@ -497,6 +511,39 @@ mod tests {
             MatchResult::from_cbor(&plaintext).expect("should decode"),
             MatchResult::Failed(FailureReason::InvalidHashesJson)
         );
+    }
+
+    /// Vanilla mode is the absent-field flow, and nothing above changes it: the engine is still
+    /// asked for the same three images.
+    #[tokio::test]
+    async fn no_light_guard_image_runs_the_vanilla_flow() {
+        let state = state_with(MockFaceEngine::scoring(0.92, 0.87));
+        let inputs = inputs(CREDENTIAL, 0.5);
+        assert_eq!(inputs.light_guard_image, None);
+        let (opener, request) = request_for(&state, &inputs);
+
+        let response = handler(state, request).await.expect("match should succeed");
+
+        let plaintext = opener
+            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .expect("should open");
+        assert!(matches!(
+            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::Success(_)
+        ));
+    }
+
+    /// Placeholder until the biometrics team lands the pipeline. Pinned so the day it stops
+    /// panicking is a day this test fails and someone revisits the flow.
+    #[tokio::test]
+    #[should_panic(expected = "LightGuard matching over the second liveness image")]
+    async fn a_light_guard_image_is_not_implemented_yet() {
+        let state = state_with(MockFaceEngine::scoring(0.92, 0.87));
+        let mut inputs = inputs(CREDENTIAL, 0.5);
+        inputs.light_guard_image = Some(b"second-liveness-frame".to_vec());
+        let (_, request) = request_for(&state, &inputs);
+
+        let _ = handler(state, request).await;
     }
 
     #[tokio::test]

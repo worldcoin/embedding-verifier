@@ -62,6 +62,9 @@ async fn main() -> Result<()> {
         version: CHANNEL_VERSION,
         live_image: live_image.clone(),
         credential_image: credential_image.clone(),
+        // Vanilla mode. The harness asserts on a signed statement, and the LightGuard flow cannot
+        // produce one yet — sending a second frame would only reach the enclave's `unimplemented!`.
+        light_guard_image: None,
         hashes_json: hashes_json.clone(),
         challenge_image_key,
         challenge_image_iv,

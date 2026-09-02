@@ -69,6 +69,16 @@ pub struct MatchInputs {
     /// Raw credential image bytes (the Orb PCP thumbnail).
     #[serde(with = "serde_bytes")]
     pub credential_image: Vec<u8>,
+    /// The second liveness frame `LightGuard` analyses, if the requester captured one.
+    ///
+    /// Absent selects vanilla mode — the credential-against-live-and-challenge flow, unchanged.
+    /// Present selects the `LightGuard` flow, which the enclave does not implement yet.
+    ///
+    /// Additive on purpose. [`Self::version`] is deliberately *not* bumped: the field defaults to
+    /// absent, so a requester built before it existed still decodes, and a bump would strand every
+    /// such requester over an input none of them send.
+    #[serde(default, with = "serde_bytes")]
+    pub light_guard_image: Option<Vec<u8>>,
     /// Raw `hashes.json` bytes from the PCP.
     #[serde(with = "serde_bytes")]
     pub hashes_json: Vec<u8>,
@@ -203,11 +213,28 @@ mod tests {
             version: CHANNEL_VERSION,
             live_image: b"liveness-frame".to_vec(),
             credential_image: b"credential-thumbnail".to_vec(),
+            light_guard_image: None,
             hashes_json: br#"{"thumbnail.png":"aa"}"#.to_vec(),
             challenge_image_key: [7u8; CHALLENGE_KEY_LEN],
             challenge_image_iv: [9u8; CHALLENGE_IV_LEN],
             match_threshold: 0.5,
         }
+    }
+
+    /// `MatchInputs` as it was framed before `light_guard_image` existed. Encoding through this is
+    /// the only way to produce the payload a requester built against the old struct actually sends.
+    #[derive(serde::Serialize)]
+    struct PreLightGuardInputs {
+        version: u8,
+        #[serde(with = "serde_bytes")]
+        live_image: Vec<u8>,
+        #[serde(with = "serde_bytes")]
+        credential_image: Vec<u8>,
+        #[serde(with = "serde_bytes")]
+        hashes_json: Vec<u8>,
+        challenge_image_key: [u8; CHALLENGE_KEY_LEN],
+        challenge_image_iv: [u8; CHALLENGE_IV_LEN],
+        match_threshold: f32,
     }
 
     #[test]
@@ -218,6 +245,7 @@ mod tests {
 
         assert_eq!(decoded.live_image, inputs().live_image);
         assert_eq!(decoded.credential_image, inputs().credential_image);
+        assert_eq!(decoded.light_guard_image, inputs().light_guard_image);
         assert_eq!(decoded.hashes_json, inputs().hashes_json);
         assert_eq!(decoded.challenge_image_key, inputs().challenge_image_key);
         assert_eq!(decoded.challenge_image_iv, inputs().challenge_image_iv);
@@ -225,6 +253,47 @@ mod tests {
             decoded.match_threshold.to_bits(),
             inputs().match_threshold.to_bits()
         );
+    }
+
+    #[test]
+    fn a_light_guard_image_round_trips() {
+        let mut inputs = inputs();
+        inputs.light_guard_image = Some(b"second-liveness-frame".to_vec());
+        let encoded = inputs.to_cbor().expect("encoding should succeed");
+
+        let decoded = MatchInputs::from_cbor(&encoded).expect("decoding should succeed");
+
+        assert_eq!(
+            decoded.light_guard_image.as_deref(),
+            Some(&b"second-liveness-frame"[..])
+        );
+    }
+
+    /// The field is additive, so a requester that predates it must still be understood — otherwise
+    /// a rolling deploy would break every client that had not shipped the new struct yet.
+    #[test]
+    fn a_payload_without_the_field_decodes_as_vanilla() {
+        let old = inputs();
+        let mut encoded = Vec::new();
+        ciborium::into_writer(
+            &PreLightGuardInputs {
+                version: old.version,
+                live_image: old.live_image.clone(),
+                credential_image: old.credential_image.clone(),
+                hashes_json: old.hashes_json.clone(),
+                challenge_image_key: old.challenge_image_key,
+                challenge_image_iv: old.challenge_image_iv,
+                match_threshold: old.match_threshold,
+            },
+            &mut encoded,
+        )
+        .expect("encoding should succeed");
+
+        let decoded = MatchInputs::from_cbor(&encoded).expect("an old payload should still decode");
+
+        assert_eq!(decoded.light_guard_image, None);
+        assert_eq!(decoded.live_image, old.live_image);
+        assert_eq!(decoded.credential_image, old.credential_image);
     }
 
     #[test]

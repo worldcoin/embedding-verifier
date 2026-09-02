@@ -48,6 +48,7 @@ fn inputs() -> MatchInputs {
         version: attested_channel::channel::CHANNEL_VERSION,
         live_image: b"liveness-frame".to_vec(),
         credential_image: b"credential-thumbnail".to_vec(),
+        light_guard_image: None,
         hashes_json: br#"{"thumbnail.png":"aa"}"#.to_vec(),
         challenge_image_key: [7u8; CHALLENGE_KEY_LEN],
         challenge_image_iv: [9u8; CHALLENGE_IV_LEN],
