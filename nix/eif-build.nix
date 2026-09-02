@@ -56,7 +56,7 @@ let
           }
           ''
             mkdir -p "$out"
-            skopeo --insecure-policy copy \
+            skopeo --tmpdir "$TMPDIR" --insecure-policy copy \
               "docker-archive:${dockerArchive}" \
               "oci:$out:${version}"
           '';
