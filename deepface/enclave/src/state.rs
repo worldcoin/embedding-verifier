@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use attested_channel::channel::{ENCRYPTION_KEY_LEN, Responder, UnwrapErr};
 use deepface_enclave_types::EnclaveError;
-use deepface_protocol::match_token::{EdDSAPrivateKey, EdDSAPublicKey, MatchSigner};
+use deepface_protocol::match_token::{EdDSAPublicKey, MatchSigner};
 use getrandom::SysRng;
 use tokio::task::JoinHandle;
 
@@ -41,7 +41,7 @@ impl EnclaveState {
     ) -> Result<Self, EnclaveError> {
         let mut rng = UnwrapErr(SysRng);
         let responder = Responder::generate(&mut rng);
-        let signing_key = MatchSigner::new(EdDSAPrivateKey::random(&mut rand::rngs::OsRng));
+        let signing_key = MatchSigner::generate(&mut rand::rngs::OsRng);
         tracing::info!("generated boot-scoped sealed channel and signing keys");
 
         // Serialized once here rather than on every attestation.

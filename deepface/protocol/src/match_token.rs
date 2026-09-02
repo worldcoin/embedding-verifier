@@ -10,13 +10,14 @@ use coset::{
     CborSerializable, CoseSign1, CoseSign1Builder, Header, RegisteredLabelWithPrivate,
     cbor::value::Value,
 };
-use eddsa_babyjubjub::EdDSASignature;
+use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSASignature};
+use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
 // Re-exported so consumers holding attested bytes can build the key `verify` takes, without
 // depending on eddsa-babyjubjub directly.
-pub use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSAPublicKey};
+pub use eddsa_babyjubjub::EdDSAPublicKey;
 
 /// COSE algorithm identifier for `BabyJubJub-EdDSA-Poseidon2`, as defined in WIP-106.
 pub const COSE_ALG_BABYJUBJUB_EDDSA_POSEIDON2: i64 = -65537;
@@ -205,16 +206,17 @@ impl MatchToken {
 /// Signs match statements.
 ///
 /// Paired with [`verify`], so the two cannot disagree on the digest, the algorithm or the `kid`.
-/// Never generates a key — provenance and lifetime are the caller's policy.
+/// The key is generated here and never leaves; how long it lives is the caller's policy.
 pub struct MatchSigner {
     private_key: EdDSAPrivateKey,
     public_key: EdDSAPublicKey,
 }
 
 impl MatchSigner {
-    /// Wraps `private_key` and derives the public key that verifies what it signs.
+    /// Generates a fresh keypair from `rng`.
     #[must_use]
-    pub fn new(private_key: EdDSAPrivateKey) -> Self {
+    pub fn generate<R: Rng + CryptoRng>(rng: &mut R) -> Self {
+        let private_key = EdDSAPrivateKey::random(rng);
         let public_key = private_key.public();
 
         Self {
@@ -385,15 +387,13 @@ mod tests {
     use ark_babyjubjub::Fq;
     use coset::{CborSerializable as _, CoseSign1, CoseSign1Builder, cbor::value::Value};
 
-    use eddsa_babyjubjub::EdDSAPrivateKey;
-
     use super::{
         CLAIM_VERSION, COSE_ALG_BABYJUBJUB_EDDSA_POSEIDON2, Error, MatchClaims, MatchSigner,
         MatchToken, TOKEN_VERSION, hash_limbs, verify,
     };
 
     fn signer() -> MatchSigner {
-        MatchSigner::new(EdDSAPrivateKey::random(&mut rand::rngs::OsRng))
+        MatchSigner::generate(&mut rand::rngs::OsRng)
     }
 
     fn claims() -> MatchClaims {
