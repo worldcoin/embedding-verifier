@@ -25,9 +25,8 @@ pub struct MatchRequestBody {
 pub struct MatchResponseBody {
     /// The sealed outcome, base64.
     response_ciphertext: String,
-    /// The signing-key attestation, base64, so a client can verify the statement it just received.
-    ///
-    /// TODO: Probably should be removed once we implement the key registry.
+    /// The signing-key attestation, base64, so a client can verify the statement it just
+    /// received. With no registry to look the key up in, this is the only way it reaches anyone.
     key_attestation: String,
 }
 

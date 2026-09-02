@@ -69,14 +69,10 @@ done
 
 ```bash
 # Run the host on http://localhost:8000
-# ENCLAVE_CID, ENCLAVE_PORT, ENCLAVE_PCR0 and CHALLENGE_IMAGE_BASE_URL are required; the
-# process panics without them.
-# A `--debug-mode` enclave measures all zeros, which only ALLOW_DEBUG_MEASUREMENTS accepts.
-# KEY_REGISTRY defaults to dynamodb and then requires KEY_REGISTRY_TABLE; in-memory is
-# development-only and the keys die with the process.
+# ENCLAVE_CID, ENCLAVE_PORT and CHALLENGE_IMAGE_BASE_URL are required; the process panics
+# without them. The host pins no measurements of its own -- it is the untrusted side, and it is
+# the client that pins PCR0.
 RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 \
-  ENCLAVE_PCR0=$(printf '0%.0s' {1..96}) ALLOW_DEBUG_MEASUREMENTS=true \
-  KEY_REGISTRY=in-memory \
   CHALLENGE_IMAGE_BASE_URL=https://bucket.example.com/challenges/ \
   cargo run --bin deepface-host
 curl http://localhost:8000/health
@@ -174,6 +170,10 @@ key for it. A swapped object therefore fails inside the enclave rather than chan
 The sealed response carries either a `COSE_Sign1` match statement or the reason no statement was
 issued; `key_attestation` is the signing key's attestation, so a client can verify the statement it
 just received. Only the requester can open it — a second channel to the same enclave key cannot.
+
+There is no key registry, so this is the only way the signing key reaches a verifier: a statement
+has to be checked while the enclave that signed it is still the one being assigned. Whoever needs
+to check one later has to be handed the attestation alongside it.
 
 The host learns only that the enclave answered. Once a request has been opened there is a sealed
 channel to reply on, so everything the enclave discovers from that point — a malformed payload, an
