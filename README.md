@@ -83,14 +83,21 @@ RUST_LOG=info cargo run --manifest-path deepface/enclave/Cargo.toml --bin deepfa
 
 ## Building images
 
-Each workload has a host image and an enclave image. `build-docker.yml` builds all four
-on every PR but publishes only the hosts — an enclave image is an input to the EIF, and
-it is the EIF's PCRs that clients attest.
+Each workload has a host image and a reproducible OCI enclave image. Nix builds the OCI
+image instead of the old workload Dockerfile. It then loads that immutable image into Docker
+and invokes a Nix-packaged AWS nitro-cli v1.4.2, preserving the pre-#38 LinuxKit and EIF
+conversion path. `build-docker.yml` only builds and publishes hosts.
 
 ```bash
-# EIF + PCRs. Linux x86_64 + Docker; Nitro hardware only needed to run, not to build.
-scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcrs.json
-scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pcrs.json
+# Reproducible OCI image -> AWS nitro-cli -> EIF + PCRs.
+# Needs Linux x86_64 and Docker; Nitro hardware is only needed to run.
+scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcr.json
+scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pcr.json
+
+# Build or inspect only the reproducible OCI boundary.
+nix build .#di-oci
+skopeo inspect \
+  "oci:$(readlink -f result):$(nix eval --raw .#packages.x86_64-linux.di-enclave.version)"
 
 # Carrier image that launches an EIF on a Nitro node
 docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif target/eif
@@ -98,6 +105,9 @@ docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif t
 
 `GIT_HUB_TOKEN` and `HUGGING_FACE_TOKEN` are both `deepface`-only. A build now resolves one
 enclave's workspace rather than the whole repository, and nothing in `di`'s graph is private.
+
+The converter itself is also pinned by Nix: `nix build .#nitro-cli` builds AWS nitro-cli
+v1.4.2 from source and bundles the matching AWS kernel, init, NSM, and LinuxKit blobs.
 
 `di-enclave` exits non-zero on start, so its EIF builds and measures but will not stay
 running, until the boot sequence lands.
