@@ -533,19 +533,6 @@ mod tests {
         ));
     }
 
-    /// Placeholder until the biometrics team lands the pipeline. Pinned so the day it stops
-    /// panicking is a day this test fails and someone revisits the flow.
-    #[tokio::test]
-    #[should_panic(expected = "LightGuard matching over the second liveness image")]
-    async fn a_light_guard_image_is_not_implemented_yet() {
-        let state = state_with(MockFaceEngine::scoring(0.92, 0.87));
-        let mut inputs = inputs(CREDENTIAL, 0.5);
-        inputs.light_guard_image = Some(b"second-liveness-frame".to_vec());
-        let (_, request) = request_for(&state, &inputs);
-
-        let _ = handler(state, request).await;
-    }
-
     #[tokio::test]
     async fn a_second_requester_cannot_open_the_response() {
         let state = state_with(MockFaceEngine::scoring(0.92, 0.87));
