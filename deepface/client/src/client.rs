@@ -3,7 +3,6 @@
 use std::time::SystemTime;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use attested_channel::channel::{ChannelError, Requester, SealedResponse, UnwrapErr};
@@ -21,12 +20,6 @@ const ASSIGNMENT_PATH: &str = "/v1/enclave-assignment";
 
 /// Path of the match endpoint.
 const MATCHES_PATH: &str = "/v1/matches";
-
-/// Path prefix of the signing-key lookup.
-const SIGNING_KEYS_PATH: &str = "/v1/signing-keys";
-
-/// Length of a compressed `BabyJubJub` signing public key.
-const SIGNING_PUBLIC_KEY_LEN: usize = 32;
 
 /// Error code the host uses for a request that did not open.
 const REASSIGN_REQUIRED: &str = "reassign_required";
@@ -92,15 +85,6 @@ pub enum ClientError {
     /// The statement did not verify under the attested signing key.
     #[error("match statement did not verify under the attested signing key")]
     StatementInvalid,
-
-    /// The key to look up was not 32 bytes of hex.
-    #[error("signing public key was not 32 bytes of hex")]
-    InvalidSigningKeyId,
-
-    /// The row's document attests a different key than the one asked for. An untrusted host
-    /// answering one lookup with another key's attestation is the whole reason to check.
-    #[error("registry answered for a different signing key than the one requested")]
-    SigningKeyMismatch,
 }
 
 /// The host's error envelope.
@@ -135,82 +119,6 @@ struct MatchResponseBody {
 #[derive(Debug, Deserialize)]
 struct EnclaveAssignmentResponse {
     attestation: String,
-}
-
-/// Where a `Signing Key` stands, as the registry reports it.
-///
-/// The three answer different questions about a statement the key signed and MUST NOT be
-/// collapsed into one another; [`VerifiedSigningKey::accepts_statement_signed_at`] applies them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum KeyStatus {
-    /// The enclave is running. Statements it signs are acceptable.
-    Active,
-    /// The enclave shut down normally. Statements signed before `retired_at` stay acceptable.
-    Retired,
-    /// The enclave or its image was withdrawn. Every statement this key signed is invalid.
-    Revoked,
-}
-
-/// The host's signing-key response.
-#[derive(Debug, Deserialize)]
-struct SigningKeyResponseBody {
-    attestation: String,
-    valid_from: u64,
-    retired_at: Option<u64>,
-    status: KeyStatus,
-}
-
-/// A registry row whose attestation verified and which is ready to check a statement against.
-///
-/// `pcr0` is deliberately absent: the row reports one, but the verified document is the only
-/// account of what ran, so measurements are read from [`Self::attestation`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifiedSigningKey {
-    /// Metadata read from the signed attestation document.
-    pub attestation: VerifiedAttestation,
-    /// The attested key, ready for [`match_token::verify`].
-    pub signing_key: EdDSAPublicKey,
-    /// When the key was attested, in seconds since the Unix epoch.
-    pub valid_from: u64,
-    /// When the enclave shut down, if it has.
-    pub retired_at: Option<u64>,
-    /// Validity state.
-    pub status: KeyStatus,
-}
-
-impl VerifiedSigningKey {
-    /// Whether a statement signed at `signed_at` is acceptable under this row.
-    ///
-    /// Retirement is not revocation: an enclave that shut down normally leaves everything it
-    /// signed beforehand standing, while a revoked key invalidates its statements retroactively.
-    #[must_use]
-    pub const fn accepts_statement_signed_at(&self, signed_at: u64) -> bool {
-        accepts_statement(self.status, self.valid_from, self.retired_at, signed_at)
-    }
-}
-
-/// The validity rule on its own, so it can be exercised without enclave key material.
-const fn accepts_statement(
-    status: KeyStatus,
-    valid_from: u64,
-    retired_at: Option<u64>,
-    signed_at: u64,
-) -> bool {
-    if signed_at < valid_from {
-        return false;
-    }
-
-    match status {
-        KeyStatus::Active => true,
-        KeyStatus::Revoked => false,
-        // A row that says retired without saying when cannot place the statement, and a guess
-        // here would accept one signed after the enclave was gone.
-        KeyStatus::Retired => match retired_at {
-            Some(at) => signed_at < at,
-            None => false,
-        },
-    }
 }
 
 /// An assignment whose attestation verified and whose encryption key is ready for sealing.
@@ -376,83 +284,6 @@ impl FaceVerifierClient {
         Ok(result)
     }
 
-    /// Looks up one signing key and returns it only if its attestation verifies.
-    ///
-    /// `Ok(None)` means this `Service` never issued the key. A registry that could not be read is
-    /// an error and never `Ok(None)`: the two answer different questions, and collapsing them
-    /// would turn an outage into a confident "no such key".
-    ///
-    /// The document is verified against the configured measurements, and the key it attests is
-    /// checked against `public_key`, so an untrusted host cannot answer with another enclave's
-    /// attestation.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ClientError`] if `public_key` is not 32 bytes of hex, the request fails, the
-    /// host answers with any non-success status other than `404`, or the document does not
-    /// verify.
-    pub async fn signing_key(
-        &self,
-        public_key: &str,
-        now: SystemTime,
-    ) -> Result<Option<VerifiedSigningKey>, ClientError> {
-        let digits = public_key.trim();
-        let digits = digits.strip_prefix("0x").unwrap_or(digits);
-        let requested = <[u8; SIGNING_PUBLIC_KEY_LEN]>::try_from(
-            hex::decode(digits)
-                .map_err(|_| ClientError::InvalidSigningKeyId)?
-                .as_slice(),
-        )
-        .map_err(|_| ClientError::InvalidSigningKeyId)?;
-
-        let url = format!(
-            "{}{SIGNING_KEYS_PATH}/0x{}",
-            self.config.host_url().as_str().trim_end_matches('/'),
-            hex::encode(requested)
-        );
-        let response = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .map_err(ClientError::Request)?;
-
-        let status = response.status();
-        if status == StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if !status.is_success() {
-            let body = response.text().await.ok();
-            return Err(Self::api_error(status.as_u16(), body.as_deref()));
-        }
-
-        let body: SigningKeyResponseBody = response
-            .json()
-            .await
-            .map_err(ClientError::MalformedResponse)?;
-
-        // The registry holds the document the enclave produced at boot, so this is verified as
-        // of when it was signed rather than now. Liveness is the caller's policy, not this
-        // lookup's: for anything but the currently running enclave it is unanswerable.
-        let attestation = self
-            .verifier
-            .verify_stored_base64(body.attestation.trim(), now)?;
-        if attestation.enclave_public_key != requested {
-            return Err(ClientError::SigningKeyMismatch);
-        }
-
-        let signing_key = EdDSAPublicKey::from_compressed_bytes(requested)
-            .map_err(|_| ClientError::InvalidSigningKey)?;
-
-        Ok(Some(VerifiedSigningKey {
-            attestation,
-            signing_key,
-            valid_from: body.valid_from,
-            retired_at: body.retired_at,
-            status: body.status,
-        }))
-    }
-
     /// Classifies a non-success response, reading the error envelope when there is one.
     fn api_error(status: u16, body: Option<&str>) -> ClientError {
         let Some(envelope) = body.and_then(|body| serde_json::from_str::<ApiErrorBody>(body).ok())
@@ -469,83 +300,5 @@ impl FaceVerifierClient {
             code: envelope.error.code,
             allow_retry: envelope.allow_retry,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{KeyStatus, accepts_statement};
-
-    const VALID_FROM: u64 = 100;
-
-    #[test]
-    fn an_active_key_accepts_anything_signed_after_it_was_attested() {
-        assert!(accepts_statement(KeyStatus::Active, VALID_FROM, None, 100));
-        assert!(accepts_statement(
-            KeyStatus::Active,
-            VALID_FROM,
-            None,
-            10_000
-        ));
-    }
-
-    /// A key cannot have signed anything before the enclave attested it.
-    #[test]
-    fn nothing_predating_the_attestation_is_accepted() {
-        assert!(!accepts_statement(KeyStatus::Active, VALID_FROM, None, 99));
-    }
-
-    /// Retirement is not revocation: what the enclave signed before shutting down still stands.
-    #[test]
-    fn a_retired_key_accepts_only_what_it_signed_before_retiring() {
-        let retired_at = Some(200);
-
-        assert!(accepts_statement(
-            KeyStatus::Retired,
-            VALID_FROM,
-            retired_at,
-            199
-        ));
-        assert!(!accepts_statement(
-            KeyStatus::Retired,
-            VALID_FROM,
-            retired_at,
-            200
-        ));
-        assert!(!accepts_statement(
-            KeyStatus::Retired,
-            VALID_FROM,
-            retired_at,
-            201
-        ));
-    }
-
-    /// Placing the statement is impossible, and guessing would accept one signed after the
-    /// enclave was gone.
-    #[test]
-    fn a_retired_key_with_no_retirement_time_accepts_nothing() {
-        assert!(!accepts_statement(
-            KeyStatus::Retired,
-            VALID_FROM,
-            None,
-            150
-        ));
-    }
-
-    /// Revocation is retroactive, so even a statement from before it is worthless.
-    #[test]
-    fn a_revoked_key_accepts_nothing() {
-        assert!(!accepts_statement(
-            KeyStatus::Revoked,
-            VALID_FROM,
-            None,
-            150
-        ));
-        assert!(!accepts_statement(
-            KeyStatus::Revoked,
-            VALID_FROM,
-            Some(200),
-            150
-        ));
     }
 }

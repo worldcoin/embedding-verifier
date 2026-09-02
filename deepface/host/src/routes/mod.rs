@@ -4,7 +4,6 @@ mod enclave_assignment;
 mod health;
 mod matches;
 mod readiness;
-mod signing_keys;
 
 use axum::{
     Router,
@@ -20,5 +19,4 @@ pub fn handler() -> Router<AppState> {
         .route("/ready", get(readiness::handler))
         .route("/v1/enclave-assignment", post(enclave_assignment::handler))
         .route("/v1/matches", post(matches::handler))
-        .route("/v1/signing-keys/{public_key}", get(signing_keys::handler))
 }
