@@ -169,8 +169,7 @@ key for it. A swapped object therefore fails inside the enclave rather than chan
 
 The sealed payload also carries an optional `light_guard_image`, a second liveness frame. Omitting
 it selects vanilla mode, the flow described here. Sending one selects LightGuard — challenge-response
-spoof detection — which **is not implemented**: the enclave panics on such a request today. The field
-is additive and the channel version is unchanged, so a requester that predates it still works.
+spoof detection — which **is not implemented**: the enclave panics on such a request today.
 
 ```json
 { "response_ciphertext": "<base64 nonce || ciphertext>", "key_attestation": "<base64 COSE_Sign1>" }

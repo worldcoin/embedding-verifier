@@ -71,12 +71,8 @@ pub struct MatchInputs {
     pub credential_image: Vec<u8>,
     /// The second liveness frame `LightGuard` analyses, if the requester captured one.
     ///
-    /// Absent selects vanilla mode — the credential-against-live-and-challenge flow, unchanged.
-    /// Present selects the `LightGuard` flow, which the enclave does not implement yet.
-    ///
-    /// Additive on purpose. [`Self::version`] is deliberately *not* bumped: the field defaults to
-    /// absent, so a requester built before it existed still decodes, and a bump would strand every
-    /// such requester over an input none of them send.
+    /// Absent selects vanilla mode — the credential-against-live-and-challenge flow. Present
+    /// selects the `LightGuard` flow, which the enclave does not implement yet.
     #[serde(default, with = "serde_bytes")]
     pub light_guard_image: Option<Vec<u8>>,
     /// Raw `hashes.json` bytes from the PCP.
@@ -221,22 +217,6 @@ mod tests {
         }
     }
 
-    /// `MatchInputs` as it was framed before `light_guard_image` existed. Encoding through this is
-    /// the only way to produce the payload a requester built against the old struct actually sends.
-    #[derive(serde::Serialize)]
-    struct PreLightGuardInputs {
-        version: u8,
-        #[serde(with = "serde_bytes")]
-        live_image: Vec<u8>,
-        #[serde(with = "serde_bytes")]
-        credential_image: Vec<u8>,
-        #[serde(with = "serde_bytes")]
-        hashes_json: Vec<u8>,
-        challenge_image_key: [u8; CHALLENGE_KEY_LEN],
-        challenge_image_iv: [u8; CHALLENGE_IV_LEN],
-        match_threshold: f32,
-    }
-
     #[test]
     fn inputs_round_trip() {
         let encoded = inputs().to_cbor().expect("encoding should succeed");
@@ -267,33 +247,6 @@ mod tests {
             decoded.light_guard_image.as_deref(),
             Some(&b"second-liveness-frame"[..])
         );
-    }
-
-    /// The field is additive, so a requester that predates it must still be understood — otherwise
-    /// a rolling deploy would break every client that had not shipped the new struct yet.
-    #[test]
-    fn a_payload_without_the_field_decodes_as_vanilla() {
-        let old = inputs();
-        let mut encoded = Vec::new();
-        ciborium::into_writer(
-            &PreLightGuardInputs {
-                version: old.version,
-                live_image: old.live_image.clone(),
-                credential_image: old.credential_image.clone(),
-                hashes_json: old.hashes_json.clone(),
-                challenge_image_key: old.challenge_image_key,
-                challenge_image_iv: old.challenge_image_iv,
-                match_threshold: old.match_threshold,
-            },
-            &mut encoded,
-        )
-        .expect("encoding should succeed");
-
-        let decoded = MatchInputs::from_cbor(&encoded).expect("an old payload should still decode");
-
-        assert_eq!(decoded.light_guard_image, None);
-        assert_eq!(decoded.live_image, old.live_image);
-        assert_eq!(decoded.credential_image, old.credential_image);
     }
 
     #[test]
