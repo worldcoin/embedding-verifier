@@ -4,7 +4,9 @@ use attested_channel::channel::{SealedRequest, SealedResponse, UnwrapErr};
 use deepface_enclave_types::{EnclaveError, MatchRequest, MatchResponse};
 use deepface_protocol::Error as ProtocolError;
 use deepface_protocol::match_token::MatchClaims;
-use deepface_protocol::messages::{FailureReason, MatchInputs, MatchResult, decrypt_challenge};
+use deepface_protocol::messages::{
+    AttestedStatement, FailureReason, MatchInputs, MatchResult, decrypt_challenge,
+};
 use getrandom::SysRng;
 use pontifex::Request;
 use sha2::{Digest, Sha256};
@@ -37,8 +39,16 @@ pub async fn handler(
             EnclaveError::RequestNotOpened
         })?;
 
+    // Read before `run`, which is sync. A clone of the cached document, not an attest.
+    let signing_key_attestation = state.signing_key_attestation().await;
+
     // Past this point there is a channel to answer on, so every input-derived failure is sealed.
-    let result = run(&state, &request.challenge_ciphertext, &plaintext)?;
+    let result = run(
+        &state,
+        &request.challenge_ciphertext,
+        &plaintext,
+        &signing_key_attestation,
+    )?;
 
     Ok(MatchResponse {
         ciphertext: seal(sealer, &result)?.into_bytes(),
@@ -55,6 +65,7 @@ fn run(
     state: &EnclaveState,
     challenge_ciphertext: &[u8],
     plaintext: &[u8],
+    signing_key_attestation: &[u8],
 ) -> Result<MatchResult, EnclaveError> {
     let inputs = match MatchInputs::from_cbor(plaintext) {
         Ok(inputs) => inputs,
@@ -90,7 +101,11 @@ fn run(
     };
 
     match evaluate(state, &inputs, &challenge_image) {
-        Ok(claims) => Ok(MatchResult::Success(sign(state, &claims)?)),
+        // Only a held match carries the document; a rejection has no statement to check.
+        Ok(claims) => Ok(MatchResult::Success(AttestedStatement {
+            token: sign(state, &claims)?,
+            signing_key_attestation: signing_key_attestation.to_vec(),
+        })),
         Err(reason) => Ok(MatchResult::Failed(reason)),
     }
 }
@@ -301,14 +316,21 @@ mod tests {
         let plaintext = opener
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("the requester should open its own response");
-        let MatchResult::Success(token) =
+        let MatchResult::Success(attested) =
             MatchResult::from_cbor(&plaintext).expect("result should decode")
         else {
             panic!("a held match should carry a statement");
         };
 
+        // Without the document the requester cannot tell which enclave signed the token.
+        assert_eq!(
+            attested.signing_key_attestation,
+            signer.signing_key_attestation().await,
+            "the sealed document must be this boot's signing-key attestation"
+        );
+
         // The statement verifies under the key this boot attests, and commits to every input.
-        let statement = match_token::verify(&token, signer.signing_public_key())
+        let statement = match_token::verify(&attested.token, signer.signing_public_key())
             .expect("statement should verify");
         assert_eq!(statement.live_image_hash, Sha256::digest(LIVE).as_slice());
         assert_eq!(

@@ -4,8 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use deepface_enclave_types::{
-    EnclaveError, GetEncryptionKeyRequest, GetSigningKeyRequest, HealthRequest, MatchRequest,
-    MatchResponse,
+    EnclaveError, GetEncryptionKeyRequest, HealthRequest, MatchRequest, MatchResponse,
 };
 use pontifex::Request;
 use pontifex::client::ConnectionDetails;
@@ -34,9 +33,6 @@ pub trait EnclaveClient: Send + Sync {
 
     /// Fetches the attestation for the enclave's boot-scoped encryption key.
     async fn encryption_key_attestation(&self) -> Result<Vec<u8>, EnclaveClientError>;
-
-    /// Fetches the attestation for the enclave's boot-scoped signing key.
-    async fn signing_key_attestation(&self) -> Result<Vec<u8>, EnclaveClientError>;
 
     /// Runs a match inside the enclave.
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError>;
@@ -78,12 +74,6 @@ impl EnclaveClient for PontifexEnclaveClient {
 
     async fn encryption_key_attestation(&self) -> Result<Vec<u8>, EnclaveClientError> {
         self.call(GetEncryptionKeyRequest, CONTROL_REQUEST_TIMEOUT)
-            .await
-            .map(|attestation| attestation.document)
-    }
-
-    async fn signing_key_attestation(&self) -> Result<Vec<u8>, EnclaveClientError> {
-        self.call(GetSigningKeyRequest, CONTROL_REQUEST_TIMEOUT)
             .await
             .map(|attestation| attestation.document)
     }

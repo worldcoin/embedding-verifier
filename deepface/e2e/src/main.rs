@@ -3,7 +3,6 @@ use std::{env, fs, path::PathBuf, time::SystemTime};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use attested_channel::channel::{CHANNEL_VERSION, SealedResponse, UnwrapErr};
 use deepface_client::{Config, FaceVerifierClient};
-use deepface_enclave_types::GetSigningKeyRequest;
 use deepface_enclave_types::MatchRequest;
 use deepface_protocol::match_token::{self, EdDSAPublicKey};
 use deepface_protocol::messages::{
@@ -30,25 +29,12 @@ async fn main() -> Result<()> {
     let config = load_config()?;
     let verifier = config.verifier();
 
-    let signing_key_attestation = pontifex::client::send(connection, &GetSigningKeyRequest)
-        .await
-        .context("failed to call the enclave signing-key route")?
-        .map_err(|error| anyhow!("enclave rejected the signing-key request: {error:?}"))?;
-
     let assignment = FaceVerifierClient::new(config)
         .context("failed to build the assignment client")?
         .request_assignment(SystemTime::now())
         .await
         .context("enclave assignment did not verify")?;
     let requester = assignment.requester;
-    let signing_key = verifier
-        .verify(&signing_key_attestation.document, SystemTime::now())
-        .context("the signing-key attestation document did not verify")?
-        .enclave_public_key;
-    let signing_key = <[u8; 32]>::try_from(signing_key.as_slice())
-        .map_err(|_| anyhow!("attested signing public key was not 32 bytes"))?;
-    let signing_key = EdDSAPublicKey::from_compressed_bytes(signing_key)
-        .map_err(|error| anyhow!("attested signing public key did not decode: {error:?}"))?;
 
     // Stands in for the RP: encrypt the challenge frame, keep the key for the sealed payload.
     let challenge_image_key: [u8; CHALLENGE_KEY_LEN] = rand::random();
@@ -92,12 +78,22 @@ async fn main() -> Result<()> {
         .map_err(|error| anyhow!("failed to decode the sealed result: {error:?}"))?;
 
     // The sealed result is the only account of what happened; the host reported nothing but success.
-    let token = match result {
-        MatchResult::Success(token) => token,
+    let attested = match result {
+        MatchResult::Success(attested) => attested,
         MatchResult::Failed(reason) => bail!("no statement was issued: {reason:?}"),
     };
 
-    let statement = match_token::verify(&token, &signing_key)
+    // The whole chain: pinned measurements, then the key the document attests, then its signature.
+    let signing_key = verifier
+        .verify(&attested.signing_key_attestation, SystemTime::now())
+        .context("the signing-key attestation document did not verify")?
+        .enclave_public_key;
+    let signing_key = <[u8; 32]>::try_from(signing_key.as_slice())
+        .map_err(|_| anyhow!("attested signing public key was not 32 bytes"))?;
+    let signing_key = EdDSAPublicKey::from_compressed_bytes(signing_key)
+        .map_err(|error| anyhow!("attested signing public key did not decode: {error:?}"))?;
+
+    let statement = match_token::verify(&attested.token, &signing_key)
         .map_err(|error| anyhow!("the match statement did not verify: {error:?}"))?;
     ensure!(
         statement.match_coefficient >= match_threshold,

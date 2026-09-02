@@ -23,25 +23,14 @@ impl Request for GetEncryptionKeyRequest {
     type Response = Result<KeyAttestation, EnclaveError>;
 }
 
-/// Requests the attestation for this boot's `BabyJubJub` signing key.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct GetSigningKeyRequest;
-
-impl Request for GetSigningKeyRequest {
-    const ROUTE_ID: &'static str = "/v1/signing-key";
-    type Response = Result<KeyAttestation, EnclaveError>;
-}
-
 #[cfg(test)]
 mod tests {
     use pontifex::Request;
 
-    use super::{GetEncryptionKeyRequest, GetSigningKeyRequest};
+    use super::GetEncryptionKeyRequest;
 
-    /// One route per key, because every caller wants exactly one of the two.
     #[test]
-    fn key_route_ids_are_versioned_and_distinct() {
+    fn the_encryption_key_route_id_is_versioned_and_stable() {
         assert_eq!(GetEncryptionKeyRequest::ROUTE_ID, "/v1/encryption-key");
-        assert_eq!(GetSigningKeyRequest::ROUTE_ID, "/v1/signing-key");
     }
 }

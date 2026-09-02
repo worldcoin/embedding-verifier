@@ -1,8 +1,9 @@
 //! End-to-end tests for the match client, over real HTTP.
 //!
-//! The stub plays host *and* enclave, so the whole channel round-trip runs. `Success` is not
-//! covered: it needs a token signed by the key inside a genuine attestation, which cannot be
-//! forged. `e2e` covers that against a real enclave.
+//! The stub plays host *and* enclave, so the whole channel round-trip runs. An accepted `Success`
+//! is not covered: it needs a token signed by the key inside a genuine attestation, which cannot
+//! be forged. `e2e` covers that against a real enclave. A *rejected* `Success` is covered here,
+//! and is the case that matters — forging one is exactly what an untrusted host would try.
 
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -18,8 +19,9 @@ use axum::{Json, Router};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use deepface_client::nitro::PcrMeasurement;
 use deepface_client::{ClientError, Config, FaceVerifierClient, Requester, VerifiedAssignment};
+use deepface_protocol::match_token::MatchToken;
 use deepface_protocol::messages::{
-    CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, FailureReason, MatchInputs, MatchResult,
+    AttestedStatement, CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, FailureReason, MatchInputs, MatchResult,
 };
 use getrandom::SysRng;
 use hex_literal::hex;
@@ -152,8 +154,6 @@ async fn serve_enclave(
 
                     Json(json!({
                         "response_ciphertext": STANDARD.encode(response.into_bytes()),
-                        // Only read when a statement comes back.
-                        "key_attestation": "",
                     }))
                 },
             ),
@@ -307,4 +307,34 @@ async fn a_status_without_an_envelope_still_surfaces() {
         .expect_err("a 502 is an error");
 
     assert!(matches!(error, ClientError::Status(502)), "got {error:?}");
+}
+
+/// A statement is only as good as the attestation beside it, so one that does not verify must be
+/// an error rather than a `Success` the caller could mistake for a held match.
+#[tokio::test]
+async fn a_statement_whose_attestation_does_not_verify_is_rejected() {
+    // An empty document is the enclave omitting it; junk is a host substituting its own.
+    for attestation in [Vec::new(), b"not a COSE attestation document".to_vec()] {
+        let answer = MatchResult::Success(AttestedStatement {
+            token: MatchToken::from_bytes(b"cose-sign1".to_vec()),
+            signing_key_attestation: attestation,
+        });
+        let (base_url, responder, _) = serve_enclave(answer, false).await;
+        let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
+
+        let error = client
+            .request_match(
+                &assignment_for(&responder),
+                &inputs(),
+                CHALLENGE_ID,
+                instant(),
+            )
+            .await
+            .expect_err("an unverifiable attestation must not yield a statement");
+
+        assert!(
+            matches!(error, ClientError::Attestation(_)),
+            "expected an attestation failure, got {error:?}"
+        );
+    }
 }

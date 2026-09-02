@@ -12,13 +12,12 @@ pub struct MatchRequestBody {
 
 /// `POST /v1/matches` response.
 ///
-/// No cleartext outcome: whether a match held is itself a fact about the request.
+/// No cleartext outcome: whether a match held is itself a fact about the request. The
+/// signing-key attestation travels sealed inside, beside the statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchResponseBody {
     /// The sealed outcome, base64.
     pub response_ciphertext: String,
-    /// The signing-key attestation, base64, so a client can verify the statement it received.
-    pub key_attestation: String,
 }
 
 #[cfg(test)]
@@ -48,12 +47,8 @@ mod tests {
     fn the_response_keeps_its_wire_names() {
         let body = MatchResponseBody {
             response_ciphertext: "c2VhbGVk".to_owned(),
-            key_attestation: "Y29zZQ==".to_owned(),
         };
-        let json = serde_json::json!({
-            "response_ciphertext": "c2VhbGVk",
-            "key_attestation": "Y29zZQ==",
-        });
+        let json = serde_json::json!({ "response_ciphertext": "c2VhbGVk" });
 
         assert_eq!(serde_json::to_value(&body).expect("should serialize"), json);
         assert_eq!(

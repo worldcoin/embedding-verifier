@@ -18,5 +18,5 @@ mod matches;
 
 pub use error::EnclaveError;
 pub use health::HealthRequest;
-pub use keys::{GetEncryptionKeyRequest, GetSigningKeyRequest, KeyAttestation};
+pub use keys::{GetEncryptionKeyRequest, KeyAttestation};
 pub use matches::{MatchRequest, MatchResponse};
