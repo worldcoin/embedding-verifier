@@ -10,7 +10,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use deepface_api_types::{ApiError, ApiErrorResponse};
+use deepface_api_types::{ApiErrorResponse, ErrorBody};
 use deepface_enclave_types::EnclaveError;
 
 use crate::challenge_fetcher::FetchError;
@@ -204,11 +204,10 @@ impl IntoResponse for AppError {
             );
         }
 
-        // The envelope owns its strings; `AppError` holds the `&'static str`s the constructors
-        // were built from, so this is where they are copied.
+        // The envelope owns its strings, so the `&'static str`s are copied here.
         let body = ApiErrorResponse {
             allow_retry: self.allow_retry,
-            error: ApiError {
+            error: ErrorBody {
                 code: self.code.to_owned(),
                 message: self.message.to_owned(),
             },

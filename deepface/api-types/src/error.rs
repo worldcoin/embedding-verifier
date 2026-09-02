@@ -1,18 +1,18 @@
 use serde::{Deserialize, Serialize};
 
-/// The error envelope every failing route returns.
+/// Error envelope returned to clients.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiErrorResponse {
     /// Whether the client should retry the request.
     pub allow_retry: bool,
     /// Error details.
-    pub error: ApiError,
+    pub error: ErrorBody,
 }
 
 /// Machine-readable code and human-readable message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ApiError {
+pub struct ErrorBody {
     /// Stable identifier a client can branch on.
     pub code: String,
     /// Description for a human reading logs or a response.
@@ -21,26 +21,21 @@ pub struct ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApiError, ApiErrorResponse};
+    use super::{ApiErrorResponse, ErrorBody};
 
-    /// `allowRetry` is the one camelCase key in the contract, and the client branches on
-    /// `error.code` to decide whether to re-assign. Both are pinned here.
+    /// `allowRetry` is the one camelCase key, and clients branch on `error.code`.
     #[test]
     fn the_envelope_keeps_its_wire_names() {
         let body = ApiErrorResponse {
             allow_retry: true,
-            error: ApiError {
+            error: ErrorBody {
                 code: "reassign_required".to_owned(),
-                message: "The request was not sealed to this enclave's current encryption key"
-                    .to_owned(),
+                message: "stub".to_owned(),
             },
         };
         let json = serde_json::json!({
             "allowRetry": true,
-            "error": {
-                "code": "reassign_required",
-                "message": "The request was not sealed to this enclave's current encryption key",
-            },
+            "error": { "code": "reassign_required", "message": "stub" },
         });
 
         assert_eq!(serde_json::to_value(&body).expect("should serialize"), json);

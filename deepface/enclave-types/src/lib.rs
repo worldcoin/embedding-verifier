@@ -1,10 +1,7 @@
-//! The vsock wire contract between the `DeepFace` host and its enclave: health, errors, key
-//! attestation, and the match exchange.
+//! The vsock contract between the `DeepFace` host and its enclave.
 //!
-//! One of three contracts this workload speaks, each in its own crate so no boundary's types
-//! reach a peer that has no business with them. `deepface-api-types` is the HTTP contract the
-//! client speaks to the host; `deepface-protocol` is the sealed payload that travels
-//! end-to-end between the client and the enclave, which this host only relays.
+//! The client↔host HTTP contract is `deepface-api-types`; the sealed client↔enclave payload is
+//! `deepface-protocol`.
 
 #![deny(
     clippy::all,

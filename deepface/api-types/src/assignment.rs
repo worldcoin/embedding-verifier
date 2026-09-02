@@ -1,13 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 /// `POST /v1/enclave-assignment` response.
-///
-/// The enclave assigned to a client, as an attestation document. The document already carries
-/// the enclave's identity, measurements and expiry, and the client verifies it before trusting
-/// any of them, so the host relays opaque bytes and adds no fields of its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnclaveAssignmentResponse {
-    /// The encryption-key attestation, base64.
+    /// The enclave's encryption-key attestation, base64.
     pub attestation: String,
 }
 

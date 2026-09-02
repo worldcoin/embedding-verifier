@@ -26,11 +26,8 @@ embedding-verifier/
     └── enclave/           # Own workspace -> own Cargo.lock
 ```
 
-One crate per boundary, and a crate is a member of a graph only if that boundary reaches it.
-That is what keeps one workload out of the other's enclave image, and the HTTP contract out of
-both. There is deliberately no crate shared between `deepface/` and `di/`: what the two need in
-common is not knowable until `di` does something, and a shared crate would mean a `deepface`
-edit rotating `di`'s PCR0.
+One crate per boundary, in the graphs that boundary reaches. Nothing is shared between
+`deepface/` and `di/`, because a shared crate means a `deepface` edit rotates `di`'s PCR0.
 
 `di-host` and `di-enclave` log and exit non-zero — a skeleton that idled would read as healthy. See
 [Spec: DeepIdentifier Migration TEE Setup v1](https://app.notion.com/p/worldcoin/Spec-DeepIdentifier-Migration-TEE-Setup-v1-3c08614bdf8c8014b7ddf50f3cac4e4b)
@@ -49,8 +46,8 @@ graph and the host-side one. They are members of the root workspace but inherit 
 an enclave graph either. Treat them as standalone crates: write the version, and the `edition`,
 in their own manifest. `deepface-api-types` is host-side only and inherits normally.
 
-Which crates an EIF build actually sees is listed per workload in `nix/enclave-binaries.nix`.
-That list is the enforcement: a new path dependency has to be added there or the build fails.
+`nix/enclave-binaries.nix` lists the crates each EIF build sees. A new path dependency has to be
+added there or the build fails.
 
 Package metadata matters as much as the dependency versions here. An inherited `edition` would
 change how an enclave compiles when the root workspace moved, and bumping the root

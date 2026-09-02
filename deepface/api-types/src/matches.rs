@@ -1,12 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 /// `POST /v1/matches` request.
-///
-/// `challenge_image_id` is plaintext so the host can start the fetch immediately; `ciphertext`
-/// is the sealed request, which the host relays without being able to read it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchRequestBody {
-    /// Which object in the host's configured bucket holds the encrypted challenge image.
+    /// Object in the host's bucket holding the encrypted challenge image. Plaintext, so the
+    /// host can start the fetch without opening anything.
     pub challenge_image_id: String,
     /// The sealed match request, base64.
     pub ciphertext: String,
@@ -14,15 +12,12 @@ pub struct MatchRequestBody {
 
 /// `POST /v1/matches` response.
 ///
-/// Both fields are opaque to the host. There is deliberately no cleartext outcome: whether a
-/// match held is itself a fact about the request, so the host learns only that the enclave
-/// answered.
+/// No cleartext outcome: whether a match held is itself a fact about the request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchResponseBody {
     /// The sealed outcome, base64.
     pub response_ciphertext: String,
-    /// The signing-key attestation, base64, so a client can verify the statement it just
-    /// received. With no registry to look the key up in, this is the only way it reaches anyone.
+    /// The signing-key attestation, base64, so a client can verify the statement it received.
     pub key_attestation: String,
 }
 
@@ -30,8 +25,7 @@ pub struct MatchResponseBody {
 mod tests {
     use super::{MatchRequestBody, MatchResponseBody};
 
-    /// Pins the field names both ends put on the wire. A round trip alone would not: renaming a
-    /// field moves the serializer and the deserializer together and still passes.
+    /// Pins the wire names. A round trip alone would not: a rename moves both ends together.
     #[test]
     fn the_request_keeps_its_wire_names() {
         let body = MatchRequestBody {
