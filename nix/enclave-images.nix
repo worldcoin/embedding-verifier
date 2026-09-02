@@ -65,6 +65,7 @@ let
         runtimeInputs = [
           pkgs.coreutils
           pkgs.docker-client
+          pkgs.gnused
           pkgs.skopeo
           nitroCli
         ];
@@ -86,12 +87,21 @@ let
             "oci:${ociImage}:${version}" \
             "docker-daemon:${imageRef}"
 
-          NITRO_CLI_BLOBS="${nitroCli}/share/aws-nitro-enclaves-cli/blobs/x86_64" \
-          NITRO_CLI_ARTIFACTS="$work_dir/artifacts" \
-          NITRO_CLI_LOGS_PATH="$work_dir/logs" \
-            nitro-cli build-enclave \
-              --docker-uri "${imageRef}" \
-              --output-file "$output_file"
+          build_output="$work_dir/build-output"
+          if ! NITRO_CLI_BLOBS="${nitroCli}/share/aws-nitro-enclaves-cli/blobs/x86_64" \
+            NITRO_CLI_ARTIFACTS="$work_dir/artifacts" \
+            NITRO_CLI_LOGS_PATH="$work_dir/logs" \
+              nitro-cli build-enclave \
+                --docker-uri "${imageRef}" \
+                --output-file "$output_file" > "$build_output"; then
+            cat "$build_output" >&2
+            exit 1
+          fi
+
+          # Nitro CLI prefixes its JSON with progress messages. Keep those visible while
+          # giving callers a machine-readable stdout contract like the former Nix builder.
+          sed '/^[[:space:]]*{$/,$d' "$build_output" >&2
+          sed -n '/^[[:space:]]*{$/,$p' "$build_output"
         '';
       };
     in
