@@ -13,7 +13,8 @@ use face_engine::{
 };
 use image::ImageReader;
 
-const FACE_ANALYZER_CONFIG: &str = include_str!("../config/face_analyzer.yaml");
+const FACE_REFERENCE_ANALYZER_CONFIG: &str = include_str!("../config/face_reference_analyzer.yaml");
+const FACE_PROBE_ANALYZER_CONFIG: &str = include_str!("../config/face_probe_analyzer.yaml");
 const FACE_TEMPLATE_GENERATOR_CONFIG: &str = include_str!("../config/face_template_generator.yaml");
 
 // TODO: Inject production Face Engine configs and model artifacts at runtime instead of compiling
@@ -46,7 +47,8 @@ pub trait FaceComparator: Send + Sync {
 /// Face Engine implementation backed by the configured ONNX models.
 pub struct FaceEngine {
     template_generator: TemplateGenerator,
-    analyzer: CapturedImageAnalyzer,
+    reference_analyzer: CapturedImageAnalyzer,
+    probe_analyzer: CapturedImageAnalyzer,
     matcher: CosineSimilarity,
 }
 
@@ -55,15 +57,21 @@ impl Default for FaceEngine {
         Self {
             template_generator: TemplateGenerator::new(FACE_TEMPLATE_GENERATOR_CONFIG)
                 .expect("built-in Face Engine template generator config and model should load"),
-            analyzer: CapturedImageAnalyzer::new(FACE_ANALYZER_CONFIG)
-                .expect("built-in Face Engine analyzer config and model should load"),
+            reference_analyzer: CapturedImageAnalyzer::new(FACE_REFERENCE_ANALYZER_CONFIG)
+                .expect("built-in Face Engine reference analyzer config and model should load"),
+            probe_analyzer: CapturedImageAnalyzer::new(FACE_PROBE_ANALYZER_CONFIG)
+                .expect("built-in Face Engine probe analyzer config and model should load"),
             matcher: CosineSimilarity::default(),
         }
     }
 }
 
 impl FaceEngine {
-    fn generate_embedding(&self, image_bytes: &[u8]) -> Result<EmbeddingVector, FailureReason> {
+    fn generate_embedding(
+        &self,
+        analyzer: &CapturedImageAnalyzer,
+        image_bytes: &[u8],
+    ) -> Result<EmbeddingVector, FailureReason> {
         let dynamic_image = ImageReader::new(Cursor::new(image_bytes))
             .with_guessed_format()
             .map_err(|error| {
@@ -87,13 +95,10 @@ impl FaceEngine {
             FailureReason::ImageAnalysisFailed
         })?;
 
-        let analysis = self
-            .analyzer
-            .run_inference_rgb(&rgb_image)
-            .map_err(|error| {
-                tracing::error!(%error, "Face Engine image analysis failed");
-                FailureReason::ImageAnalysisFailed
-            })?;
+        let analysis = analyzer.run_inference_rgb(&rgb_image).map_err(|error| {
+            tracing::error!(%error, "Face Engine image analysis failed");
+            FailureReason::ImageAnalysisFailed
+        })?;
         if let Some(error) = analysis.error {
             tracing::warn!(?error, "Face Engine image analysis failed");
             return Err(FailureReason::ImageAnalysisFailed);
@@ -148,9 +153,9 @@ impl FaceComparator for FaceEngine {
         live_image: &[u8],
         challenge_image: &[u8],
     ) -> Result<ComparisonScores, FailureReason> {
-        let reference = self.generate_embedding(credential_image)?;
-        let live = self.generate_embedding(live_image)?;
-        let challenge = self.generate_embedding(challenge_image)?;
+        let reference = self.generate_embedding(&self.reference_analyzer, credential_image)?;
+        let live = self.generate_embedding(&self.probe_analyzer, live_image)?;
+        let challenge = self.generate_embedding(&self.probe_analyzer, challenge_image)?;
 
         let live_similarity = self.compute_score(&live, &reference)?;
         let challenge_similarity = self.compute_score(&challenge, &reference)?;
@@ -159,5 +164,33 @@ impl FaceComparator for FaceEngine {
             live_similarity,
             challenge_similarity,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FACE_PROBE_ANALYZER_CONFIG, FACE_REFERENCE_ANALYZER_CONFIG};
+
+    const INFER_ORIENTATION: &str = "correct_inferred_orientation: true";
+    const PRESERVE_ORIENTATION: &str = "correct_inferred_orientation: false";
+
+    #[test]
+    fn reference_analyzer_preserves_pcp_orientation() {
+        assert!(FACE_REFERENCE_ANALYZER_CONFIG.contains(PRESERVE_ORIENTATION));
+        assert!(!FACE_REFERENCE_ANALYZER_CONFIG.contains(INFER_ORIENTATION));
+    }
+
+    #[test]
+    fn probe_analyzer_corrects_capture_orientation() {
+        assert!(FACE_PROBE_ANALYZER_CONFIG.contains(INFER_ORIENTATION));
+        assert!(!FACE_PROBE_ANALYZER_CONFIG.contains(PRESERVE_ORIENTATION));
+    }
+
+    #[test]
+    fn reference_and_probe_share_detector_thresholds() {
+        for config in [FACE_REFERENCE_ANALYZER_CONFIG, FACE_PROBE_ANALYZER_CONFIG] {
+            assert!(config.contains("confidence_threshold: 0.8"));
+            assert!(config.contains("iou_threshold: 0.3"));
+        }
     }
 }

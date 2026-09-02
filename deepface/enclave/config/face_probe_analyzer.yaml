@@ -1,5 +1,5 @@
 graph:
-  # Minimal placeholder graph: detect one subject without quality or liveness validation.
+  # Match the iOS deepFace purpose used for live and challenge probe images.
   - node_name: rgb_net
     node_type: RGBNet
     dependencies: ["input"]
@@ -13,4 +13,4 @@ graph:
     node_type: LargestBoundingBoxSubjectExtractor
     dependencies: ["input", "rgb_net"]
     args:
-      correct_inferred_orientation: false
+      correct_inferred_orientation: true
