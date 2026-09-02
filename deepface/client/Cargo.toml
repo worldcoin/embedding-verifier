@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 attested-channel = { workspace = true, features = ["attestation"] }
 base64.workspace = true
+deepface-api-types.workspace = true
 deepface-protocol.workspace = true
 getrandom.workspace = true
 reqwest.workspace = true

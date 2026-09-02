@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use enclave_types::{EnclaveError, HealthRequest};
+use deepface_enclave_types::{EnclaveError, HealthRequest};
 
 use crate::state::EnclaveState;
 

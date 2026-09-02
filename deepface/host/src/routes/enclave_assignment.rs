@@ -1,18 +1,9 @@
 use axum::{Json, extract::State};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use serde::Serialize;
+use deepface_api_types::EnclaveAssignmentResponse;
 
 use crate::AppState;
 use crate::error::AppError;
-
-/// The enclave assigned to a client, as an attestation document.
-///
-/// The document already carries the enclave's identity and expiry, and the client verifies it
-/// before trusting either, so the host relays opaque bytes and adds no fields of its own.
-#[derive(Debug, Serialize)]
-pub struct EnclaveAssignmentResponse {
-    attestation: String,
-}
 
 /// Assigns this host's enclave by returning its encryption-key attestation.
 ///

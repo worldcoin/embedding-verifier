@@ -834,9 +834,8 @@ dependencies = [
  "anyhow",
  "attested-channel",
  "ciborium",
+ "deepface-enclave-types",
  "deepface-protocol",
- "deepface-types",
- "enclave-types",
  "face-engine",
  "getrandom 0.4.3",
  "hex",
@@ -855,6 +854,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "deepface-enclave-types"
+version = "0.1.0"
+dependencies = [
+ "pontifex",
+ "serde",
+ "serde_bytes",
+]
+
+[[package]]
 name = "deepface-protocol"
 version = "0.1.0"
 dependencies = [
@@ -869,16 +877,6 @@ dependencies = [
  "taceo-eddsa-babyjubjub",
  "taceo-poseidon2",
  "zeroize",
-]
-
-[[package]]
-name = "deepface-types"
-version = "0.1.0"
-dependencies = [
- "enclave-types",
- "pontifex",
- "serde",
- "serde_bytes",
 ]
 
 [[package]]
@@ -973,15 +971,6 @@ name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
-
-[[package]]
-name = "enclave-types"
-version = "0.1.0"
-dependencies = [
- "pontifex",
- "serde",
- "serde_bytes",
-]
 
 [[package]]
 name = "enum-ordinalize"

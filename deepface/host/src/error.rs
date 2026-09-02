@@ -10,30 +10,11 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use enclave_types::EnclaveError;
-use serde::Serialize;
+use deepface_api_types::{ApiErrorResponse, ErrorBody};
+use deepface_enclave_types::EnclaveError;
 
 use crate::challenge_fetcher::FetchError;
 use crate::enclave::EnclaveClientError;
-
-/// Error envelope returned to clients.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApiErrorResponse {
-    /// Whether the client should retry the request.
-    allow_retry: bool,
-    /// Error details.
-    error: ErrorBody,
-}
-
-/// Machine-readable code and human-readable message.
-#[derive(Debug, Serialize)]
-struct ErrorBody {
-    /// Stable identifier a client can branch on.
-    code: &'static str,
-    /// Description for a human reading logs or a response.
-    message: &'static str,
-}
 
 /// An API failure, with the status and body to return for it.
 #[derive(Debug)]
@@ -223,11 +204,12 @@ impl IntoResponse for AppError {
             );
         }
 
+        // The envelope owns its strings, so the `&'static str`s are copied here.
         let body = ApiErrorResponse {
             allow_retry: self.allow_retry,
             error: ErrorBody {
-                code: self.code,
-                message: self.message,
+                code: self.code.to_owned(),
+                message: self.message.to_owned(),
             },
         };
 
@@ -238,7 +220,7 @@ impl IntoResponse for AppError {
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
-    use enclave_types::EnclaveError;
+    use deepface_enclave_types::EnclaveError;
 
     use super::AppError;
     use crate::enclave::EnclaveClientError;

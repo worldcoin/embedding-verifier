@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use deepface_enclave_types::{MatchRequest, MatchResponse};
 use deepface_host::challenge_fetcher::{ChallengeSource, FetchError};
 use deepface_host::enclave::{EnclaveClient, EnclaveClientError};
 use deepface_host::{AppState, Environment};
-use deepface_types::{MatchRequest, MatchResponse};
 
 /// An [`EnclaveClient`] answering from fixed results.
 ///
