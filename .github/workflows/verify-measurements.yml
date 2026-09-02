@@ -1,9 +1,9 @@
 # Verifies measurements.json against what the source actually measures to.
 #
-# The EIF is built by flake.nix, so the PCRs depend on the commit and nothing else —
-# this job rebuilds them and fails when the committed values no longer match. It
-# surfaces the fresh values but never commits them: rotating a measurement, and
-# re-registering it with clients, stays a human act.
+# The workload OCI image and AWS converter are both pinned by flake.nix. This job rebuilds
+# the EIF through nitro-cli and fails when the committed values no longer match. It surfaces
+# fresh values but never commits them: rotating a measurement, and re-registering it with
+# clients, stays a human act.
 name: verify-measurements
 
 permissions:
@@ -95,9 +95,9 @@ jobs:
           WORKLOAD: ${{ matrix.workload }}
         run: |
           set -euo pipefail
-          eif_drv=$(nix path-info --derivation --no-update-lock-file ".#${WORKLOAD}-eif")
+          builder_drv=$(nix path-info --derivation --no-update-lock-file ".#${WORKLOAD}-eif")
           {
-            for d in $(nix-store --query --references "$eif_drv" | grep '\.drv$'); do
+            for d in $(nix-store --query --references "$builder_drv" | grep '\.drv$'); do
               for o in $(nix-store --query --outputs "$d"); do
                 if nix-store --query --hash "$o" >/dev/null 2>&1; then
                   printf '%s  %s\n' "$(nix-store --query --hash "$o")" "$(basename "$o")"
