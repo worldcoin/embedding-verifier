@@ -31,12 +31,6 @@ pub async fn handler(
         .await
         .map_err(AppError::challenge_fetch)?;
 
-    let key_attestation = state
-        .enclave_client()
-        .signing_key_attestation()
-        .await
-        .map_err(|error| AppError::enclave_match(&error))?;
-
     tracing::info!(
         sealed_request_bytes = ciphertext.len(),
         challenge_ciphertext_bytes = challenge_ciphertext.len(),
@@ -57,7 +51,6 @@ pub async fn handler(
         StatusCode::OK,
         Json(MatchResponseBody {
             response_ciphertext: STANDARD.encode(response.ciphertext),
-            key_attestation: STANDARD.encode(key_attestation),
         }),
     ))
 }

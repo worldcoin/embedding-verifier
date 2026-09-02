@@ -182,12 +182,17 @@ it selects vanilla mode, the flow described here. Sending one selects LightGuard
 spoof detection — which **is not implemented**: the enclave panics on such a request today.
 
 ```json
-{ "response_ciphertext": "<base64 nonce || ciphertext>", "key_attestation": "<base64 COSE_Sign1>" }
+{ "response_ciphertext": "<base64 nonce || ciphertext>" }
 ```
 
 The sealed response carries either a `COSE_Sign1` match statement or the reason no statement was
-issued; `key_attestation` is the signing key's attestation, so a client can verify the statement it
-just received. Only the requester can open it — a second channel to the same enclave key cannot.
+issued. A statement travels with the signing key's attestation sealed beside it, since that
+document is the only thing saying which enclave signed it. A rejection carries no document.
+Only the requester can open any of it — a second channel to the same enclave key cannot.
+
+The signing key's attestation is a separate document from the encryption key's on purpose: it
+outlives the exchange and is carried into the `DeepFace` proof, while the encryption key's is
+transport setup discarded with the channel.
 
 
 The host learns only that the enclave answered. Once a request has been opened there is a sealed

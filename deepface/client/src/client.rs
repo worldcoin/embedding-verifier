@@ -235,10 +235,11 @@ impl FaceVerifierClient {
             MatchResult::from_cbor(&plaintext).map_err(|_| ClientError::MalformedResult)?;
 
         // Only a statement needs the key, so a rejection skips the attestation entirely.
-        if let MatchResult::Success(token) = &result {
+        if let MatchResult::Success(statement) = &result {
+            // Verified as of `now`: the document came sealed from the enclave that just answered.
             let attested = self
                 .verifier
-                .verify_base64(body.key_attestation.trim(), now)?;
+                .verify(&statement.signing_key_attestation, now)?;
             let signing_key = <[u8; 32]>::try_from(attested.enclave_public_key.as_slice())
                 .map_err(|_| ClientError::InvalidSigningKey)
                 .and_then(|bytes| {
@@ -246,7 +247,8 @@ impl FaceVerifierClient {
                         .map_err(|_| ClientError::InvalidSigningKey)
                 })?;
 
-            match_token::verify(token, &signing_key).map_err(|_| ClientError::StatementInvalid)?;
+            match_token::verify(&statement.token, &signing_key)
+                .map_err(|_| ClientError::StatementInvalid)?;
         }
 
         Ok(result)
