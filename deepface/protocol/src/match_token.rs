@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::Error;
 // Re-exported so consumers holding attested bytes can build the key `verify` takes, without
 // depending on eddsa-babyjubjub directly.
-pub use eddsa_babyjubjub::EdDSAPublicKey;
+pub use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSAPublicKey};
 
 /// COSE algorithm identifier for `BabyJubJub-EdDSA-Poseidon2`, as defined in WIP-106.
 pub const COSE_ALG_BABYJUBJUB_EDDSA_POSEIDON2: i64 = -65537;
@@ -177,8 +177,8 @@ impl MatchClaims {
 }
 /// A signed match token: an untagged `COSE_Sign1` over [`MatchClaims`].
 ///
-/// A newtype so the bytes cannot be confused with any other buffer between [`build_token`] and
-/// [`verify`].
+/// A newtype so the bytes cannot be confused with any other buffer between
+/// [`MatchSigner::sign`] and [`verify`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchToken(#[serde(with = "serde_bytes")] Vec<u8>);
 
@@ -202,19 +202,54 @@ impl MatchToken {
     }
 }
 
+/// Signs match statements.
+///
+/// Paired with [`verify`], so the two cannot disagree on the digest, the algorithm or the `kid`.
+/// Never generates a key — provenance and lifetime are the caller's policy.
+pub struct MatchSigner {
+    private_key: EdDSAPrivateKey,
+    public_key: EdDSAPublicKey,
+}
+
+impl MatchSigner {
+    /// Wraps `private_key` and derives the public key that verifies what it signs.
+    #[must_use]
+    pub fn new(private_key: EdDSAPrivateKey) -> Self {
+        let public_key = private_key.public();
+
+        Self {
+            private_key,
+            public_key,
+        }
+    }
+
+    /// Returns the public key that verifies this signer's statements.
+    #[must_use]
+    pub const fn public_key(&self) -> &EdDSAPublicKey {
+        &self.public_key
+    }
+
+    /// Signs `claims` and returns the finished token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] if the coefficient cannot be represented, or if the claims,
+    /// signature, or public key cannot be serialized.
+    pub fn sign(&self, claims: &MatchClaims) -> Result<MatchToken, Error> {
+        let signature = self.private_key.sign(claims.message_hash()?);
+
+        build_token(claims, &signature, &self.public_key)
+    }
+}
+
 /// Assembles a signed match token as an untagged `COSE_Sign1`.
 ///
-/// The signature must cover [`MatchClaims::message_hash`] for the same claims. Key material stays
-/// with the caller — the enclave owns it — so this only encodes what it is handed.
+/// Private: the signature has to cover [`MatchClaims::message_hash`] for these same claims, and
+/// [`MatchSigner::sign`] is what guarantees it.
 ///
 /// The protected header carries [`COSE_ALG_BABYJUBJUB_EDDSA_POSEIDON2`] and a `kid` holding the
 /// compressed public key.
-///
-/// # Errors
-///
-/// Returns [`Error`] if the coefficient cannot be represented, or if the claims,
-/// signature, or public key cannot be serialized.
-pub fn build_token(
+fn build_token(
     claims: &MatchClaims,
     signature: &EdDSASignature,
     signing_public_key: &EdDSAPublicKey,
@@ -350,38 +385,15 @@ mod tests {
     use ark_babyjubjub::Fq;
     use coset::{CborSerializable as _, CoseSign1, CoseSign1Builder, cbor::value::Value};
 
-    use eddsa_babyjubjub::{EdDSAPrivateKey, EdDSAPublicKey};
+    use eddsa_babyjubjub::EdDSAPrivateKey;
 
     use super::{
-        CLAIM_VERSION, COSE_ALG_BABYJUBJUB_EDDSA_POSEIDON2, Error, MatchClaims, MatchToken,
-        TOKEN_VERSION, build_token, hash_limbs, verify,
+        CLAIM_VERSION, COSE_ALG_BABYJUBJUB_EDDSA_POSEIDON2, Error, MatchClaims, MatchSigner,
+        MatchToken, TOKEN_VERSION, hash_limbs, verify,
     };
 
-    /// Stands in for the enclave, which owns the real key material.
-    struct TestSigner {
-        private_key: EdDSAPrivateKey,
-        public_key: EdDSAPublicKey,
-    }
-
-    impl TestSigner {
-        fn sign(&self, claims: &MatchClaims) -> Result<MatchToken, Error> {
-            let signature = self.private_key.sign(claims.message_hash()?);
-            build_token(claims, &signature, &self.public_key)
-        }
-
-        const fn public_key(&self) -> &EdDSAPublicKey {
-            &self.public_key
-        }
-    }
-
-    fn signer() -> TestSigner {
-        let private_key = EdDSAPrivateKey::random(&mut rand::rngs::OsRng);
-        let public_key = private_key.public();
-
-        TestSigner {
-            private_key,
-            public_key,
-        }
+    fn signer() -> MatchSigner {
+        MatchSigner::new(EdDSAPrivateKey::random(&mut rand::rngs::OsRng))
     }
 
     fn claims() -> MatchClaims {
