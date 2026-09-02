@@ -653,8 +653,14 @@ jobs:
           CARRIER_IMAGE: ${{ needs.build-carrier.outputs.IMAGE }}
           OCI_IMAGE: ghcr.io/${{ github.repository_owner }}/embedding-verifier-${{ needs.prepare-release.outputs.WORKLOAD }}-enclave-oci
           OCI_REF: ${{ needs.build-carrier.outputs.OCI_REF }}
+          LOCAL_IMAGE: embedding-verifier-${{ needs.prepare-release.outputs.WORKLOAD }}-enclave:${{ needs.prepare-release.outputs.VERSION }}
         run: |
           set -euo pipefail
+          if [[ "$WORKLOAD" == "deepface" ]]; then
+            repro_note="The enclave links private face-engine code, so rebuilding from this tag needs access most people do not have. Converting the published image needs none:"
+          else
+            repro_note="This workload has no private dependencies, so either route works — rebuild from source below, or convert the published image:"
+          fi
           body=$(cat <<- ENDBODY
           ## Measurements
 
@@ -680,13 +686,15 @@ jobs:
 
           ## Re-derive the PCRs without building from source
 
-          The enclave links private code, so rebuilding from this tag needs access most
-          people do not have. Converting the published image does not:
+          $repro_note
 
           \`\`\`
-          skopeo copy docker://$OCI_REF oci:enclave:$VERSION
+          skopeo --insecure-policy copy \\
+            docker://$OCI_REF \\
+            docker-daemon:$LOCAL_IMAGE
+
           nix run github:$GITHUB_REPOSITORY/$RELEASE_SHA#nitro-cli -- build-enclave \\
-            --docker-uri <loaded image> --output-file enclave.eif
+            --docker-uri $LOCAL_IMAGE --output-file enclave.eif
           \`\`\`
 
           The PCRs it prints must equal the table above. That check needs only this release
