@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use enclave_types::{EnclaveError, GetSigningKeyRequest, KeyAttestation};
+use deepface_enclave_types::{EnclaveError, GetSigningKeyRequest, KeyAttestation};
 
 use crate::state::EnclaveState;
 

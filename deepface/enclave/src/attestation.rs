@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use enclave_types::EnclaveError;
+use deepface_enclave_types::EnclaveError;
 use pontifex::{AttestationDoc, SecureModule};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;

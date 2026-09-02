@@ -9,11 +9,11 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use common::{StubChallengeSource, StubEnclaveClient, state_with, state_with_source};
+use deepface_enclave_types::EnclaveError;
 use deepface_host::AppState;
 use deepface_host::challenge_fetcher::FetchError;
 use deepface_host::enclave::EnclaveClientError;
 use deepface_host::routes;
-use enclave_types::EnclaveError;
 use http_body_util::BodyExt as _;
 use serde_json::Value;
 use tower::ServiceExt as _;
@@ -176,7 +176,7 @@ async fn matches_relays_the_sealed_request_and_the_fetched_challenge() {
     let state = state_with_source(
         StubEnclaveClient {
             signing_key: Some(Ok(vec![4, 5, 6])),
-            match_result: Some(Ok(deepface_types::MatchResponse {
+            match_result: Some(Ok(deepface_enclave_types::MatchResponse {
                 ciphertext: vec![9u8; 48],
             })),
             expected_body: Some(b"sealed".to_vec()),
@@ -276,7 +276,7 @@ async fn matches_answers_200_whatever_the_sealed_result_says() {
     // the host cannot distinguish them from a statement -- and must not try.
     let state = state_with(StubEnclaveClient {
         signing_key: Some(Ok(vec![2])),
-        match_result: Some(Ok(deepface_types::MatchResponse {
+        match_result: Some(Ok(deepface_enclave_types::MatchResponse {
             ciphertext: vec![9u8; 48],
         })),
         ..StubEnclaveClient::default()

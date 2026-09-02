@@ -3,12 +3,12 @@ use std::{env, fs, path::PathBuf, time::SystemTime};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use attested_channel::channel::{CHANNEL_VERSION, SealedResponse, UnwrapErr};
 use deepface_client::{Config, FaceVerifierClient};
+use deepface_enclave_types::GetSigningKeyRequest;
+use deepface_enclave_types::MatchRequest;
 use deepface_protocol::match_token::{self, EdDSAPublicKey};
 use deepface_protocol::messages::{
     CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, MatchInputs, MatchResult, encrypt_challenge,
 };
-use deepface_types::MatchRequest;
-use enclave_types::GetSigningKeyRequest;
 use pontifex::client::ConnectionDetails;
 use sha2::{Digest, Sha256};
 

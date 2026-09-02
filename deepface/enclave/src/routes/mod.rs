@@ -2,8 +2,9 @@
 
 use std::sync::Arc;
 
-use deepface_types::MatchRequest;
-use enclave_types::{GetEncryptionKeyRequest, GetSigningKeyRequest, HealthRequest};
+use deepface_enclave_types::{
+    GetEncryptionKeyRequest, GetSigningKeyRequest, HealthRequest, MatchRequest,
+};
 use pontifex::Router;
 
 mod encryption_key;

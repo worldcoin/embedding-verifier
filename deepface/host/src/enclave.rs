@@ -3,8 +3,10 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use deepface_types::{MatchRequest, MatchResponse};
-use enclave_types::{EnclaveError, GetEncryptionKeyRequest, GetSigningKeyRequest, HealthRequest};
+use deepface_enclave_types::{
+    EnclaveError, GetEncryptionKeyRequest, GetSigningKeyRequest, HealthRequest, MatchRequest,
+    MatchResponse,
+};
 use pontifex::Request;
 use pontifex::client::ConnectionDetails;
 use tokio::time::timeout;

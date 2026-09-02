@@ -1,6 +1,7 @@
-use enclave_types::EnclaveError;
 use pontifex::Request;
 use serde::{Deserialize, Serialize};
+
+use crate::EnclaveError;
 
 /// Requests a 3-way face match. Both fields are ciphertext the host cannot read;
 /// `challenge_ciphertext` is keyed from inside `body`.

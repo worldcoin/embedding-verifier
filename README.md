@@ -12,23 +12,27 @@ lives in `shared/`. Crate names compose from the path: `deepface/host` is `deepf
 embedding-verifier/
 ├── Cargo.toml             # Host-side workspace  -> Cargo.lock
 ├── shared/
-│   ├── attested-channel/  # Client↔enclave channel and the attestation it rests on; destined for pontifex
-│   └── enclave-types/     # The vsock contract both workloads share: health, errors, key attestation
+│   └── attested-channel/  # Client↔enclave channel and the attestation it rests on; destined for pontifex
 ├── deepface/
 │   ├── host/              # Axum HTTP API — the untrusted side of the boundary
 │   ├── enclave/           # Nitro enclave workload — the trusted side. Own workspace -> own Cargo.lock
-│   ├── types/             # The match's own vsock contract
+│   ├── api-types/         # Client↔host HTTP contract; stops at the host, so no enclave links it
+│   ├── enclave-types/     # Host↔enclave vsock contract: health, errors, key attestation, the match exchange
 │   ├── protocol/          # Match inputs and outputs; travels sealed, the host links none of it. Will likely move to `world-id-protocol`.
 │   ├── client/            # Attestation-verifying client
 │   └── e2e/               # End-to-end harness driving host and enclave together
 └── di/                    # Skeleton — dirs and crates only, no behaviour yet
     ├── host/
-    ├── enclave/           # Own workspace -> own Cargo.lock
-    └── types/
+    └── enclave/           # Own workspace -> own Cargo.lock
 ```
 
-Splitting the types is what keeps one workload out of the other's enclave image. `di-host`
-and `di-enclave` log and exit non-zero — a skeleton that idled would read as healthy. See
+One crate per boundary, and a crate is a member of a graph only if that boundary reaches it.
+That is what keeps one workload out of the other's enclave image, and the HTTP contract out of
+both. There is deliberately no crate shared between `deepface/` and `di/`: what the two need in
+common is not knowable until `di` does something, and a shared crate would mean a `deepface`
+edit rotating `di`'s PCR0.
+
+`di-host` and `di-enclave` log and exit non-zero — a skeleton that idled would read as healthy. See
 [Spec: DeepIdentifier Migration TEE Setup v1](https://app.notion.com/p/worldcoin/Spec-DeepIdentifier-Migration-TEE-Setup-v1-3c08614bdf8c8014b7ddf50f3cac4e4b)
 for what goes in them.
 
@@ -39,11 +43,14 @@ Each enclave is its own cargo workspace. One lockfile for the whole repository m
 pin. Now an EIF's inputs are its own `Cargo.toml`, the `Cargo.lock` beside it, and the path
 crates they name.
 
-`attested-channel`, `enclave-types`, `deepface-protocol`, `deepface-types` and `di-types` are
-in both an enclave graph and the host-side one. They are members of the root workspace but
-inherit nothing from it — not `[workspace.dependencies]`, not `[workspace.package]` — so the
-root manifest cannot reach an enclave graph either. Treat them as standalone crates: write the
-version, and the `edition`, in their own manifest.
+`attested-channel`, `deepface-protocol` and `deepface-enclave-types` are in both an enclave
+graph and the host-side one. They are members of the root workspace but inherit nothing from it
+— not `[workspace.dependencies]`, not `[workspace.package]` — so the root manifest cannot reach
+an enclave graph either. Treat them as standalone crates: write the version, and the `edition`,
+in their own manifest. `deepface-api-types` is host-side only and inherits normally.
+
+Which crates an EIF build actually sees is listed per workload in `nix/enclave-binaries.nix`.
+That list is the enforcement: a new path dependency has to be added there or the build fails.
 
 Package metadata matters as much as the dependency versions here. An inherited `edition` would
 change how an enclave compiles when the root workspace moved, and bumping the root

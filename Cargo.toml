@@ -2,23 +2,22 @@
 # the crates the enclaves share with them.
 #
 # Each enclave is its own workspace with its own lockfile (deepface/enclave, di/enclave), so
-# nothing resolved here can move an EIF's PCRs. The crates in both graphs — attested-channel,
-# enclave-types, deepface-protocol, deepface-types, di-types — are members here, but inherit
-# nothing: not the dependency versions in [workspace.dependencies], and not the package
-# metadata in [workspace.package]. Both tables below therefore reach only the four host-side
-# crates. Inherited `edition` would change how an enclave compiles, and an inherited `version`
-# bump would strand both enclave lockfiles against `--locked`.
+# nothing resolved here can move an EIF's PCRs. The crates an enclave reaches — attested-channel,
+# deepface-protocol, deepface-enclave-types — are members here, but inherit nothing: not the
+# dependency versions in [workspace.dependencies], and not the package metadata in
+# [workspace.package]. Both tables below therefore reach only the host-side crates. Inherited
+# `edition` would change how an enclave compiles, and an inherited `version` bump would strand
+# both enclave lockfiles against `--locked`.
 [workspace]
 members = [
+    "deepface/api-types",
     "deepface/client",
     "deepface/e2e",
+    "deepface/enclave-types",
     "deepface/host",
     "deepface/protocol",
-    "deepface/types",
     "di/host",
-    "di/types",
     "shared/attested-channel",
-    "shared/enclave-types",
 ]
 exclude = [
     "deepface/enclave",
@@ -43,11 +42,10 @@ async-trait = "0.1"
 attested-channel = { path = "shared/attested-channel" }
 axum = "0.8"
 base64 = "0.22"
+deepface-api-types = { path = "deepface/api-types" }
 deepface-client = { path = "deepface/client" }
+deepface-enclave-types = { path = "deepface/enclave-types" }
 deepface-protocol = { path = "deepface/protocol" }
-deepface-types = { path = "deepface/types" }
-di-types = { path = "di/types" }
-enclave-types = { path = "shared/enclave-types" }
 getrandom = { version = "0.4", features = ["sys_rng"] }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 hex-literal = "1.1"

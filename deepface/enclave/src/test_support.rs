@@ -3,8 +3,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use deepface_enclave_types::EnclaveError;
 use deepface_protocol::messages::FailureReason;
-use enclave_types::EnclaveError;
 
 use crate::{
     attestation::Attestor,

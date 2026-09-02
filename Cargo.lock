@@ -793,12 +793,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "deepface-api-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "deepface-client"
 version = "0.1.0"
 dependencies = [
  "attested-channel",
  "axum",
  "base64",
+ "deepface-api-types",
  "deepface-protocol",
  "getrandom 0.4.3",
  "hex-literal",
@@ -817,15 +826,23 @@ dependencies = [
  "anyhow",
  "attested-channel",
  "deepface-client",
+ "deepface-enclave-types",
  "deepface-protocol",
- "deepface-types",
- "enclave-types",
  "getrandom 0.4.3",
  "hex",
  "pontifex",
  "rand 0.8.7",
  "sha2 0.10.9",
  "tokio",
+]
+
+[[package]]
+name = "deepface-enclave-types"
+version = "0.1.0"
+dependencies = [
+ "pontifex",
+ "serde",
+ "serde_bytes",
 ]
 
 [[package]]
@@ -836,8 +853,8 @@ dependencies = [
  "async-trait",
  "axum",
  "base64",
- "deepface-types",
- "enclave-types",
+ "deepface-api-types",
+ "deepface-enclave-types",
  "futures-util",
  "http-body-util",
  "pontifex",
@@ -868,16 +885,6 @@ dependencies = [
  "taceo-eddsa-babyjubjub",
  "taceo-poseidon2",
  "zeroize",
-]
-
-[[package]]
-name = "deepface-types"
-version = "0.1.0"
-dependencies = [
- "enclave-types",
- "pontifex",
- "serde",
- "serde_bytes",
 ]
 
 [[package]]
@@ -917,16 +924,8 @@ dependencies = [
 name = "di-host"
 version = "0.1.0"
 dependencies = [
- "di-types",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "di-types"
-version = "0.1.0"
-dependencies = [
- "enclave-types",
 ]
 
 [[package]]
@@ -1047,15 +1046,6 @@ dependencies = [
  "sec1",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "enclave-types"
-version = "0.1.0"
-dependencies = [
- "pontifex",
- "serde",
- "serde_bytes",
 ]
 
 [[package]]

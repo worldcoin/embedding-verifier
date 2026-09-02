@@ -3,11 +3,13 @@
 use std::time::SystemTime;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use serde::{Deserialize, Serialize};
 
 use attested_channel::channel::{ChannelError, Requester, SealedResponse, UnwrapErr};
 use attested_channel::nitro::{
     EnclaveAttestationError, EnclaveAttestationVerifier, VerifiedAttestation,
+};
+use deepface_api_types::{
+    ApiErrorResponse, EnclaveAssignmentResponse, MatchRequestBody, MatchResponseBody,
 };
 use deepface_protocol::match_token::{self, EdDSAPublicKey};
 use deepface_protocol::messages::{MatchInputs, MatchResult};
@@ -85,40 +87,6 @@ pub enum ClientError {
     /// The statement did not verify under the attested signing key.
     #[error("match statement did not verify under the attested signing key")]
     StatementInvalid,
-}
-
-/// The host's error envelope.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ApiErrorBody {
-    allow_retry: bool,
-    error: ApiErrorCode,
-}
-
-/// The `error` object inside [`ApiErrorBody`].
-#[derive(Debug, Deserialize)]
-struct ApiErrorCode {
-    code: String,
-}
-
-/// A match request, as the host reads it.
-#[derive(Debug, Serialize)]
-struct MatchRequestBody {
-    challenge_image_id: String,
-    ciphertext: String,
-}
-
-/// The host's match response.
-#[derive(Debug, Deserialize)]
-struct MatchResponseBody {
-    response_ciphertext: String,
-    key_attestation: String,
-}
-
-/// The host's assignment response.
-#[derive(Debug, Deserialize)]
-struct EnclaveAssignmentResponse {
-    attestation: String,
 }
 
 /// An assignment whose attestation verified and whose encryption key is ready for sealing.
@@ -286,7 +254,8 @@ impl FaceVerifierClient {
 
     /// Classifies a non-success response, reading the error envelope when there is one.
     fn api_error(status: u16, body: Option<&str>) -> ClientError {
-        let Some(envelope) = body.and_then(|body| serde_json::from_str::<ApiErrorBody>(body).ok())
+        let Some(envelope) =
+            body.and_then(|body| serde_json::from_str::<ApiErrorResponse>(body).ok())
         else {
             return ClientError::Status(status);
         };

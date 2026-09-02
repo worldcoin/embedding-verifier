@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use attested_channel::channel::{SealedRequest, SealedResponse, UnwrapErr};
+use deepface_enclave_types::{EnclaveError, MatchRequest, MatchResponse};
 use deepface_protocol::Error as ProtocolError;
 use deepface_protocol::match_token::MatchClaims;
 use deepface_protocol::messages::{FailureReason, MatchInputs, MatchResult, decrypt_challenge};
-use deepface_types::{MatchRequest, MatchResponse};
-use enclave_types::EnclaveError;
 use getrandom::SysRng;
 use pontifex::Request;
 use sha2::{Digest, Sha256};
@@ -179,13 +178,12 @@ mod tests {
     use attested_channel::channel::{
         CHANNEL_VERSION, Requester, ResponseOpener, SealedResponse, UnwrapErr,
     };
+    use deepface_enclave_types::{EnclaveError, MatchRequest};
     use deepface_protocol::match_token;
     use deepface_protocol::messages::{
         CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, FailureReason, MatchInputs, MatchResult,
         encrypt_challenge,
     };
-    use deepface_types::MatchRequest;
-    use enclave_types::EnclaveError;
     use getrandom::SysRng;
     use sha2::{Digest, Sha256};
 
