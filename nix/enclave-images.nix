@@ -79,7 +79,7 @@ let
 
           work_dir="$(mktemp -d)"
           trap 'rm -rf "$work_dir"' EXIT
-          mkdir -p "$work_dir/skopeo" "$work_dir/artifacts"
+          mkdir -p "$work_dir/skopeo" "$work_dir/artifacts" "$work_dir/logs"
 
           docker info >/dev/null
           skopeo --tmpdir "$work_dir/skopeo" --insecure-policy copy \
@@ -88,6 +88,7 @@ let
 
           NITRO_CLI_BLOBS="${nitroCli}/share/aws-nitro-enclaves-cli/blobs/x86_64" \
           NITRO_CLI_ARTIFACTS="$work_dir/artifacts" \
+          NITRO_CLI_LOGS_PATH="$work_dir/logs" \
             nitro-cli build-enclave \
               --docker-uri "${imageRef}" \
               --output-file "$output_file"
