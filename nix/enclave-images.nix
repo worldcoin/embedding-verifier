@@ -85,7 +85,7 @@ let
           docker info >/dev/null
           skopeo --tmpdir "$work_dir/skopeo" --insecure-policy copy \
             "oci:${ociImage}:${version}" \
-            "docker-daemon:${imageRef}"
+            "docker-daemon:${imageRef}" >&2
 
           build_output="$work_dir/build-output"
           if ! NITRO_CLI_BLOBS="${nitroCli}/share/aws-nitro-enclaves-cli/blobs/x86_64" \
