@@ -236,6 +236,6 @@ mod tests {
 
         let config = Config::from_json(json).expect("config should parse");
 
-        assert_eq!(config.request_timeout(), Duration::from_secs(60));
+        assert_eq!(config.request_timeout(), Duration::from_mins(1));
     }
 }
