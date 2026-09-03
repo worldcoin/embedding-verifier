@@ -216,6 +216,31 @@ async fn matches_rejects_a_non_base64_ciphertext() {
     assert_eq!(body["error"]["code"], "invalid_request");
 }
 
+/// The limit is axum's to enforce but the envelope is ours. Without the mapping the extractor
+/// answers a bare `413` with no `code`, which is the one failure a client cannot classify.
+#[tokio::test]
+async fn matches_rejects_a_body_over_the_limit_with_an_envelope() {
+    let state = state_with(StubEnclaveClient::default());
+
+    // One byte of ciphertext past the ceiling, so the limit rejects it before any parsing.
+    let oversized = "A".repeat(routes::MAX_MATCH_BODY_BYTES + 1);
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/matches")
+        .header("content-type", "application/json")
+        .body(Body::from(format!(
+            r#"{{"challenge_image_id":"{CHALLENGE_ID}","ciphertext":"{oversized}"}}"#
+        )))
+        .expect("request should be valid");
+
+    let (status, body) = send(state, request).await;
+
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(body["error"]["code"], "request_too_large");
+    // Not retryable: the same body would be refused again.
+    assert_eq!(body["allowRetry"], false);
+}
+
 #[tokio::test]
 async fn matches_attributes_fetch_failures_outward() {
     // The bucket is an availability dependency of this path, so its failures are a 502 and never
