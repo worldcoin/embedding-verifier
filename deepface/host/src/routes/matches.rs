@@ -8,9 +8,7 @@ use crate::error::AppError;
 
 /// Largest match body this route accepts.
 ///
-/// The same 2 MiB axum applies by default, named here rather than inherited. An implicit limit is
-/// one nobody can find when a request starts failing, and it is the ceiling the sealed payload --
-/// which carries whole images -- runs into first.
+/// TODO: Increase this once PR for relaying image lands
 pub const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 /// Relays a sealed match request to the enclave.
