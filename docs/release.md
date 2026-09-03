@@ -10,17 +10,14 @@ Each workload releases on its own tag: `deepface/vX.Y.Z`, `di/vX.Y.Z`. The tag i
    ```
    cargo update --workspace
    ```
-2. **Re-measure.** The bump moved PCR0, so `measurements.json` is now stale. Build locally as
-   described below and paste the fresh values into `measurements.json`.
-3. **One PR** carrying the version bump *and* the new `measurements.json`.
-4. **Tag and push:**
+2. **Tag and push:**
    ```
    git tag deepface/v0.2.0 <sha-on-main>
    git push origin deepface/v0.2.0
    ```
-5. **Wait for the gate.** Two builds run first — about 90 minutes each, in parallel. Nothing is
+3. **Wait for the gate.** Two builds run first — about 90 minutes each, in parallel. Nothing is
    published unless they agree.
-6. **Review the draft**, check the PCR table, publish. The draft is the last human step: the
+4. **Review the draft**, check the PCR table, publish. The draft is the last human step: the
    release is created unpublished, so nothing is live until someone publishes it.
 
 > The `release` GitHub environment carries no protection rules today, so `approve-publish`
@@ -54,19 +51,13 @@ PCR2 the application ramdisk. The EIF metadata section — which carries a wall-
 
 ## Building and measuring locally
 
-Needs x86_64-linux with Nix **and a running Docker daemon**, plus read access to
-`worldcoin/biometric-engines` and a `HUGGING_FACE_TOKEN` for deepface. Expect ~90 minutes
-cold for deepface.
+Needs x86_64-linux with Nix, plus read access to `worldcoin/biometric-engines` and a
+`HUGGING_FACE_TOKEN` for deepface. Expect ~90 minutes cold for deepface.
 
 ```
 scripts/build-eif.sh --workload deepface target/eif
-diff <(jq -S . measurements.json) <(jq -S . target/eif/measurements.json)
-scripts/closure-hashes.sh deepface closure-deepface.txt target/eif/deepface-enclave.eif
+jq . target/eif/deepface-pcr.json
 ```
-
-If your PCRs differ from a published release, compare `closure-<workload>.txt` first. It
-separates the Nix-pinned inputs from the EIF that came out of the conversion, so a mismatch
-says which half moved before you start bisecting.
 
 `di` needs neither the token nor the models — it reaches no private repository.
 

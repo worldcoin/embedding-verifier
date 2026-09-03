@@ -64,8 +64,8 @@ pub struct PcrMeasurement {
     pub value: Vec<u8>,
 }
 
-/// Hex that tolerates a `0x` prefix: measurements.json records PCRs `0x`-prefixed, and a
-/// config that rejects a copy-paste of the value it documents is a trap. Serializes bare.
+/// Hex that tolerates a `0x` prefix so values copied from release metadata work unchanged.
+/// Serializes bare.
 mod hex_maybe_prefixed {
     use serde::{Deserialize, Deserializer, Serializer};
 
