@@ -64,7 +64,7 @@ jobs:
             workload=deepface
             version=test
             tag=test
-            publish=true
+            publish=false
           else
             workload="$INPUT_WORKLOAD"
             version="$INPUT_VERSION"
@@ -144,7 +144,7 @@ jobs:
             "target/release/$WORKLOAD-pcr.json" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: enclave-release-${{ matrix.workload }}
+          name: enclave-release
           path: |
             target/release/${{ matrix.workload }}-enclave.eif
             target/release/${{ matrix.workload }}-oci.tar.gz
@@ -157,7 +157,7 @@ jobs:
     needs: [prepare, build]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    # environment: release
+    environment: release
     permissions:
       contents: write
       packages: write
@@ -169,23 +169,26 @@ jobs:
           ref: ${{ needs.prepare.outputs.sha }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: enclave-release-${{ needs.prepare.outputs.workload }}
+          name: enclave-release
           path: assets
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-      # - name: Publish OCI image
-      #   id: oci
-      - name: Validate OCI archive
+      - name: Publish OCI image
         id: oci
         env:
           WORKLOAD: ${{ needs.prepare.outputs.workload }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          repo="$REGISTRY/$OWNER/embedding-verifier-$WORKLOAD-enclave"
           nixpkgs_rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
           skopeo="github:NixOS/nixpkgs/$nixpkgs_rev#skopeo"
-          nix run --no-update-lock-file "$skopeo" -- --insecure-policy inspect \
-            "oci-archive:assets/$WORKLOAD-oci.tar.gz"
-          # nix run --no-update-lock-file "$skopeo" -- --insecure-policy copy \
-          #   "oci-archive:assets/$WORKLOAD-oci.tar.gz" "docker://$repo:v$VERSION"
-          echo "ref=test" >> "$GITHUB_OUTPUT"
+          nix run --no-update-lock-file "$skopeo" -- --insecure-policy copy \
+            "oci-archive:assets/$WORKLOAD-oci.tar.gz" "docker://$repo:v$VERSION" \
+            --dest-creds "$GHCR_USER:$GHCR_TOKEN"
+          digest=$(nix run --no-update-lock-file "$skopeo" -- --insecure-policy inspect \
+            "docker://$repo:v$VERSION" --creds "$GHCR_USER:$GHCR_TOKEN" | jq -r .Digest)
+          echo "ref=$repo@$digest" >> "$GITHUB_OUTPUT"
       - name: Add OCI reference to manifest
         env:
           OCI_REF: ${{ steps.oci.outputs.ref }}
@@ -193,9 +196,9 @@ jobs:
           jq --arg ref "$OCI_REF" '.artifacts.enclaveOci = $ref' assets/manifest.json \
             > "$RUNNER_TEMP/manifest.json"
           mv "$RUNNER_TEMP/manifest.json" assets/manifest.json
-      # - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-      #   with:
-      #     subject-path: assets/*
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: assets/*
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -216,6 +219,5 @@ jobs:
 
           OCI image: \`$OCI_REF\`
           EOF
-          cat "$RUNNER_TEMP/body.md"
-          # gh release create --draft --target "$RELEASE_SHA" -t "$TAG" \
-          #   -F "$RUNNER_TEMP/body.md" "$TAG" assets/*
+          gh release create --draft --target "$RELEASE_SHA" -t "$TAG" \
+            -F "$RUNNER_TEMP/body.md" "$TAG" assets/*
