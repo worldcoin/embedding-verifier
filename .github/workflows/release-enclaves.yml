@@ -1,14 +1,4 @@
-# Cuts a versioned release of one workload: its enclave EIF, its measurements, its host
-# image, and the carrier image that ships the EIF into Kubernetes.
-#
-# Tags are per workload (`deepface/v*`, `di/v*`) because the enclave crate's package.version
-# is measured into PCR0 — flake.nix reads it from <workload>/enclave/Cargo.toml. A repo-wide
-# tag would rotate both enclaves' measurements for a change to one of them, and every client
-# pinning the untouched workload would have to re-register for nothing.
-#
-# Nothing is published until two independent Nix builds of the same commit produce the same
-# EIF, PCRs, and build closure.
-name: release
+name: release enclaves
 
 on:
   push:
@@ -18,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       workload:
-        description: "Which enclave to release."
+        description: "Enclave to release."
         required: true
         type: choice
         options: [deepface, di]
@@ -26,16 +16,18 @@ on:
         description: "Branch, tag, or commit SHA to build."
         required: true
         type: string
+      version:
+        description: "Release version, without the v prefix."
+        required: true
+        type: string
       dry_run:
-        description: "Build and verify, publish nothing."
+        description: "Build and verify without publishing."
         required: false
         default: true
         type: boolean
 
-# Two cold ~90-minute Nix builds per run. Never cancel one in flight: a half-published
-# release is worse than a slow one.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-enclaves-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -46,567 +38,182 @@ env:
   OWNER: ${{ github.repository_owner }}
 
 jobs:
-  prepare-release:
-    name: prepare release
+  prepare:
     runs-on: ubuntu-latest
     outputs:
-      WORKLOAD: ${{ steps.release.outputs.WORKLOAD }}
-      VERSION: ${{ steps.release.outputs.VERSION }}
-      TAG: ${{ steps.release.outputs.TAG }}
-      SHA: ${{ steps.release.outputs.SHA }}
-      SHORT_SHA: ${{ steps.release.outputs.SHORT_SHA }}
-      PUBLISH: ${{ steps.release.outputs.PUBLISH }}
+      workload: ${{ steps.release.outputs.workload }}
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
+      short-sha: ${{ steps.release.outputs.short-sha }}
+      publish: ${{ steps.release.outputs.publish }}
     steps:
-      - name: Check Out Repo
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
-
-      - name: Resolve and validate release
-        id: release
+      - id: release
         env:
           INPUT_WORKLOAD: ${{ inputs.workload }}
+          INPUT_VERSION: ${{ inputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            workload="${GITHUB_REF_NAME%%/*}"
+            version="${GITHUB_REF_NAME#*/v}"
             tag="$GITHUB_REF_NAME"
-            workload="${tag%%/*}"
-            version="${tag#*/v}"
             publish=true
           else
             workload="$INPUT_WORKLOAD"
-            version=""      # taken from the manifest below
-            tag=""
-            if [[ "$DRY_RUN" == "true" ]]; then publish=false; else publish=true; fi
-          fi
-
-          manifest="$workload/enclave/Cargo.toml"
-          if [[ ! -f "$manifest" ]]; then
-            echo "::error::No enclave manifest at $manifest — '$workload' is not a workload." >&2
-            exit 1
-          fi
-
-          # flake.nix reads `.package.version` from this manifest into the EIF, so the field is
-          # measured. A tag naming a version the enclave does not carry describes a build nobody
-          # can reproduce from the tag alone. Read it with tomllib rather than a regex, which
-          # would happily match a dependency's version line instead.
-          manifest_version=$(python3 -c \
-            'import sys,tomllib; print(tomllib.load(open(sys.argv[1],"rb"))["package"]["version"])' \
-            "$manifest")
-          if [[ -z "$version" ]]; then
-            version="$manifest_version"
+            version="$INPUT_VERSION"
             tag="$workload/v$version"
-          elif [[ "$version" != "$manifest_version" ]]; then
-            echo "::error::Tag $tag names version $version, but $manifest says $manifest_version." >&2
-            echo "::error::That field is measured into PCR0. Bump it and re-measure before tagging." >&2
-            exit 1
+            publish=$([[ "$DRY_RUN" == "true" ]] && echo false || echo true)
           fi
-
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
-            echo "::error::Invalid version: $version (expected X.Y.Z with an optional pre-release)." >&2
-            exit 1
-          fi
-
-          if [[ "$publish" == "true" ]] && gh release view "$tag" >/dev/null 2>&1; then
-            echo "::error::Release $tag already exists. Publishing again would replace a" >&2
-            echo "::error::measurement clients may already have registered." >&2
-            exit 1
-          fi
-
-          release_sha=$(git rev-parse HEAD)
+          sha=$(git rev-parse HEAD)
           {
-            echo "WORKLOAD=$workload"
-            echo "VERSION=$version"
-            echo "TAG=$tag"
-            echo "SHA=$release_sha"
-            echo "SHORT_SHA=${release_sha::7}"
-            echo "PUBLISH=$publish"
+            echo "workload=$workload"
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "sha=$sha"
+            echo "short-sha=${sha::7}"
+            echo "publish=$publish"
           } >> "$GITHUB_OUTPUT"
 
-  # Two independent builds of the same commit, on different runner images. Only `canonical`
-  # produces anything downstream publishes; `reproduction` exists to be diffed against it.
-  build-enclave:
-    name: build enclave (${{ matrix.attempt }} on ${{ matrix.runner }})
-    needs: prepare-release
-    runs-on: ${{ matrix.runner }}
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
     timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - attempt: canonical
-            runner: ubuntu-latest
-          - attempt: reproduction
-            runner: ubuntu-22.04
     permissions:
       contents: read
       packages: write
+    outputs:
+      PCR0: ${{ steps.outputs.outputs.PCR0 }}
+      PCR1: ${{ steps.outputs.outputs.PCR1 }}
+      PCR2: ${{ steps.outputs.outputs.PCR2 }}
+      EIF_SHA256: ${{ steps.outputs.outputs.EIF_SHA256 }}
+      OCI_REF: ${{ steps.oci.outputs.ref }}
     env:
-      WORKLOAD: ${{ needs.prepare-release.outputs.WORKLOAD }}
+      WORKLOAD: ${{ needs.prepare.outputs.workload }}
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
-      - name: Check Out Repo
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ needs.prepare-release.outputs.SHA }}
-
-      - name: Mint biometric-engines access token
-        id: biometric-engines-token
+          ref: ${{ needs.prepare.outputs.sha }}
+      - id: token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
           private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
           owner: worldcoin
           repositories: biometric-engines
-
-      # crane resolves the private face-engine dependency with `builtins.fetchGit`, which runs
-      # on the host and uses the host's git credentials. A credential helper rather than
-      # `url.insteadOf`, because the rewrite depends on which git backend Nix was built with.
-      - name: Authorize git for biometric-engines
-        env:
-          GH_APP_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
+      - env:
+          GH_APP_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           git config --global credential."https://github.com".helper \
             '!f() { echo username=x-access-token; echo "password=${GH_APP_TOKEN}"; }; f'
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Build EIF and measure
-        env:
-          GH_APP_TOKEN: ${{ steps.biometric-engines-token.outputs.token }}
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - env:
+          GH_APP_TOKEN: ${{ steps.token.outputs.token }}
           HUGGING_FACE_TOKEN: ${{ secrets.HUGGING_FACE_TOKEN }}
-        run: scripts/build-eif.sh --workload "$WORKLOAD" target/eif
-
-      # Record the hashes of both portable OCI and Nitro EIF artifacts.
-      - name: Record build provenance
+        run: scripts/build-enclaves.sh --workload "$WORKLOAD" target/release
+      - name: Package OCI layout
         run: |
-          set -euo pipefail
           oci_store=$(nix build --no-link --no-update-lock-file --print-out-paths ".#${WORKLOAD}-oci")
-          jq -n \
-            --arg eifSha256 "$(sha256sum "target/eif/$WORKLOAD-enclave.eif" | cut -d' ' -f1)" \
-            --arg ociStoreHash "$(nix hash path --type sha256 --sri "$oci_store")" \
-            --arg rustToolchain "$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)" \
-            '{eifSha256: $eifSha256, ociStoreHash: $ociStoreHash, rustToolchain: $rustToolchain}' \
-            > target/eif/provenance.json
-          jq . target/eif/provenance.json
-
-      # Record the runner environment for diagnosing unexpected Nix reproducibility failures.
-      - name: Record build environment
-        run: |
-          set -euo pipefail
-          jq -n \
-            --arg runnerOs "${RUNNER_OS}" \
-            --arg runnerImage "${ImageOS:-unknown}" \
-            --arg kernel "$(uname -sr)" \
-            '{runnerOs: $runnerOs, runnerImage: $runnerImage, kernel: $kernel}' \
-            > target/eif/environment.json
-          jq . target/eif/environment.json
-
-      # Which model bytes the enclave measured. A PCR does not say, and the models are the
-      # part of the closure that moves without a code change.
-      - name: Record face model sources
-        if: env.WORKLOAD == 'deepface'
-        run: |
-          set -euo pipefail
-          nix eval --json --no-update-lock-file .#faceModels \
-            | jq 'map_values({url, hash})' > target/eif/face-models.json
-          jq . target/eif/face-models.json
-
-      # The OCI image is the boundary Nix guarantees, and the only artifact someone without
-      # face-engine access can check a PCR against.
-      #
-      # Tagged by commit here. `:vX.Y.Z` is applied after the gate, so the release tag never
-      # names an image two builds have not agreed on.
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+            -C "$oci_store" -czf "target/release/$WORKLOAD-oci.tar.gz" .
       - name: Publish OCI image
-        if: matrix.attempt == 'canonical' && needs.prepare-release.outputs.PUBLISH == 'true'
-        id: push-oci
+        id: oci
+        if: needs.prepare.outputs.publish == 'true'
         env:
-          SHORT_SHA: ${{ needs.prepare-release.outputs.SHORT_SHA }}
-          VERSION: ${{ needs.prepare-release.outputs.VERSION }}
+          SHORT_SHA: ${{ needs.prepare.outputs.short-sha }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
           oci_store=$(nix build --no-link --no-update-lock-file --print-out-paths ".#${WORKLOAD}-oci")
-          repo="$REGISTRY/$OWNER/embedding-verifier-$WORKLOAD-enclave-oci"
-
-          # skopeo from the same nixpkgs the flake locks, so the push tool is pinned like
-          # everything else rather than taken from whatever the runner image ships.
+          repo="$REGISTRY/$OWNER/embedding-verifier-$WORKLOAD-enclave"
           nixpkgs_rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
-          nix run --no-update-lock-file "github:NixOS/nixpkgs/$nixpkgs_rev#skopeo" -- \
-            --insecure-policy copy \
-            "oci:$oci_store:$VERSION" \
-            "docker://$repo:sha-$SHORT_SHA" \
+          skopeo="github:NixOS/nixpkgs/$nixpkgs_rev#skopeo"
+          nix run --no-update-lock-file "$skopeo" -- --insecure-policy copy \
+            "oci:$oci_store:$VERSION" "docker://$repo:v$VERSION" \
             --dest-creds "$GHCR_USER:$GHCR_TOKEN"
-
-          digest=$(nix run --no-update-lock-file "github:NixOS/nixpkgs/$nixpkgs_rev#skopeo" -- \
-            --insecure-policy inspect "docker://$repo:sha-$SHORT_SHA" \
-            --creds "$GHCR_USER:$GHCR_TOKEN" | jq -r '.Digest')
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::Bad OCI digest: $digest"; exit 1; }
-
-          jq -n --arg repo "$repo" --arg digest "$digest" \
-            '{enclaveOci: {repo: $repo, digest: $digest, ref: ($repo + "@" + $digest)}}' \
-            > target/eif/images.json
-          jq . target/eif/images.json
-
-      # The EIF is hundreds of megabytes and only the canonical build's copy is ever
-      # published; the reproduction leg only needs to be diffable.
-      - name: Upload EIF
-        if: matrix.attempt == 'canonical'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+          digest=$(nix run --no-update-lock-file "$skopeo" -- --insecure-policy inspect \
+            "docker://$repo:v$VERSION" --creds "$GHCR_USER:$GHCR_TOKEN" | jq -r .Digest)
+          echo "ref=$repo@$digest" >> "$GITHUB_OUTPUT"
+      - name: Build manifest
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+          OCI_REF: ${{ steps.oci.outputs.ref }}
+        run: |
+          face_models='{}'
+          if [[ "$WORKLOAD" == deepface ]]; then
+            face_models=$(nix eval --json --no-update-lock-file .#faceModels | jq 'map_values({url, hash})')
+          fi
+          jq -n \
+            --arg workload "$WORKLOAD" \
+            --arg version "$VERSION" \
+            --arg gitSha "$RELEASE_SHA" \
+            --arg enclaveOci "$OCI_REF" \
+            --arg eifSha256 "$(sha256sum "target/release/$WORKLOAD-enclave.eif" | cut -d' ' -f1)" \
+            --arg ociArchiveSha256 "$(sha256sum "target/release/$WORKLOAD-oci.tar.gz" | cut -d' ' -f1)" \
+            --argjson measurements "$(cat "target/release/$WORKLOAD-pcr.json")" \
+            --argjson faceModels "$face_models" \
+            '{workload: $workload, version: $version, gitSha: $gitSha,
+              artifacts: {eifSha256: $eifSha256, ociArchiveSha256: $ociArchiveSha256,
+                          enclaveOci: $enclaveOci},
+              measurements: $measurements, faceModels: $faceModels}' \
+            > target/release/manifest.json
+      - id: outputs
+        run: |
+          jq -r '"PCR0=0x\(.PCR0)", "PCR1=0x\(.PCR1)", "PCR2=0x\(.PCR2)"' \
+            "target/release/$WORKLOAD-pcr.json" >> "$GITHUB_OUTPUT"
+          echo "EIF_SHA256=$(sha256sum "target/release/$WORKLOAD-enclave.eif" | cut -d' ' -f1)" \
+            >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: eif-canonical
-          path: target/eif/${{ needs.prepare-release.outputs.WORKLOAD }}-enclave.eif
+          name: enclave-release
+          path: |
+            target/release/${{ needs.prepare.outputs.workload }}-enclave.eif
+            target/release/${{ needs.prepare.outputs.workload }}-oci.tar.gz
+            target/release/${{ needs.prepare.outputs.workload }}-pcr.json
+            target/release/manifest.json
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload measurements
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: measurements-${{ matrix.attempt }}
-          path: |
-            target/eif/provenance.json
-            target/eif/environment.json
-            target/eif/face-models.json
-            target/eif/images.json
-            target/eif/${{ needs.prepare-release.outputs.WORKLOAD }}-pcr.json
-          if-no-files-found: error
-
-  verify-reproducible:
-    name: verify reproducible
-    needs: [prepare-release, build-enclave]
-    runs-on: ubuntu-latest
-    outputs:
-      PCR0: ${{ steps.compare.outputs.PCR0 }}
-      PCR1: ${{ steps.compare.outputs.PCR1 }}
-      PCR2: ${{ steps.compare.outputs.PCR2 }}
-      EIF_SHA256: ${{ steps.compare.outputs.EIF_SHA256 }}
-    env:
-      WORKLOAD: ${{ needs.prepare-release.outputs.WORKLOAD }}
-    steps:
-      - name: Check Out Repo
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ needs.prepare-release.outputs.SHA }}
-
-      - name: Download measurements
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: measurements-*
-
-      - name: Compare builds
-        id: compare
-        run: |
-          set -euo pipefail
-          canonical=measurements-canonical
-          reproduction=measurements-reproduction
-
-          if ! diff -u <(jq -S . "$reproduction/$WORKLOAD-pcr.json") \
-                       <(jq -S . "$canonical/$WORKLOAD-pcr.json"); then
-            echo "::error::Two builds of $GITHUB_SHA measured to different PCRs."
-            exit 1
-          fi
-
-          if ! diff -u <(jq -S . "$reproduction/provenance.json") \
-                       <(jq -S . "$canonical/provenance.json"); then
-            if [ "$(jq -r .ociStoreHash "$reproduction/provenance.json")" \
-               = "$(jq -r .ociStoreHash "$canonical/provenance.json")" ]; then
-              echo "::error::Nix produced the same OCI image twice but different EIFs."
-              echo "::error::The two build environments were:"
-              jq -c . "$canonical/environment.json" "$reproduction/environment.json"
-              echo "::error::A PCR from this build cannot be re-derived on another machine."
-            else
-              echo "::error::Two builds of the same commit produced different OCI images,"
-              echo "::error::so the divergence is in what Nix built, not in the conversion."
-            fi
-            exit 1
-          fi
-
-          jq -r '
-            "PCR0=0x\(.PCR0)",
-            "PCR1=0x\(.PCR1)",
-            "PCR2=0x\(.PCR2)"
-          ' "$canonical/$WORKLOAD-pcr.json" >> "$GITHUB_OUTPUT"
-          jq -r '"EIF_SHA256=\(.eifSha256)"' "$canonical/provenance.json" >> "$GITHUB_OUTPUT"
-
-          # What the match is worth depends on how different the two builds were, so say so.
-          {
-            echo "## Reproduced across two environments"
-            echo ""
-            echo "| | canonical | reproduction |"
-            echo "|---|---|---|"
-            for f in runnerImage kernel dockerServer; do
-              printf '| %s | `%s` | `%s` |\n' "$f" \
-                "$(jq -r --arg f "$f" '.[$f]' "$canonical/environment.json")" \
-                "$(jq -r --arg f "$f" '.[$f]' "$reproduction/environment.json")"
-            done
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # The hook for a human gate, after the build is known releasable rather than in front of it.
-  # The `release` environment has no protection rules today, so this passes straight through
-  # and publishing is automatic; adding required reviewers turns the gate on with no edit here.
-  approve-publish:
-    name: approve publish
-    needs: [prepare-release, verify-reproducible]
-    if: needs.prepare-release.outputs.PUBLISH == 'true'
+  approve:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: release
     steps:
       - run: true
 
-  # The host image for this workload, built at the same commit the measurements describe.
-  # Not behind the gate: GHCR host images are published on every push to main already, so
-  # this is not the artifact the approval exists to govern.
-  build-host-image:
-    name: build host image
-    needs: [prepare-release, verify-reproducible]
-    permissions:
-      contents: read
-      id-token: write
-      packages: write
-      attestations: write
-    uses: ./.github/workflows/build-docker.yml
-    with:
-      ref: ${{ needs.prepare-release.outputs.SHA }}
-      version: v${{ needs.prepare-release.outputs.VERSION }}
-      workload: ${{ needs.prepare-release.outputs.WORKLOAD }}
-      push: ${{ needs.prepare-release.outputs.PUBLISH == 'true' }}
-
-  # Carrier image so Kubernetes can run the EIF from an init container (the AWS Nitro Enclaves
-  # device plugin pattern). Built from the verified canonical EIF, after the gate — a carrier
-  # pushed before reproduction agrees is a measurement nobody has checked.
-  build-carrier:
-    name: build carrier image
-    needs: [prepare-release, verify-reproducible, approve-publish]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      packages: write
-      attestations: write
-    outputs:
-      DIGEST: ${{ steps.push.outputs.digest }}
-      IMAGE: ${{ steps.image.outputs.name }}
-      OCI_REF: ${{ steps.oci.outputs.REF }}
-    steps:
-      - name: Check Out Repo
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ needs.prepare-release.outputs.SHA }}
-
-      - name: Download EIF
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: eif-canonical
-          path: target/eif
-
-      - name: Download measurements
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: measurements-canonical
-          path: target/eif
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Resolve image name
-        id: image
-        env:
-          WORKLOAD: ${{ needs.prepare-release.outputs.WORKLOAD }}
-        run: echo "name=$REGISTRY/$OWNER/embedding-verifier-$WORKLOAD-enclave-eif" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Context is target/eif, so EIF_FILE is a bare filename. Nitro Enclaves are x86_64 only,
-      # so there is no manifest to merge.
-      - name: Build and push carrier
-        id: push
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: target/eif
-          file: scripts/Dockerfile.carrier
-          build-args: EIF_FILE=${{ needs.prepare-release.outputs.WORKLOAD }}-enclave.eif
-          push: true
-          platforms: linux/amd64
-          tags: |
-            ${{ steps.image.outputs.name }}:v${{ needs.prepare-release.outputs.VERSION }}
-            ${{ steps.image.outputs.name }}:sha-${{ needs.prepare-release.outputs.SHORT_SHA }}
-
-      # The image is already in the registry; this only adds a tag to the digest the gate
-      # verified. Layers are not re-uploaded.
-      - name: Tag the verified OCI image
-        id: oci
-        env:
-          VERSION: ${{ needs.prepare-release.outputs.VERSION }}
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          ref=$(jq -r '.enclaveOci.ref' target/eif/images.json)
-          repo=$(jq -r '.enclaveOci.repo' target/eif/images.json)
-          digest=$(jq -r '.enclaveOci.digest' target/eif/images.json)
-          nixpkgs_rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
-          nix run "github:NixOS/nixpkgs/$nixpkgs_rev#skopeo" -- \
-            --insecure-policy copy "docker://$ref" "docker://$repo:v$VERSION" \
-            --src-creds "$GHCR_USER:$GHCR_TOKEN" --dest-creds "$GHCR_USER:$GHCR_TOKEN"
-          {
-            echo "REF=$ref"
-            echo "REPO=$repo"
-            echo "DIGEST=$digest"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Attest OCI provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          push-to-registry: true
-          subject-name: ${{ steps.oci.outputs.REPO }}
-          subject-digest: ${{ steps.oci.outputs.DIGEST }}
-
-      - name: Attest carrier provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          push-to-registry: true
-          subject-name: ${{ steps.image.outputs.name }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-
-  draft-release:
-    name: draft release
-    needs: [prepare-release, verify-reproducible, approve-publish, build-host-image, build-carrier]
+  release:
+    needs: [prepare, build, approve]
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
       attestations: write
-    env:
-      WORKLOAD: ${{ needs.prepare-release.outputs.WORKLOAD }}
-      VERSION: ${{ needs.prepare-release.outputs.VERSION }}
-      TAG: ${{ needs.prepare-release.outputs.TAG }}
-      RELEASE_SHA: ${{ needs.prepare-release.outputs.SHA }}
-      PCR0: ${{ needs.verify-reproducible.outputs.PCR0 }}
-      PCR1: ${{ needs.verify-reproducible.outputs.PCR1 }}
-      PCR2: ${{ needs.verify-reproducible.outputs.PCR2 }}
     steps:
-      - name: Check Out Repo
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          ref: ${{ needs.prepare-release.outputs.SHA }}
-          fetch-depth: 0
-
-      - name: Download measurements
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: measurements-canonical
+          name: enclave-release
           path: assets
-
-      - name: Download EIF
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          name: eif-canonical
-          path: assets
-
-      # Record the commit, pinned inputs, measurements, provenance, and released images.
-      - name: Build manifest
-        env:
-          HOST_IMAGE: ${{ needs.build-host-image.outputs.image }}
-          HOST_DIGEST: ${{ needs.build-host-image.outputs.digest }}
-          CARRIER_IMAGE: ${{ needs.build-carrier.outputs.IMAGE }}
-          CARRIER_DIGEST: ${{ needs.build-carrier.outputs.DIGEST }}
-          OCI_REF: ${{ needs.build-carrier.outputs.OCI_REF }}
-        run: |
-          set -euo pipefail
-          face_models='{}'
-          if [[ -f assets/face-models.json ]]; then
-            face_models=$(cat assets/face-models.json)
-          fi
-          jq -n \
-            --arg workload "$WORKLOAD" \
-            --arg version "$VERSION" \
-            --arg tag "$TAG" \
-            --arg gitSha "$RELEASE_SHA" \
-            --arg flakeLockSha256 "$(sha256sum flake.lock | cut -d' ' -f1)" \
-            --arg hostImage "$HOST_IMAGE@$HOST_DIGEST" \
-            --arg carrierImage "$CARRIER_IMAGE@$CARRIER_DIGEST" \
-            --arg enclaveOci "$OCI_REF" \
-            --argjson flakeInputs "$(jq '.nodes | del(.root) | map_values(.locked)' flake.lock)" \
-            --argjson faceModels "$face_models" \
-            --slurpfile measurements "assets/$WORKLOAD-pcr.json" \
-            --slurpfile provenance assets/provenance.json \
-            '{workload: $workload, version: $version, tag: $tag, gitSha: $gitSha,
-              flake: {lockSha256: $flakeLockSha256, inputs: $flakeInputs},
-              measurements: $measurements[0],
-              provenance: $provenance[0],
-              faceModels: $faceModels,
-              images: {host: $hostImage, enclaveOci: $enclaveOci, eifCarrier: $carrierImage}}' \
-            > assets/manifest.json
-          jq . assets/manifest.json
-
-          # Cross-check rather than trust the job outputs: an empty digest interpolates to a
-          # bare "image@" that reads like a pinned reference and resolves to nothing.
-          for ref in "$HOST_IMAGE@$HOST_DIGEST" "$CARRIER_IMAGE@$CARRIER_DIGEST" "$OCI_REF"; do
-            [[ "$ref" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "::error::Unpinned image: $ref"; exit 1; }
-          done
-          [[ "$PCR0" =~ ^0x[0-9a-f]{96}$ ]] || { echo "::error::Bad PCR0: $PCR0"; exit 1; }
-
-      - name: Checksum assets
-        working-directory: assets
-        run: |
-          set -euo pipefail
-          sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS"
-          mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
-          cat SHA256SUMS
-
-      # One attestation covering every asset, keyed by the checksum file. Verify any of them
-      # with `gh attestation verify <file> --repo <this repo>`.
-      - name: Attest release assets
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-checksums: assets/SHA256SUMS
-
-      - name: Generate changelog
-        id: changelog
-        run: |
-          set -euo pipefail
-          previous=$(git describe --tags --match "$WORKLOAD/v*" --abbrev=0 "${RELEASE_SHA}^" 2>/dev/null || true)
-          {
-            echo "CHANGELOG<<ENDCHANGELOG"
-            git log --pretty=format:"- %s" "${previous:+$previous..}$RELEASE_SHA" -- \
-              "$WORKLOAD/" shared/ flake.nix flake.lock rust-toolchain.toml \
-              scripts/build-eif.sh scripts/Dockerfile.carrier
-            echo
-            echo "ENDCHANGELOG"
-          } >> "$GITHUB_OUTPUT"
-
-      # The changelog reaches the heredoc as a variable, not as interpolated text: commit
-      # subjects routinely contain backticks, and the heredoc has to stay unquoted for the
-      # PCRs to expand. A variable's value is not re-scanned for command substitution.
-      - name: Create release draft
-        env:
+          subject-path: assets/*
+      - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CHANGELOG: ${{ steps.changelog.outputs.CHANGELOG }}
-          HOST_IMAGE: ${{ needs.build-host-image.outputs.image }}
-          CARRIER_IMAGE: ${{ needs.build-carrier.outputs.IMAGE }}
-          OCI_IMAGE: ghcr.io/${{ github.repository_owner }}/embedding-verifier-${{ needs.prepare-release.outputs.WORKLOAD }}-enclave-oci
+          TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+          PCR0: ${{ needs.build.outputs.PCR0 }}
+          PCR1: ${{ needs.build.outputs.PCR1 }}
+          PCR2: ${{ needs.build.outputs.PCR2 }}
+          OCI_REF: ${{ needs.build.outputs.OCI_REF }}
         run: |
-          set -euo pipefail
-          pkg() { echo "https://github.com/$GITHUB_REPOSITORY/pkgs/container/${1##*/}"; }
-          docker_icon='<img src="https://simpleicons.org/icons/docker.svg" style="width: 32px;"/>'
-
-          body=$(cat <<- ENDBODY
+          cat > "$RUNNER_TEMP/body.md" <<EOF
           ## Measurements
-
-          Reproduced by two independent builds of \`$RELEASE_SHA\`.
 
           | PCR | Value |
           |:---|:---|
@@ -614,63 +221,7 @@ jobs:
           | PCR1 | \`$PCR1\` |
           | PCR2 | \`$PCR2\` |
 
-          ## Images
-
-          | | Image | Pull |
-          |:---:|:---|:---|
-          | $docker_icon | [host]($(pkg "$HOST_IMAGE")) | \`$HOST_IMAGE:v$VERSION\` |
-          | $docker_icon | [enclave]($(pkg "$OCI_IMAGE")) | \`$OCI_IMAGE:v$VERSION\` |
-          | $docker_icon | [EIF carrier]($(pkg "$CARRIER_IMAGE")) | \`$CARRIER_IMAGE:v$VERSION\` |
-
-          Digests are pinned in \`manifest.json\`.
-
-          ## Changes
-
-          $CHANGELOG
-          ENDBODY
-          )
-          printf '%s\n' "$body" \
-            | gh release create --draft --target "$RELEASE_SHA" \
-                -t "$TAG" -F - "$TAG" assets/*
-
-  summary:
-    name: release summary
-    if: always()
-    needs: [prepare-release, build-enclave, verify-reproducible, build-host-image, build-carrier, draft-release]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Write summary
-        env:
-          TAG: ${{ needs.prepare-release.outputs.TAG }}
-          PUBLISH: ${{ needs.prepare-release.outputs.PUBLISH }}
-          BUILD_RESULT: ${{ needs.build-enclave.result }}
-          REPRO_RESULT: ${{ needs.verify-reproducible.result }}
-          HOST_RESULT: ${{ needs.build-host-image.result }}
-          CARRIER_RESULT: ${{ needs.build-carrier.result }}
-          RELEASE_RESULT: ${{ needs.draft-release.result }}
-          PCR0: ${{ needs.verify-reproducible.outputs.PCR0 }}
-          PCR1: ${{ needs.verify-reproducible.outputs.PCR1 }}
-          PCR2: ${{ needs.verify-reproducible.outputs.PCR2 }}
-        run: |
-          status() { [ "$1" = "success" ] && echo "✅" || echo "❌ ($1)"; }
-          {
-            echo "## 📦 ${TAG:-unresolved}"
-            [ "$PUBLISH" = "true" ] || echo ""
-            [ "$PUBLISH" = "true" ] || echo "Dry run — nothing was published."
-            echo ""
-            echo "| Step | Status |"
-            echo "|------|--------|"
-            echo "| Enclave builds | $(status "$BUILD_RESULT") |"
-            echo "| Reproducibility gate | $(status "$REPRO_RESULT") |"
-            echo "| Host image | $(status "$HOST_RESULT") |"
-            echo "| Carrier image | $(status "$CARRIER_RESULT") |"
-            echo "| Draft release | $(status "$RELEASE_RESULT") |"
-            if [ -n "${PCR0:-}" ]; then
-              echo ""
-              echo "| PCR | Value |"
-              echo "|-----|-------|"
-              echo "| PCR0 | \`$PCR0\` |"
-              echo "| PCR1 | \`$PCR1\` |"
-              echo "| PCR2 | \`$PCR2\` |"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          OCI image: \`$OCI_REF\`
+          EOF
+          gh release create --draft --target "$RELEASE_SHA" -t "$TAG" \
+            -F "$RUNNER_TEMP/body.md" "$TAG" assets/*

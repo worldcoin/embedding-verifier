@@ -4,7 +4,7 @@
 # and publishes host images.
 #
 # Tagged releases call this through workflow_call rather than a `tags:` trigger, so the
-# host image is built at the same commit the reproducibility gate measured. See release.yml.
+# host image is built at the same commit the reproducibility gate measured. See release-hosts.yml.
 name: Build and Push Docker Image
 
 on:
@@ -59,7 +59,7 @@ permissions:
   contents: read
 
 jobs:
-  # A static matrix cannot be filtered by an input, and release.yml needs one workload at a
+  # A static matrix cannot be filtered by an input, and release-hosts.yml needs one workload at a
   # time. Cheaper than duplicating the build job per workload.
   resolve-matrix:
     name: Resolve build matrix
