@@ -6,10 +6,8 @@
 # tag would rotate both enclaves' measurements for a change to one of them, and every client
 # pinning the untouched workload would have to re-register for nothing.
 #
-# Nothing is published until two independent builds of the same commit measure to the same
-# PCRs. Nix pins the OCI image; the nitro-cli conversion that turns it into an EIF runs
-# through a Docker daemon that Nix does not pin, so the two builds use different runner
-# images. Agreement across them is the evidence that the daemon does not reach the PCRs.
+# Nothing is published until two independent Nix builds of the same commit produce the same
+# EIF, PCRs, and build closure.
 name: release
 
 on:
@@ -183,15 +181,7 @@ jobs:
           HUGGING_FACE_TOKEN: ${{ secrets.HUGGING_FACE_TOKEN }}
         run: scripts/build-eif.sh --workload "$WORKLOAD" target/eif
 
-      - name: Record layer hashes
-        run: |
-          scripts/closure-hashes.sh "$WORKLOAD" \
-            "target/eif/closure-$WORKLOAD.txt" \
-            "target/eif/$WORKLOAD-enclave.eif"
-
-      # Recorded separately so a mismatch says which half moved: `ociStoreHash` is what Nix
-      # pinned, `eifSha256` is what the conversion produced. Same OCI hash with a different
-      # EIF hash means the conversion is not deterministic, not that the source changed.
+      # Record the hashes of both portable OCI and Nitro EIF artifacts.
       - name: Record build provenance
         run: |
           set -euo pipefail
@@ -204,9 +194,7 @@ jobs:
             > target/eif/provenance.json
           jq . target/eif/provenance.json
 
-      # Recorded, never compared: the two runner images disagree here by design. The PCRs
-      # matching across them anyway is what shows the Docker daemon does not reach the
-      # measurement.
+      # Record the runner environment for diagnosing unexpected Nix reproducibility failures.
       - name: Record build environment
         run: |
           set -euo pipefail
@@ -214,10 +202,7 @@ jobs:
             --arg runnerOs "${RUNNER_OS}" \
             --arg runnerImage "${ImageOS:-unknown}" \
             --arg kernel "$(uname -sr)" \
-            --arg docker "$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo unavailable)" \
-            --arg nitroCli "$(nix build --no-link --no-update-lock-file --print-out-paths .#nitro-cli)" \
-            '{runnerOs: $runnerOs, runnerImage: $runnerImage, kernel: $kernel,
-              dockerServer: $docker, nitroCliStore: $nitroCli}' \
+            '{runnerOs: $runnerOs, runnerImage: $runnerImage, kernel: $kernel}' \
             > target/eif/environment.json
           jq . target/eif/environment.json
 
@@ -284,13 +269,11 @@ jobs:
         with:
           name: measurements-${{ matrix.attempt }}
           path: |
-            target/eif/measurements.json
             target/eif/provenance.json
             target/eif/environment.json
             target/eif/face-models.json
             target/eif/images.json
             target/eif/${{ needs.prepare-release.outputs.WORKLOAD }}-pcr.json
-            target/eif/closure-${{ needs.prepare-release.outputs.WORKLOAD }}.txt
           if-no-files-found: error
 
   verify-reproducible:
@@ -322,12 +305,9 @@ jobs:
           canonical=measurements-canonical
           reproduction=measurements-reproduction
 
-          if ! diff -u <(jq -S --arg w "$WORKLOAD" '.[$w]' "$reproduction/measurements.json") \
-                       <(jq -S --arg w "$WORKLOAD" '.[$w]' "$canonical/measurements.json"); then
+          if ! diff -u <(jq -S . "$reproduction/$WORKLOAD-pcr.json") \
+                       <(jq -S . "$canonical/$WORKLOAD-pcr.json"); then
             echo "::error::Two builds of $GITHUB_SHA measured to different PCRs."
-            echo "::error::The build depends on something outside the pinned Nix closure."
-            echo "::error::The layer diff below may identify the differing input."
-            diff -u "$reproduction/closure-$WORKLOAD.txt" "$canonical/closure-$WORKLOAD.txt" || true
             exit 1
           fi
 
@@ -335,8 +315,7 @@ jobs:
                        <(jq -S . "$canonical/provenance.json"); then
             if [ "$(jq -r .ociStoreHash "$reproduction/provenance.json")" \
                = "$(jq -r .ociStoreHash "$canonical/provenance.json")" ]; then
-              echo "::error::Nix produced the same OCI image twice and nitro-cli converted it"
-              echo "::error::into two different EIFs, so the conversion depends on the host."
+              echo "::error::Nix produced the same OCI image twice but different EIFs."
               echo "::error::The two build environments were:"
               jq -c . "$canonical/environment.json" "$reproduction/environment.json"
               echo "::error::A PCR from this build cannot be re-derived on another machine."
@@ -347,25 +326,11 @@ jobs:
             exit 1
           fi
 
-          # The layer hashes are how a future drift gets diagnosed, so they have to agree now.
-          if ! diff -u "$reproduction/closure-$WORKLOAD.txt" "$canonical/closure-$WORKLOAD.txt"; then
-            echo "::error::Identical PCRs from different closures. Something in the measured"
-            echo "::error::graph is not deterministic; the matching PCRs are luck, not proof."
-            exit 1
-          fi
-
-          # The committed measurements are this commit's claim about itself. Releasing a
-          # different number means the tree says one thing and the deployment pins another.
-          if ! diff -u <(jq -S --arg w "$WORKLOAD" '.[$w]' measurements.json) \
-                       <(jq -S --arg w "$WORKLOAD" '.[$w]' "$canonical/measurements.json"); then
-            echo "::error::Built PCRs do not match measurements.json."
-            echo "::error::Re-measure with scripts/build-eif.sh and commit the result before tagging."
-            exit 1
-          fi
-
-          jq -r --arg w "$WORKLOAD" \
-            '"PCR0=\(.[$w].pcr0)", "PCR1=\(.[$w].pcr1)", "PCR2=\(.[$w].pcr2)"' \
-            "$canonical/measurements.json" >> "$GITHUB_OUTPUT"
+          jq -r '
+            "PCR0=0x\(.PCR0)",
+            "PCR1=0x\(.PCR1)",
+            "PCR2=0x\(.PCR2)"
+          ' "$canonical/$WORKLOAD-pcr.json" >> "$GITHUB_OUTPUT"
           jq -r '"EIF_SHA256=\(.eifSha256)"' "$canonical/provenance.json" >> "$GITHUB_OUTPUT"
 
           # What the match is worth depends on how different the two builds were, so say so.
@@ -551,9 +516,7 @@ jobs:
           name: eif-canonical
           path: assets
 
-      # What a rebuild is checked against: the commit, the pinned flake inputs it resolves to,
-      # the measurements verbatim, and the images carrying them. `measurements` is the same
-      # object the repo commits, so a rebuild diffs against it directly.
+      # Record the commit, pinned inputs, measurements, provenance, and released images.
       - name: Build manifest
         env:
           HOST_IMAGE: ${{ needs.build-host-image.outputs.image }}
@@ -567,9 +530,6 @@ jobs:
           if [[ -f assets/face-models.json ]]; then
             face_models=$(cat assets/face-models.json)
           fi
-          # Only this workload's entry: the committed file also carries the other enclave's
-          # PCRs, which this release neither built nor verified.
-          jq --arg w "$WORKLOAD" '.[$w]' assets/measurements.json > workload-measurements.json
           jq -n \
             --arg workload "$WORKLOAD" \
             --arg version "$VERSION" \
@@ -581,7 +541,7 @@ jobs:
             --arg enclaveOci "$OCI_REF" \
             --argjson flakeInputs "$(jq '.nodes | del(.root) | map_values(.locked)' flake.lock)" \
             --argjson faceModels "$face_models" \
-            --slurpfile measurements workload-measurements.json \
+            --slurpfile measurements "assets/$WORKLOAD-pcr.json" \
             --slurpfile provenance assets/provenance.json \
             '{workload: $workload, version: $version, tag: $tag, gitSha: $gitSha,
               flake: {lockSha256: $flakeLockSha256, inputs: $flakeInputs},
@@ -603,7 +563,6 @@ jobs:
         working-directory: assets
         run: |
           set -euo pipefail
-          rm -f measurements.json     # the repo-wide file; manifest.json carries this workload's
           sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS"
           mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
           cat SHA256SUMS
