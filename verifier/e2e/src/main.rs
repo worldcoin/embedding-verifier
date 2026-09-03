@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
 
     let assignment = FaceVerifierClient::new(config)
         .context("failed to build the assignment client")?
-        .request_assignment(SystemTime::now())
+        .request_assignment()
         .await
         .context("enclave assignment did not verify")?;
     let requester = assignment.requester;

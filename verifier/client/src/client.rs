@@ -4,7 +4,7 @@ use std::time::SystemTime;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-use attested_channel::channel::{self, ChannelError, Requester, SealedResponse, UnwrapErr};
+use attested_channel::channel::{ChannelError, Requester, SealedResponse, UnwrapErr};
 use attested_channel::nitro::{
     EnclaveAttestationError, EnclaveAttestationVerifier, VerifiedAttestation,
 };
@@ -140,47 +140,37 @@ impl FaceVerifierClient {
         })
     }
 
-    /// Creates the assignment request without sending it.
-    ///
-    /// Callers may customize the returned builder before passing it to
-    /// [`Self::request_assignment_with`].
-    pub fn build_assignment_request(&self) -> reqwest::RequestBuilder {
-        let url = format!(
-            "{}/v1/enclave-assignment",
-            self.config.host_url().as_str().trim_end_matches('/')
-        );
-        self.http.post(url)
-    }
-
     /// Requests an assignment and returns it only if its attestation verifies.
     ///
     /// # Errors
     ///
     /// Returns [`ClientError`] if the request fails, the host answers with an error status,
     /// or the attestation document does not verify.
-    pub async fn request_assignment(
-        &self,
-        now: SystemTime,
-    ) -> Result<VerifiedAssignment, ClientError> {
-        self.request_assignment_with(self.build_assignment_request(), now)
-            .await
+    pub async fn request_assignment(&self) -> Result<VerifiedAssignment, ClientError> {
+        self.request_assignment_with(|request| request).await
     }
 
-    /// Sends a caller-customizable assignment request and verifies its response.
-    ///
-    /// The `request` should be created from [`Self::build_assignment_request`] so it uses this
-    /// client's configured cookie store and timeouts.
+    /// Requests an assignment after allowing the caller to customize its request builder.
     ///
     /// # Errors
     ///
     /// Returns [`ClientError`] if the request fails, the host answers with an error status,
     /// or the attestation document does not verify.
-    pub async fn request_assignment_with(
+    pub async fn request_assignment_with<F>(
         &self,
-        request: reqwest::RequestBuilder,
-        now: SystemTime,
-    ) -> Result<VerifiedAssignment, ClientError> {
-        let response = request.send().await.map_err(ClientError::Request)?;
+        customize: F,
+    ) -> Result<VerifiedAssignment, ClientError>
+    where
+        F: FnOnce(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+    {
+        let url = format!(
+            "{}/v1/enclave-assignment",
+            self.config.host_url().as_str().trim_end_matches('/')
+        );
+        let response = customize(self.http.post(url))
+            .send()
+            .await
+            .map_err(ClientError::Request)?;
 
         let status = response.status();
         if !status.is_success() {
@@ -194,7 +184,7 @@ impl FaceVerifierClient {
 
         let attestation = self
             .verifier
-            .verify_base64(assignment.attestation.trim(), now)?;
+            .verify_base64(assignment.attestation.trim(), SystemTime::now())?;
         let requester = Requester::from_attestation(&attestation.enclave_public_key)
             .map_err(|_| ClientError::InvalidEncryptionKey)?;
 
@@ -202,35 +192,6 @@ impl FaceVerifierClient {
             attestation,
             requester,
         })
-    }
-
-    /// Creates a sealed match request without sending it.
-    ///
-    /// Callers may customize the returned builder before passing it to
-    /// [`Self::request_match_with`]. The returned opener must be passed alongside that builder.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ClientError`] if serializing or sealing the request fails.
-    pub fn build_match_request(
-        &self,
-        assignment: &VerifiedAssignment,
-        inputs: &MatchInputs,
-    ) -> Result<(reqwest::RequestBuilder, channel::ResponseOpener), ClientError> {
-        let plaintext = inputs.to_cbor().map_err(|_| ClientError::MalformedResult)?;
-        let (sealed, opener) = assignment
-            .requester
-            .seal(&plaintext, &mut UnwrapErr(SysRng))
-            .map_err(ClientError::Channel)?;
-        let url = format!(
-            "{}/v1/matches",
-            self.config.host_url().as_str().trim_end_matches('/')
-        );
-        let request = self.http.post(url).json(&MatchRequestBody {
-            ciphertext: STANDARD.encode(sealed.into_bytes()),
-        });
-
-        Ok((request, opener))
     }
 
     /// Runs a match against the enclave `assignment` names.
@@ -247,25 +208,42 @@ impl FaceVerifierClient {
         &self,
         assignment: &VerifiedAssignment,
         inputs: &MatchInputs,
-        now: SystemTime,
     ) -> Result<MatchResult, ClientError> {
-        let (request, opener) = self.build_match_request(assignment, inputs)?;
-        self.request_match_with(request, opener, now).await
+        self.request_match_with(assignment, inputs, |request| request)
+            .await
     }
-    /// Sends a caller-customizable match request and verifies its response.
-    ///
-    /// The `request` and `opener` must come from the same call to [`Self::build_match_request`].
+
+    /// Runs a match after allowing the caller to customize its request builder.
     ///
     /// # Errors
     ///
-    /// Returns [`ClientError`] if the request fails or its response cannot be verified.
-    pub async fn request_match_with(
+    /// Returns [`ClientError`] if creating or sending the request fails, or its response cannot be
+    /// verified.
+    pub async fn request_match_with<F>(
         &self,
-        request: reqwest::RequestBuilder,
-        opener: channel::ResponseOpener,
-        now: SystemTime,
-    ) -> Result<MatchResult, ClientError> {
-        let response = request.send().await.map_err(ClientError::Request)?;
+        assignment: &VerifiedAssignment,
+        inputs: &MatchInputs,
+        customize: F,
+    ) -> Result<MatchResult, ClientError>
+    where
+        F: FnOnce(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+    {
+        let plaintext = inputs.to_cbor().map_err(|_| ClientError::MalformedResult)?;
+        let (sealed, opener) = assignment
+            .requester
+            .seal(&plaintext, &mut UnwrapErr(SysRng))
+            .map_err(ClientError::Channel)?;
+        let url = format!(
+            "{}/v1/matches",
+            self.config.host_url().as_str().trim_end_matches('/')
+        );
+        let request = self.http.post(url).json(&MatchRequestBody {
+            ciphertext: STANDARD.encode(sealed.into_bytes()),
+        });
+        let response = customize(request)
+            .send()
+            .await
+            .map_err(ClientError::Request)?;
 
         let status = response.status();
         if !status.is_success() {
@@ -289,10 +267,9 @@ impl FaceVerifierClient {
 
         // Only a statement needs the key, so a rejection skips the attestation entirely.
         if let MatchResult::Success(statement) = &result {
-            // Verified as of `now`: the document came sealed from the enclave that just answered.
             let attested = self
                 .verifier
-                .verify(&statement.signing_key_attestation, now)?;
+                .verify(&statement.signing_key_attestation, SystemTime::now())?;
             let signing_key = <[u8; 32]>::try_from(attested.enclave_public_key.as_slice())
                 .map_err(|_| ClientError::InvalidSigningKey)
                 .and_then(|bytes| {
