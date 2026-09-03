@@ -1,5 +1,7 @@
 # Embedding Verifier
 
+TODO: This Readme contains a lot of AI slob and needs to be fully reworked once we move out of prototyping phase.
+
 Rust workspaces for the embedding verifier host and secure enclave.
 
 ## Structure
@@ -196,7 +198,6 @@ Only the requester can open any of it — a second channel to the same enclave k
 The signing key's attestation is a separate document from the encryption key's on purpose: it
 outlives the exchange and is carried into the `DeepFace` proof, while the encryption key's is
 transport setup discarded with the channel.
-
 
 The host learns only that the enclave answered. Once a request has been opened there is a sealed
 channel to reply on, so everything the enclave discovers from that point — a malformed payload, an

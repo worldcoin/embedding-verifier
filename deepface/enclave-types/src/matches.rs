@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::EnclaveError;
 
-/// Requests a 3-way face match. One field, because all three frames arrive sealed inside it and
-/// the host has nothing of its own to add.
+/// Requests a 3-way face match.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchRequest {
     /// The sealed request: `enc || ciphertext`, relayed verbatim.

@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 /// `POST /v1/matches` request.
-///
-/// One field. Every input the enclave needs is sealed inside it, so the host has nothing to look
-/// up, nothing to fetch, and no plaintext field it could be induced to act on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchRequestBody {
     /// The sealed match request, base64.

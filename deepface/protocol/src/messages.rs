@@ -34,11 +34,6 @@ pub struct MatchInputs {
     #[serde(with = "serde_bytes")]
     pub hashes_json: Vec<u8>,
     /// The RP's challenge frame, as the requester downloaded it.
-    ///
-    /// Nothing in here proves it is the frame the RP issued. The enclave commits to what it
-    /// actually compared, as `challenger_image_hash`, and the RP rejects a statement whose hash is
-    /// not the one it retained -- that check is the whole binding, and dropping it would let a
-    /// requester choose its own challenge.
     #[serde(with = "serde_bytes")]
     pub challenge_image: Vec<u8>,
     /// Minimum similarity the RP requires.
