@@ -216,8 +216,6 @@ async fn matches_rejects_a_non_base64_ciphertext() {
     assert_eq!(body["error"]["code"], "invalid_request");
 }
 
-/// The limit is axum's to enforce but the envelope is ours. Without the mapping the extractor
-/// answers a bare `413` with no `code`, which is the one failure a client cannot classify.
 #[tokio::test]
 async fn matches_rejects_a_body_over_the_limit_with_an_envelope() {
     let state = state_with(StubEnclaveClient::default());
