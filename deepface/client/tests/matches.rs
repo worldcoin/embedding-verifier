@@ -20,9 +20,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use deepface_client::nitro::PcrMeasurement;
 use deepface_client::{ClientError, Config, FaceVerifierClient, Requester, VerifiedAssignment};
 use deepface_protocol::match_token::MatchToken;
-use deepface_protocol::messages::{
-    AttestedStatement, CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, FailureReason, MatchInputs, MatchResult,
-};
+use deepface_protocol::messages::{AttestedStatement, FailureReason, MatchInputs, MatchResult};
 use getrandom::SysRng;
 use hex_literal::hex;
 use serde_json::{Value, json};
@@ -30,9 +28,6 @@ use serde_json::{Value, json};
 fn instant() -> SystemTime {
     UNIX_EPOCH + Duration::from_millis(1_758_628_609_915)
 }
-
-/// The challenge object the RP uploaded. Opaque to the client, which only relays it.
-const CHALLENGE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 
 fn config(base_url: &str) -> Config {
     let pcrs = vec![PcrMeasurement::new(
@@ -52,8 +47,7 @@ fn inputs() -> MatchInputs {
         credential_image: b"credential-thumbnail".to_vec(),
         light_guard_image: None,
         hashes_json: br#"{"thumbnail.png":"aa"}"#.to_vec(),
-        challenge_image_key: [7u8; CHALLENGE_KEY_LEN],
-        challenge_image_iv: [9u8; CHALLENGE_IV_LEN],
+        challenge_image: b"challenge-frame".to_vec(),
         match_threshold: 0.5,
     }
 }
@@ -189,12 +183,7 @@ async fn a_sealed_rejection_round_trips() {
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
 
     let result = client
-        .request_match(
-            &assignment_for(&responder),
-            &inputs(),
-            CHALLENGE_ID,
-            instant(),
-        )
+        .request_match(&assignment_for(&responder), &inputs(), instant())
         .await
         .expect("a rejection is a normal return");
 
@@ -202,7 +191,6 @@ async fn a_sealed_rejection_round_trips() {
 
     // The wire shape the host reads.
     let body = seen.lock().expect("lock should be held").clone().unwrap();
-    assert_eq!(body["challenge_image_id"], CHALLENGE_ID);
     assert!(
         STANDARD
             .decode(body["ciphertext"].as_str().unwrap())
@@ -211,8 +199,8 @@ async fn a_sealed_rejection_round_trips() {
     );
     assert_eq!(
         body.as_object().map(serde_json::Map::len),
-        Some(2),
-        "the request carries the id and the ciphertext, nothing else"
+        Some(1),
+        "the request carries the ciphertext and nothing else"
     );
 }
 
@@ -223,12 +211,7 @@ async fn a_reply_from_another_exchange_cannot_be_opened() {
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
 
     let error = client
-        .request_match(
-            &assignment_for(&responder),
-            &inputs(),
-            CHALLENGE_ID,
-            instant(),
-        )
+        .request_match(&assignment_for(&responder), &inputs(), instant())
         .await
         .expect_err("a reply sealed on another exchange must not open");
 
@@ -242,12 +225,7 @@ async fn a_stale_assignment_asks_for_a_reassignment() {
     let responder = Responder::generate(&mut UnwrapErr(SysRng));
 
     let error = client
-        .request_match(
-            &assignment_for(&responder),
-            &inputs(),
-            CHALLENGE_ID,
-            instant(),
-        )
+        .request_match(&assignment_for(&responder), &inputs(), instant())
         .await
         .expect_err("a 409 is an error, not a result");
 
@@ -259,19 +237,14 @@ async fn a_stale_assignment_asks_for_a_reassignment() {
 
 #[tokio::test]
 async fn other_envelopes_keep_their_code_and_retry_flag() {
-    let base_url = serve_error(StatusCode::BAD_GATEWAY, "challenge_fetch_failed", true).await;
+    let base_url = serve_error(StatusCode::PAYLOAD_TOO_LARGE, "request_too_large", false).await;
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
     let responder = Responder::generate(&mut UnwrapErr(SysRng));
 
     let error = client
-        .request_match(
-            &assignment_for(&responder),
-            &inputs(),
-            CHALLENGE_ID,
-            instant(),
-        )
+        .request_match(&assignment_for(&responder), &inputs(), instant())
         .await
-        .expect_err("a 502 is an error");
+        .expect_err("a 413 is an error");
 
     match error {
         ClientError::Api {
@@ -279,9 +252,9 @@ async fn other_envelopes_keep_their_code_and_retry_flag() {
             code,
             allow_retry,
         } => {
-            assert_eq!(status, 502);
-            assert_eq!(code, "challenge_fetch_failed");
-            assert!(allow_retry);
+            assert_eq!(status, 413);
+            assert_eq!(code, "request_too_large");
+            assert!(!allow_retry);
         }
         other => panic!("expected an envelope, got {other:?}"),
     }
@@ -298,14 +271,9 @@ async fn a_status_without_an_envelope_still_surfaces() {
     let responder = Responder::generate(&mut UnwrapErr(SysRng));
 
     let error = client
-        .request_match(
-            &assignment_for(&responder),
-            &inputs(),
-            CHALLENGE_ID,
-            instant(),
-        )
+        .request_match(&assignment_for(&responder), &inputs(), instant())
         .await
-        .expect_err("a 502 is an error");
+        .expect_err("a 413 is an error");
 
     assert!(matches!(error, ClientError::Status(502)), "got {error:?}");
 }
@@ -324,12 +292,7 @@ async fn a_statement_whose_attestation_does_not_verify_is_rejected() {
         let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
 
         let error = client
-            .request_match(
-                &assignment_for(&responder),
-                &inputs(),
-                CHALLENGE_ID,
-                instant(),
-            )
+            .request_match(&assignment_for(&responder), &inputs(), instant())
             .await
             .expect_err("an unverifiable attestation must not yield a statement");
 

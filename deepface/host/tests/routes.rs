@@ -8,10 +8,9 @@ mod common;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use common::{StubChallengeSource, StubEnclaveClient, state_with, state_with_source};
+use common::{StubEnclaveClient, state_with};
 use deepface_enclave_types::EnclaveError;
 use deepface_host::AppState;
-use deepface_host::challenge_fetcher::FetchError;
 use deepface_host::enclave::EnclaveClientError;
 use deepface_host::routes;
 use http_body_util::BodyExt as _;
@@ -51,16 +50,9 @@ fn assignment_request() -> Request<Body> {
         .expect("request should be valid")
 }
 
-/// A well-formed challenge id. The route never parses it — the fetcher does — so the stub sources
-/// below answer regardless, and this only has to be shaped like what a client would send.
-const CHALLENGE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
-
-/// Builds a match request with a well-formed challenge id.
-fn match_request(id: &str) -> Request<Body> {
-    let body = format!(
-        r#"{{"challenge_image_id":"{id}","ciphertext":"{}"}}"#,
-        STANDARD.encode("sealed")
-    );
+/// Builds a match request carrying `ciphertext` and nothing else.
+fn match_request(ciphertext: &str) -> Request<Body> {
+    let body = format!(r#"{{"ciphertext":"{ciphertext}"}}"#);
 
     Request::builder()
         .method(Method::POST)
@@ -171,20 +163,16 @@ async fn assignment_surfaces_enclave_failures_as_structured_errors() {
 
 /// No key is configured, and the stub panics if asked: the match route makes no key call.
 #[tokio::test]
-async fn matches_relays_the_sealed_request_and_the_fetched_challenge() {
-    let state = state_with_source(
-        StubEnclaveClient {
-            match_result: Some(Ok(deepface_enclave_types::MatchResponse {
-                ciphertext: vec![9u8; 48],
-            })),
-            expected_body: Some(b"sealed".to_vec()),
-            expected_challenge: Some(b"challenge-ciphertext".to_vec()),
-            ..StubEnclaveClient::default()
-        },
-        StubChallengeSource::returning(b"challenge-ciphertext"),
-    );
+async fn matches_relays_the_sealed_request_verbatim() {
+    let state = state_with(StubEnclaveClient {
+        match_result: Some(Ok(deepface_enclave_types::MatchResponse {
+            ciphertext: vec![9u8; 48],
+        })),
+        expected_body: Some(b"sealed".to_vec()),
+        ..StubEnclaveClient::default()
+    });
 
-    let (status, body) = send(state, match_request(CHALLENGE_ID)).await;
+    let (status, body) = send(state, match_request(&STANDARD.encode("sealed"))).await;
 
     assert_eq!(status, StatusCode::OK);
     // Relayed opaquely: the host encodes, it does not interpret.
@@ -205,9 +193,7 @@ async fn matches_rejects_a_non_base64_ciphertext() {
         .method(Method::POST)
         .uri("/v1/matches")
         .header("content-type", "application/json")
-        .body(Body::from(format!(
-            r#"{{"challenge_image_id":"{CHALLENGE_ID}","ciphertext":"not base64!"}}"#
-        )))
+        .body(Body::from(r#"{"ciphertext":"not base64!"}"#))
         .expect("request should be valid");
 
     let (status, body) = send(state, request).await;
@@ -217,42 +203,18 @@ async fn matches_rejects_a_non_base64_ciphertext() {
 }
 
 #[tokio::test]
-async fn matches_attributes_fetch_failures_outward() {
-    // The bucket is an availability dependency of this path, so its failures are a 502 and never
-    // an enclave fault.
-    let cases = [
-        (
-            FetchError::Unreachable,
-            StatusCode::BAD_GATEWAY,
-            "challenge_fetch_failed",
-            true,
-        ),
-        (
-            FetchError::TooLarge,
-            StatusCode::BAD_GATEWAY,
-            "challenge_fetch_failed",
-            false,
-        ),
-        (
-            FetchError::InvalidId,
-            StatusCode::BAD_REQUEST,
-            "invalid_challenge_id",
-            false,
-        ),
-    ];
+async fn matches_rejects_a_body_over_the_limit_with_an_envelope() {
+    let state = state_with(StubEnclaveClient::default());
 
-    for (error, expected_status, expected_code, retryable) in cases {
-        let state = state_with_source(
-            StubEnclaveClient::default(),
-            StubChallengeSource::failing(error),
-        );
+    // One byte of ciphertext past the ceiling, so the limit rejects it before any parsing.
+    let oversized = "A".repeat(routes::MAX_MATCH_BODY_BYTES + 1);
 
-        let (status, body) = send(state, match_request(CHALLENGE_ID)).await;
+    let (status, body) = send(state, match_request(&oversized)).await;
 
-        assert_eq!(status, expected_status, "for {error:?}");
-        assert_eq!(body["error"]["code"], expected_code, "for {error:?}");
-        assert_eq!(body["allowRetry"], retryable, "for {error:?}");
-    }
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(body["error"]["code"], "request_too_large");
+    // Not retryable: the same body would be refused again.
+    assert_eq!(body["allowRetry"], false);
 }
 
 #[tokio::test]
@@ -266,7 +228,7 @@ async fn matches_maps_an_unopenable_request_to_conflict() {
         ..StubEnclaveClient::default()
     });
 
-    let (status, body) = send(state, match_request(CHALLENGE_ID)).await;
+    let (status, body) = send(state, match_request(&STANDARD.encode("sealed"))).await;
 
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["error"]["code"], "reassign_required");
@@ -283,7 +245,7 @@ async fn matches_answers_200_whatever_the_sealed_result_says() {
         ..StubEnclaveClient::default()
     });
 
-    let (status, body) = send(state, match_request(CHALLENGE_ID)).await;
+    let (status, body) = send(state, match_request(&STANDARD.encode("sealed"))).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["response_ciphertext"], STANDARD.encode([9u8; 48]));

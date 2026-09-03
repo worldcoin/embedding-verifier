@@ -24,6 +24,4 @@ pub enum Error {
     UnexpectedAlgorithm,
     /// A token's signature did not verify under the supplied public key.
     SignatureInvalid,
-    /// The challenge image did not authenticate under the supplied key and IV.
-    ChallengeDecryptFailed,
 }

@@ -12,9 +12,6 @@ publish = true
 # In the deepface-enclave graph, so nothing here is inherited from the root workspace.
 # See the note in the root Cargo.toml.
 [dependencies]
-# Challenge images: the RP writes AES-256-GCM blobs to S3, which fixes the algorithm. Same
-# version as `attested-channel`'s HPKE suite, so the enclave links one AEAD.
-aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
 ark-babyjubjub = { package = "taceo-ark-babyjubjub", version = "0.5" }
 ark-ff = "0.5"
 attested-channel = { version = "0.1.0", path = "../../shared/attested-channel" }

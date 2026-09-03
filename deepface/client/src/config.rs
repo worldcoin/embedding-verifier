@@ -20,7 +20,7 @@ const fn default_connect_timeout_millis() -> u64 {
 }
 
 const fn default_request_timeout_millis() -> u64 {
-    10_000
+    60_000
 }
 
 /// Failures while building a [`Config`].
@@ -233,6 +233,6 @@ mod tests {
 
         let config = Config::from_json(json).expect("config should parse");
 
-        assert_eq!(config.request_timeout(), Duration::from_secs(10));
+        assert_eq!(config.request_timeout(), Duration::from_mins(1));
     }
 }

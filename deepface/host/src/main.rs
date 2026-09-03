@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use deepface_host::{
-    AppState, Environment, challenge_fetcher::ChallengeFetcher, enclave::PontifexEnclaveClient,
-};
+use deepface_host::{AppState, Environment, enclave::PontifexEnclaveClient};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -17,12 +15,7 @@ async fn main() -> anyhow::Result<()> {
         environment.enclave_cid(),
         environment.enclave_port(),
     ));
-    // A missing or broken base URL fails the boot, not the first request.
-    let challenge_source = Arc::new(ChallengeFetcher::new(
-        &environment.challenge_image_base_url(),
-    )?);
-
-    let state = AppState::new(environment, enclave_client, challenge_source);
+    let state = AppState::new(environment, enclave_client);
 
     deepface_host::server::start(state).await
 }
