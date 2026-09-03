@@ -4,7 +4,7 @@ use std::time::SystemTime;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-use attested_channel::channel::{ChannelError, Requester, SealedResponse, UnwrapErr};
+use attested_channel::channel::{self, ChannelError, Requester, SealedResponse, UnwrapErr};
 use attested_channel::nitro::{
     EnclaveAttestationError, EnclaveAttestationVerifier, VerifiedAttestation,
 };
@@ -16,12 +16,6 @@ use flamingo_verifier_protocol::messages::{MatchInputs, MatchResult};
 use getrandom::SysRng;
 
 use crate::config::Config;
-
-/// Path of the assignment endpoint.
-const ASSIGNMENT_PATH: &str = "/v1/enclave-assignment";
-
-/// Path of the match endpoint.
-const MATCHES_PATH: &str = "/v1/matches";
 
 /// Error code the host uses for a request that did not open.
 const REASSIGN_REQUIRED: &str = "reassign_required";
@@ -124,11 +118,33 @@ impl FaceVerifierClient {
             .build()
             .map_err(ClientError::Transport)?;
 
-        Ok(Self {
+        Ok(Self::with_http_client(config, http))
+    }
+
+    /// Builds a client using an externally configured HTTP client.
+    ///
+    /// The supplied client controls transport settings such as default headers, proxies,
+    /// cookies, and timeouts; timeout values from `config` are not applied to it.
+    #[must_use]
+    pub fn with_http_client(config: Config, http: reqwest::Client) -> Self {
+        Self {
             verifier: config.verifier(),
             http,
             config,
-        })
+        }
+    }
+
+    /// Creates the assignment request without sending it.
+    ///
+    /// Callers may customize the returned builder before passing it to
+    /// [`Self::request_assignment_with`].
+    #[must_use]
+    pub fn build_assignment_request(&self) -> reqwest::RequestBuilder {
+        let url = format!(
+            "{}/v1/enclave-assignment",
+            self.config.host_url().as_str().trim_end_matches('/')
+        );
+        self.http.post(url)
     }
 
     /// Requests an assignment and returns it only if its attestation verifies.
@@ -141,16 +157,22 @@ impl FaceVerifierClient {
         &self,
         now: SystemTime,
     ) -> Result<VerifiedAssignment, ClientError> {
-        let url = format!(
-            "{}{ASSIGNMENT_PATH}",
-            self.config.host_url().as_str().trim_end_matches('/')
-        );
-        let response = self
-            .http
-            .post(url)
-            .send()
+        self.request_assignment_with(self.build_assignment_request(), now)
             .await
-            .map_err(ClientError::Request)?;
+    }
+
+    /// Sends a caller-customizable assignment request and verifies its response.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the request fails, the host answers with an error status,
+    /// or the attestation document does not verify.
+    pub async fn request_assignment_with(
+        &self,
+        request: reqwest::RequestBuilder,
+        now: SystemTime,
+    ) -> Result<VerifiedAssignment, ClientError> {
+        let response = request.send().await.map_err(ClientError::Request)?;
 
         let status = response.status();
         if !status.is_success() {
@@ -174,6 +196,35 @@ impl FaceVerifierClient {
         })
     }
 
+    /// Creates a sealed match request without sending it.
+    ///
+    /// Callers may customize the returned builder before passing it to
+    /// [`Self::request_match_with`]. The returned opener must be passed alongside that builder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if serializing or sealing the request fails.
+    pub fn build_match_request(
+        &self,
+        assignment: &VerifiedAssignment,
+        inputs: &MatchInputs,
+    ) -> Result<(reqwest::RequestBuilder, channel::ResponseOpener), ClientError> {
+        let plaintext = inputs.to_cbor().map_err(|_| ClientError::MalformedResult)?;
+        let (sealed, opener) = assignment
+            .requester
+            .seal(&plaintext, &mut UnwrapErr(SysRng))
+            .map_err(ClientError::Channel)?;
+        let url = format!(
+            "{}/v1/matches",
+            self.config.host_url().as_str().trim_end_matches('/')
+        );
+        let request = self.http.post(url).json(&MatchRequestBody {
+            ciphertext: STANDARD.encode(sealed.into_bytes()),
+        });
+
+        Ok((request, opener))
+    }
+
     /// Runs a match against the enclave `assignment` names.
     ///
     /// [`MatchResult::Failed`] is a normal return, not an error. A statement is verified against the
@@ -190,25 +241,23 @@ impl FaceVerifierClient {
         inputs: &MatchInputs,
         now: SystemTime,
     ) -> Result<MatchResult, ClientError> {
-        let plaintext = inputs.to_cbor().map_err(|_| ClientError::MalformedResult)?;
-        let (sealed, opener) = assignment
-            .requester
-            .seal(&plaintext, &mut UnwrapErr(SysRng))
-            .map_err(ClientError::Channel)?;
-
-        let url = format!(
-            "{}{MATCHES_PATH}",
-            self.config.host_url().as_str().trim_end_matches('/')
-        );
-        let response = self
-            .http
-            .post(url)
-            .json(&MatchRequestBody {
-                ciphertext: STANDARD.encode(sealed.into_bytes()),
-            })
-            .send()
-            .await
-            .map_err(ClientError::Request)?;
+        let (request, opener) = self.build_match_request(assignment, inputs)?;
+        self.request_match_with(request, opener, now).await
+    }
+    /// Sends a caller-customizable match request and verifies its response.
+    ///
+    /// The `request` and `opener` must come from the same call to [`Self::build_match_request`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the request fails or its response cannot be verified.
+    pub async fn request_match_with(
+        &self,
+        request: reqwest::RequestBuilder,
+        opener: channel::ResponseOpener,
+        now: SystemTime,
+    ) -> Result<MatchResult, ClientError> {
+        let response = request.send().await.map_err(ClientError::Request)?;
 
         let status = response.status();
         if !status.is_success() {
