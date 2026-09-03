@@ -133,9 +133,6 @@ impl FaceVerifierClient {
 
     /// Requests an assignment and returns it only if its attestation verifies.
     ///
-    /// No retry: the endpoint costs an NSM attestation per call, and the spec already has the
-    /// authenticator re-assigning when a match fails.
-    ///
     /// # Errors
     ///
     /// Returns [`ClientError`] if the request fails, the host answers with an error status,
@@ -182,8 +179,7 @@ impl FaceVerifierClient {
     /// [`MatchResult::Failed`] is a normal return, not an error. A statement is verified against the
     /// attested signing key first; call [`match_token::verify`] again to read its claims.
     ///
-    /// The caller supplies all three frames in `inputs`, challenge image included: it downloads
-    /// that frame from the RP itself, so nothing here needs to know where the RP keeps it.
+    /// The caller supplies all three frames in `inputs`, challenge image included.
     ///
     /// # Errors
     ///
