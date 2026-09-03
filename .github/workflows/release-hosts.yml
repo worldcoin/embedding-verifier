@@ -5,6 +5,7 @@ on:
     tags:
       - "deepface-host/v*"
       - "di-host/v*"
+  pull_request:
   workflow_dispatch:
     inputs:
       workload:
@@ -55,6 +56,10 @@ jobs:
             workload="${GITHUB_REF_NAME%%-host/*}"
             version="${GITHUB_REF_NAME#*/v}"
             publish=true
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            workload=""
+            version=test
+            publish=false
           else
             workload="$INPUT_WORKLOAD"
             version="$INPUT_VERSION"
