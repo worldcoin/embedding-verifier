@@ -59,18 +59,6 @@ let
               "oci:$out:${version}"
           '';
 
-      ociRootfs =
-        pkgs.runCommand "${pname}-oci-rootfs-${version}"
-          {
-            nativeBuildInputs = [ pkgs.umoci ];
-          }
-          ''
-            umoci raw unpack \
-              --rootless \
-              --image "${ociImage}:${version}" \
-              "$out"
-          '';
-
       eif = nitroLib.buildEif {
         name = pname;
         inherit version;
@@ -79,7 +67,7 @@ let
         kernelConfig = nitroBlobs.kernelConfig;
         nsmKo = nitroBlobs.nsmKo;
         init = nitroBlobs.init;
-        copyToRoot = ociRootfs;
+        copyToRoot = root;
         copyToRootWithClosure = false;
         entrypoint = "/bin/${pname}";
         env = ''

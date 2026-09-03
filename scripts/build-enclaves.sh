@@ -8,7 +8,7 @@ set -euo pipefail
 #
 # Needs x86_64-linux. Nitro hardware is only needed to run.
 #
-# Usage: scripts/build-eif.sh [--workload <name>] [--allow-dirty] [output-dir]
+# Usage: scripts/build-enclaves.sh [--workload <name>] [--allow-dirty] [output-dir]
 #        (workload defaults to deepface, output-dir to target/eif)
 #
 # Outputs in <output-dir>:
@@ -23,7 +23,7 @@ WORKLOADS=("deepface" "di")
 
 usage() {
   printf '%s\n' \
-    "Usage: scripts/build-eif.sh [--workload <name>] [--allow-dirty] [output-dir]" \
+    "Usage: scripts/build-enclaves.sh [--workload <name>] [--allow-dirty] [output-dir]" \
     "" \
     "Build a workload's enclave EIF and emit its PCR measurements." \
     "" \
@@ -112,7 +112,7 @@ trap 'rm -rf "$work_dir"' EXIT
 # matching `nix flake update` would otherwise be resolved to whatever upstream serves right
 # now, and the lock silently rewritten. The PCRs must follow the committed lock or nothing.
 if [[ "$workload" == "deepface" ]]; then
-  echo "[1/3] Fetching face models..."
+  echo "Fetching face models..."
   models_json="$(nix eval --json --no-update-lock-file .#faceModels)"
 
   for file in $(jq -r 'keys[]' <<<"$models_json"); do
@@ -156,7 +156,7 @@ if [[ "$workload" == "deepface" ]]; then
   done
 fi
 
-echo "[2/4] Building reproducible $workload OCI image..."
+echo "Building reproducible $workload OCI image..."
 if ! oci_store=$(nix build ".#${workload}-oci" --no-update-lock-file --no-link --print-out-paths); then
   echo >&2
   echo "[ERROR] OCI image build failed; the error above says why. A 'platform" >&2
@@ -164,7 +164,7 @@ if ! oci_store=$(nix build ".#${workload}-oci" --no-update-lock-file --no-link -
   exit 1
 fi
 
-echo "[3/4] Building $workload EIF..."
+echo "Building $workload EIF..."
 if ! eif_store=$(nix build ".#${workload}-eif" --no-update-lock-file --no-link --print-out-paths); then
   echo >&2
   echo "[ERROR] EIF build failed; the error above says why." >&2
@@ -174,7 +174,7 @@ fi
 install -m 0644 "$eif_store/image.eif" "$out_dir/$workload-enclave.eif"
 install -m 0644 "$eif_store/pcr.json" "$out_dir/$workload-pcr.json"
 
-echo "[4/4] Recording measurements..."
+echo "Validating measurements..."
 # Registering a missing or malformed PCR with a client would weaken verification.
 for pcr in PCR0 PCR1 PCR2; do
   value="$(jq -r --arg k "$pcr" '.[$k] // ""' "$out_dir/$workload-pcr.json")"

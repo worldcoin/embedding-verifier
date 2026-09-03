@@ -5,7 +5,7 @@ build/
 .git/
 .github/
 
-# Private model artifacts are fetched into the Nix store by scripts/build-eif.sh.
+# Private model artifacts are fetched into the Nix store by scripts/build-enclaves.sh.
 models/
 
 # Local editor / OS cruft.
