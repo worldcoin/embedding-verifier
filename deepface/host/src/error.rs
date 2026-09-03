@@ -13,7 +13,6 @@ use axum::{
 use deepface_api_types::{ApiErrorResponse, ErrorBody};
 use deepface_enclave_types::EnclaveError;
 
-use crate::challenge_fetcher::FetchError;
 use crate::enclave::EnclaveClientError;
 
 /// An API failure, with the status and body to return for it.
@@ -62,35 +61,6 @@ impl AppError {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         self.code
-    }
-
-    /// Maps a challenge-image fetch failure.
-    ///
-    /// The bucket is an availability dependency, so its failures are `502` and never an enclave
-    /// fault. A rejected id is the caller's problem, and not retryable.
-    #[must_use]
-    pub fn challenge_fetch(error: FetchError) -> Self {
-        match error {
-            FetchError::InvalidId => Self::new(
-                StatusCode::BAD_REQUEST,
-                "invalid_challenge_id",
-                "The challenge image id was rejected",
-                false,
-            ),
-            FetchError::TooLarge => Self::new(
-                StatusCode::BAD_GATEWAY,
-                "challenge_fetch_failed",
-                "The challenge image was too large",
-                false,
-            ),
-            FetchError::Unreachable => Self::new(
-                StatusCode::BAD_GATEWAY,
-                "challenge_fetch_failed",
-                "The challenge image could not be fetched",
-                true,
-            ),
-        }
-        .with_detail(format!("{error:?}"))
     }
 
     /// Maps an enclave failure on the assignment route.

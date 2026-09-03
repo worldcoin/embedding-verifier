@@ -73,12 +73,9 @@ done
 
 ```bash
 # Run the host on http://localhost:8000
-# ENCLAVE_CID, ENCLAVE_PORT and CHALLENGE_IMAGE_BASE_URL are required; the process panics
-# without them. The host pins no measurements of its own -- it is the untrusted side, and it is
-# the client that pins PCR0.
-RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 \
-  CHALLENGE_IMAGE_BASE_URL=https://bucket.example.com/challenges/ \
-  cargo run --bin deepface-host
+# ENCLAVE_CID and ENCLAVE_PORT are required; the process panics without them. The host pins no
+# measurements of its own -- it is the untrusted side, and it is the client that pins PCR0.
+RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin deepface-host
 curl http://localhost:8000/health
 
 # Run the secure enclave placeholder
@@ -166,16 +163,22 @@ VERIFIER_CONFIG=./client.json cargo run --bin deepface-e2e -- <credential> <live
 ## Matches
 
 `POST /v1/matches` compares a credential image against a live frame and the RP's challenge
-frame. The host relays but cannot read either input:
+frame. The host relays but cannot read anything it carries:
 
 ```json
-{ "challenge_image_id": "<uuid>", "ciphertext": "<base64 enc || ciphertext>" }
+{ "ciphertext": "<base64 enc || ciphertext>" }
 ```
 
-`ciphertext` is the match inputs sealed to the enclave's attested encryption key — both
-images, `hashes.json`, and the AES-256-GCM key and IV for the challenge image. The challenge
-image itself never travels: it is uploaded encrypted, and the host fetches that blob holding no
-key for it. A swapped object therefore fails inside the enclave rather than changing the result.
+`ciphertext` is the match inputs sealed to the enclave's attested encryption key — all three
+frames and `hashes.json`. The requester downloads the challenge frame from the RP and seals it
+along with the rest, so the host has nothing to look up and no plaintext field it could be
+steered by.
+
+Nothing in the payload proves the challenge frame is the one the RP issued. The enclave commits to
+whatever it compared, as `challenger_image_hash`, and the RP rejects a statement whose hash is not
+the one it retained — that comparison is the entire binding. It replaced an AES-256-GCM layer the
+RP used to apply, which added a second key exchange but no secrecy: the requester already held the
+key, and the host could read neither form.
 
 The sealed payload also carries an optional `light_guard_image`, a second liveness frame. Omitting
 it selects vanilla mode, the flow described here. Sending one selects LightGuard — challenge-response
@@ -197,35 +200,33 @@ transport setup discarded with the channel.
 
 The host learns only that the enclave answered. Once a request has been opened there is a sealed
 channel to reply on, so everything the enclave discovers from that point — a malformed payload, an
-unusable `hashes.json`, an image refused on quality grounds, a below-threshold score, a challenge
-blob that would not decrypt — travels inside `response_ciphertext`. None of it reaches the status
-code.
+unusable `hashes.json`, an image refused on quality grounds, a below-threshold score, an unusable
+challenge frame — travels inside `response_ciphertext`. None of it reaches the status code.
 
 | Status | Meaning |
 | --- | --- |
 | `200` | The enclave answered; the sealed payload holds the outcome |
 | `409` `reassign_required` | The request did not open, so there was no channel to reply on; re-assign and re-seal, once |
-| `400` `invalid_challenge_id` | The id was not a UUID, and was rejected before any request was made |
-| `502` `challenge_fetch_failed` | The challenge image could not be fetched |
+| `413` `request_too_large` | The body exceeded the route's ceiling; nothing was forwarded |
+| `400` `invalid_request` | The body was not the expected JSON, or `ciphertext` was not base64 |
 | `500` `internal_error` | Enclave fault |
 
-`409` is the only input failure with a status of its own, because with no channel open there is
-nothing to seal a reply into. Everything else the host might want — how often matches fail, how often
-the RP's objects are stale — has to come from enclave-side metrics rather than from status codes.
+`409` is the only *opened*-request failure with a status of its own, because with no channel open
+there is nothing to seal a reply into. Everything else the host might want — how often matches fail,
+how often a requester sends an unusable frame — has to come from enclave-side metrics rather than
+from status codes. A challenge frame the requester could not download never reaches this service at
+all, so do not look for it here.
 
-### The challenge fetch
+### The body ceiling
 
-The caller names an object, not a destination. `CHALLENGE_IMAGE_BASE_URL` — an HTTPS URL ending in
-`/`, e.g. `https://<bucket>.s3.<region>.amazonaws.com/challenges/` — is the only thing deciding
-where a fetch goes, and the id is resolved against it after parsing as a UUID. Nothing a client
-sends can change the host, scheme, port or path, which is what closes the SSRF surface rather than
-filtering it. There is no default: without the variable the host refuses to start.
+All three frames arrive inside one sealed payload, so the request body is the only thing bounding
+what the host buffers and what the enclave is then asked to allocate — the vsock framing takes the
+host's word for a length. `MAX_BODY_BYTES` in `deepface/host/src/routes/matches.rs` sets it to
+12 MiB, budgeting ~7 MiB of images plus the ~1.37x that CBOR framing, HPKE overhead and base64 add.
 
-The id is a locator, not a capability. Presenting someone else's id yields a blob that will not
-decrypt under the key in the caller's own sealed payload, and the RP's `challenger_image_hash`
-check rejects the resulting proof regardless.
-
-Around that: no redirect following, a 5s deadline, and a 4 MiB ceiling enforced while streaming.
+It hangs off the match route alone. Assignment sends no body and the health routes are `GET`s, so
+allowing multi-megabyte requests there would widen the service's ingress for nothing. Over-limit
+bodies come back as `413 request_too_large` in the usual envelope rather than as a bare status.
 
 ## Nitro-enabled development host
 

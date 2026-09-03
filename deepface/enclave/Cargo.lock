@@ -866,7 +866,6 @@ dependencies = [
 name = "deepface-protocol"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "ark-ff",
  "attested-channel",
  "ciborium",

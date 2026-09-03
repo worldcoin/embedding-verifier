@@ -19,8 +19,11 @@ const fn default_connect_timeout_millis() -> u64 {
     5_000
 }
 
+/// A match request now carries all three frames, so this covers a multi-megabyte upload over a
+/// mobile link before the enclave does any work. At the old 10s a request the enclave answered
+/// perfectly well would time out client-side on a slow uplink.
 const fn default_request_timeout_millis() -> u64 {
-    10_000
+    60_000
 }
 
 /// Failures while building a [`Config`].
@@ -233,6 +236,6 @@ mod tests {
 
         let config = Config::from_json(json).expect("config should parse");
 
-        assert_eq!(config.request_timeout(), Duration::from_secs(10));
+        assert_eq!(config.request_timeout(), Duration::from_secs(60));
     }
 }

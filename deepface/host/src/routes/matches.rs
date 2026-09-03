@@ -8,15 +8,20 @@ use crate::error::AppError;
 
 /// Largest match body this route accepts.
 ///
-/// TODO: Increase this once PR for relaying image lands
-pub const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+/// The sealed payload now carries all three frames, where it used to carry two and leave the
+/// challenge image to a separate fetch. Budgeting ~1.5 MiB each for the credential and live frames
+/// and 4 MiB for the challenge -- the ceiling the old fetch enforced -- gives ~7 MiB of images,
+/// which CBOR framing, HPKE overhead and base64 inflate by roughly a third.
+///
+/// It also bounds what the enclave is asked to allocate: the vsock framing takes the host's word
+/// for a length, so raising this raises the enclave's exposure with it.
+pub const MAX_BODY_BYTES: usize = 12 * 1024 * 1024;
 
 /// Relays a sealed match request to the enclave.
 ///
 /// # Errors
 ///
-/// Returns [`AppError`] if the body is rejected, the challenge image cannot be fetched, or the
-/// enclave rejects the request.
+/// Returns [`AppError`] if the body is rejected or the enclave rejects the request.
 pub async fn handler(
     State(state): State<AppState>,
     body: Result<Json<MatchRequestBody>, JsonRejection>,
@@ -32,24 +37,9 @@ pub async fn handler(
         )
     })?;
 
-    let challenge_ciphertext = state
-        .challenge_source()
-        .fetch(&body.challenge_image_id)
-        .await
-        .map_err(AppError::challenge_fetch)?;
-
-    tracing::info!(
-        sealed_request_bytes = ciphertext.len(),
-        challenge_ciphertext_bytes = challenge_ciphertext.len(),
-        "forwarding sealed match request to enclave"
-    );
-
     let response = state
         .enclave_client()
-        .run_match(enclave::MatchRequest {
-            body: ciphertext,
-            challenge_ciphertext,
-        })
+        .run_match(enclave::MatchRequest { body: ciphertext })
         .await
         .map_err(|error| AppError::enclave_match(&error))?;
 

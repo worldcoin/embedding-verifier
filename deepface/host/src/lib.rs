@@ -11,7 +11,6 @@
 mod app_state;
 mod environment;
 
-pub mod challenge_fetcher;
 pub mod enclave;
 pub mod error;
 pub mod routes;

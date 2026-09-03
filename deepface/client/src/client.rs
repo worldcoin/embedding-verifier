@@ -182,7 +182,8 @@ impl FaceVerifierClient {
     /// [`MatchResult::Failed`] is a normal return, not an error. A statement is verified against the
     /// attested signing key first; call [`match_token::verify`] again to read its claims.
     ///
-    /// The object at `challenge_image_id` must be encrypted under the key and IV in `inputs`.
+    /// The caller supplies all three frames in `inputs`, challenge image included: it downloads
+    /// that frame from the RP itself, so nothing here needs to know where the RP keeps it.
     ///
     /// # Errors
     ///
@@ -191,7 +192,6 @@ impl FaceVerifierClient {
         &self,
         assignment: &VerifiedAssignment,
         inputs: &MatchInputs,
-        challenge_image_id: &str,
         now: SystemTime,
     ) -> Result<MatchResult, ClientError> {
         let plaintext = inputs.to_cbor().map_err(|_| ClientError::MalformedResult)?;
@@ -208,7 +208,6 @@ impl FaceVerifierClient {
             .http
             .post(url)
             .json(&MatchRequestBody {
-                challenge_image_id: challenge_image_id.to_owned(),
                 ciphertext: STANDARD.encode(sealed.into_bytes()),
             })
             .send()

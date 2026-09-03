@@ -62,6 +62,3 @@ telemetry-batteries = { version = "0.4.0", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2", features = ["serde"] }
-# Only for parsing challenge-image ids. `default-features = false` drops the RNG and formatting
-# machinery the host never needs -- it validates ids, it does not mint them.
-uuid = { version = "1", default-features = false }

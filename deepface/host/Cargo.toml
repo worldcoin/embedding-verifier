@@ -17,15 +17,11 @@ axum.workspace = true
 base64.workspace = true
 deepface-api-types.workspace = true
 deepface-enclave-types.workspace = true
-futures-util = "0.3"
 pontifex = { workspace = true, features = ["client"] }
-reqwest.workspace = true
 serde.workspace = true
 telemetry-batteries.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-url.workspace = true
-uuid.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true

@@ -56,24 +56,6 @@ impl Environment {
         Self::required_u32("ENCLAVE_PORT")
     }
 
-    /// Returns the bucket location challenge-image ids are resolved against.
-    ///
-    /// # Panics
-    ///
-    /// Panics when `CHALLENGE_IMAGE_BASE_URL` is unset or blank. There is no safe default: the
-    /// base is the only thing deciding where a fetch goes.
-    #[must_use]
-    pub fn challenge_image_base_url(&self) -> String {
-        let base_url = Self::required("CHALLENGE_IMAGE_BASE_URL").trim().to_owned();
-
-        assert!(
-            !base_url.is_empty(),
-            "CHALLENGE_IMAGE_BASE_URL environment variable is empty"
-        );
-
-        base_url
-    }
-
     fn required(name: &str) -> String {
         env::var(name).unwrap_or_else(|_| panic!("{name} environment variable is not set"))
     }

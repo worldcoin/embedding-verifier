@@ -1,63 +1,18 @@
 //! The two ends of one match exchange: what the requester seals in, and what the enclave seals
-//! back. The host relays the ciphertext carrying both and holds no key for either.
+//! back. The host relays both ciphertexts and holds no key for either.
 
-use aes_gcm::{
-    Aes256Gcm, Key, KeyInit,
-    aead::{Aead, Nonce},
-};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::error::Error;
 use crate::match_token::MatchToken;
 
-/// AES-256-GCM key length for the challenge image.
-pub const CHALLENGE_KEY_LEN: usize = 32;
-
-/// AES-256-GCM nonce length for the challenge image.
-pub const CHALLENGE_IV_LEN: usize = 12;
-
-/// Encrypts a challenge image. Called by the RP/`DeepFace` backend.
-///
-/// The caller must never reuse a `(key, iv)` pair. AES-GCM is catastrophic under nonce reuse: two
-/// messages under the same pair leak their XOR and expose the authentication key, which permits tag
-/// forgery.
-///
-/// # Errors
-///
-/// Returns [`Error::ChallengeDecryptFailed`] if the AEAD refuses to seal, which for an in-memory
-/// plaintext should not happen.
-pub fn encrypt_challenge(
-    plaintext: &[u8],
-    key: &[u8; CHALLENGE_KEY_LEN],
-    iv: &[u8; CHALLENGE_IV_LEN],
-) -> Result<Vec<u8>, Error> {
-    Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key))
-        .encrypt(&Nonce::<Aes256Gcm>::from(*iv), plaintext)
-        .map_err(|_| Error::ChallengeDecryptFailed)
-}
-
-/// Decrypts a challenge image with the key and IV that arrived sealed.
-///
-/// # Errors
-///
-/// Returns [`Error::ChallengeDecryptFailed`] if the blob does not authenticate. A wrong key, a
-/// truncated tag, and a blob substituted by the host are indistinguishable here, and none of them
-/// is a face failing.
-pub fn decrypt_challenge(
-    ciphertext: &[u8],
-    key: &[u8; CHALLENGE_KEY_LEN],
-    iv: &[u8; CHALLENGE_IV_LEN],
-) -> Result<Vec<u8>, Error> {
-    Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key))
-        .decrypt(&Nonce::<Aes256Gcm>::from(*iv), ciphertext)
-        .map_err(|_| Error::ChallengeDecryptFailed)
-}
-
 /// The sealed inputs to one match.
 ///
-/// The challenge image is not here: the host fetches its ciphertext, and only the key and IV
-/// travel sealed.
+/// All three frames travel here. The requester downloads the challenge image from the RP and seals
+/// it alongside the other two rather than naming an object for the host to fetch: the host relays
+/// bytes it cannot read either way, so the RP's own AES layer bought no secrecy against a requester
+/// that already held its key -- only a second key exchange to get wrong.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchInputs {
     /// Channel version the requester believes it is speaking. Advisory: the HPKE `info` binds the
@@ -78,17 +33,20 @@ pub struct MatchInputs {
     /// Raw `hashes.json` bytes from the PCP.
     #[serde(with = "serde_bytes")]
     pub hashes_json: Vec<u8>,
-    /// Key the RP encrypted the challenge image under.
-    pub challenge_image_key: [u8; CHALLENGE_KEY_LEN],
-    /// IV the RP encrypted the challenge image under.
-    pub challenge_image_iv: [u8; CHALLENGE_IV_LEN],
+    /// The RP's challenge frame, as the requester downloaded it.
+    ///
+    /// Nothing in here proves it is the frame the RP issued. The enclave commits to what it
+    /// actually compared, as `challenger_image_hash`, and the RP rejects a statement whose hash is
+    /// not the one it retained -- that check is the whole binding, and dropping it would let a
+    /// requester choose its own challenge.
+    #[serde(with = "serde_bytes")]
+    pub challenge_image: Vec<u8>,
     /// Minimum similarity the RP requires.
     pub match_threshold: f32,
 }
 
 impl MatchInputs {
-    /// Encodes the inputs as CBOR. [`Zeroizing`] because it holds biometric images and the
-    /// challenge key.
+    /// Encodes the inputs as CBOR. [`Zeroizing`] because it holds biometric images.
     ///
     /// # Errors
     ///
@@ -194,31 +152,19 @@ pub enum FailureReason {
     /// The enclave could not get from the images to a score. Covers a decode failure, a quality
     /// rejection, and a matcher that failed on well-formed embeddings; the enclave log distinguishes
     /// them.
-    ImageAnalysisFailed,
-    /// The challenge blob did not authenticate under the key and IV that arrived sealed.
     ///
-    /// Sealed like the rest: it says the key inside *this* payload disagrees with the object the
-    /// host fetched, which is a fact about the plaintext. A client that sealed the wrong key and an
-    /// RP serving a stale object are indistinguishable from here.
-    ChallengeDecryptFailed,
+    /// Since the challenge image arrives sealed rather than authenticated by an AEAD, an empty or
+    /// corrupt challenge frame lands here too.
+    ImageAnalysisFailed,
 }
 
 #[cfg(test)]
 mod tests {
     use attested_channel::channel::CHANNEL_VERSION;
 
-    use super::{
-        AttestedStatement, CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, Error, FailureReason, MatchInputs,
-        MatchResult, decrypt_challenge, encrypt_challenge,
-    };
+    use super::{AttestedStatement, Error, FailureReason, MatchInputs, MatchResult};
 
     use crate::match_token::MatchToken;
-
-    /// Fresh per call: no test needs a fixed nonce, and a literal IV in the tree is both a scanner
-    /// finding and a bad example to copy.
-    fn key_and_iv() -> ([u8; CHALLENGE_KEY_LEN], [u8; CHALLENGE_IV_LEN]) {
-        (rand::random(), rand::random())
-    }
 
     fn inputs() -> MatchInputs {
         MatchInputs {
@@ -227,8 +173,7 @@ mod tests {
             credential_image: b"credential-thumbnail".to_vec(),
             light_guard_image: None,
             hashes_json: br#"{"thumbnail.png":"aa"}"#.to_vec(),
-            challenge_image_key: [7u8; CHALLENGE_KEY_LEN],
-            challenge_image_iv: [9u8; CHALLENGE_IV_LEN],
+            challenge_image: b"challenge-frame".to_vec(),
             match_threshold: 0.5,
         }
     }
@@ -243,8 +188,7 @@ mod tests {
         assert_eq!(decoded.credential_image, inputs().credential_image);
         assert_eq!(decoded.light_guard_image, inputs().light_guard_image);
         assert_eq!(decoded.hashes_json, inputs().hashes_json);
-        assert_eq!(decoded.challenge_image_key, inputs().challenge_image_key);
-        assert_eq!(decoded.challenge_image_iv, inputs().challenge_image_iv);
+        assert_eq!(decoded.challenge_image, inputs().challenge_image);
         assert_eq!(
             decoded.match_threshold.to_bits(),
             inputs().match_threshold.to_bits()
@@ -265,51 +209,39 @@ mod tests {
         );
     }
 
+    /// The shape an old requester sends, which omits the frame the enclave now expects to find
+    /// sealed. Decoding must refuse it rather than default the field to empty and compare a face
+    /// against nothing.
     #[test]
-    fn challenge_round_trips_an_rp_shaped_blob() {
-        let (key, iv) = key_and_iv();
-        let blob = encrypt_challenge(b"challenge-frame", &key, &iv).expect("should encrypt");
+    fn inputs_without_a_challenge_image_do_not_decode() {
+        #[derive(serde::Serialize)]
+        struct WithoutChallenge {
+            version: u8,
+            #[serde(with = "serde_bytes")]
+            live_image: Vec<u8>,
+            #[serde(with = "serde_bytes")]
+            credential_image: Vec<u8>,
+            #[serde(default, with = "serde_bytes")]
+            light_guard_image: Option<Vec<u8>>,
+            #[serde(with = "serde_bytes")]
+            hashes_json: Vec<u8>,
+            match_threshold: f32,
+        }
+
+        let old = WithoutChallenge {
+            version: CHANNEL_VERSION,
+            live_image: b"liveness-frame".to_vec(),
+            credential_image: b"credential-thumbnail".to_vec(),
+            light_guard_image: None,
+            hashes_json: br#"{"thumbnail.png":"aa"}"#.to_vec(),
+            match_threshold: 0.5,
+        };
+        let mut encoded = Vec::new();
+        ciborium::into_writer(&old, &mut encoded).expect("encoding should succeed");
 
         assert_eq!(
-            decrypt_challenge(&blob, &key, &iv).expect("should decrypt"),
-            b"challenge-frame"
-        );
-    }
-
-    #[test]
-    fn challenge_rejects_the_wrong_key() {
-        // Also what a host swapping the fetched object looks like from in here.
-        let (key, iv) = key_and_iv();
-        let (other_key, _) = key_and_iv();
-        let blob = encrypt_challenge(b"challenge-frame", &key, &iv).expect("should encrypt");
-
-        assert_eq!(
-            decrypt_challenge(&blob, &other_key, &iv).err(),
-            Some(Error::ChallengeDecryptFailed)
-        );
-    }
-
-    #[test]
-    fn challenge_rejects_the_wrong_iv() {
-        let (key, iv) = key_and_iv();
-        let (_, other_iv) = key_and_iv();
-        let blob = encrypt_challenge(b"challenge-frame", &key, &iv).expect("should encrypt");
-
-        assert_eq!(
-            decrypt_challenge(&blob, &key, &other_iv).err(),
-            Some(Error::ChallengeDecryptFailed)
-        );
-    }
-
-    #[test]
-    fn challenge_rejects_a_truncated_tag() {
-        let (key, iv) = key_and_iv();
-        let mut blob = encrypt_challenge(b"challenge-frame", &key, &iv).expect("should encrypt");
-        blob.pop();
-
-        assert_eq!(
-            decrypt_challenge(&blob, &key, &iv).err(),
-            Some(Error::ChallengeDecryptFailed)
+            MatchInputs::from_cbor(&encoded).err(),
+            Some(Error::Malformed)
         );
     }
 

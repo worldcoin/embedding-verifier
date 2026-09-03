@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 /// `POST /v1/matches` request.
+///
+/// One field. Every input the enclave needs is sealed inside it, so the host has nothing to look
+/// up, nothing to fetch, and no plaintext field it could be induced to act on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchRequestBody {
-    /// Object in the host's bucket holding the encrypted challenge image. Plaintext, so the
-    /// host can start the fetch without opening anything.
-    pub challenge_image_id: String,
     /// The sealed match request, base64.
     pub ciphertext: String,
 }
@@ -28,18 +28,31 @@ mod tests {
     #[test]
     fn the_request_keeps_its_wire_names() {
         let body = MatchRequestBody {
-            challenge_image_id: "3f2504e0".to_owned(),
             ciphertext: "c2VhbGVk".to_owned(),
         };
-        let json = serde_json::json!({
-            "challenge_image_id": "3f2504e0",
-            "ciphertext": "c2VhbGVk",
-        });
+        let json = serde_json::json!({ "ciphertext": "c2VhbGVk" });
 
         assert_eq!(serde_json::to_value(&body).expect("should serialize"), json);
         assert_eq!(
             serde_json::from_value::<MatchRequestBody>(json).expect("should deserialize"),
             body
+        );
+    }
+
+    /// A plaintext field beside the ciphertext is something the untrusted host could be steered by,
+    /// which is how the challenge fetch became an SSRF surface. Re-adding one should be deliberate.
+    #[test]
+    fn the_request_carries_nothing_beside_the_ciphertext() {
+        let body = MatchRequestBody {
+            ciphertext: "c2VhbGVk".to_owned(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&body)
+                .expect("should serialize")
+                .as_object()
+                .map(serde_json::Map::len),
+            Some(1)
         );
     }
 
