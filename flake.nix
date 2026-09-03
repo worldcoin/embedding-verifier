@@ -46,7 +46,6 @@
         enclaveBins
         // enclaveImages
         // {
-          default = enclaveImages.deepface-oci;
           deepfaceModels = faceModels.package;
         };
 

@@ -8,7 +8,7 @@ set -euo pipefail
 #
 # Needs x86_64-linux. Nitro hardware is only needed to run.
 #
-# Usage: scripts/build-enclaves.sh [--workload <name>] [--allow-dirty] [output-dir]
+# Usage: scripts/build-enclaves.sh [--workload <name>] [output-dir]
 #        (workload defaults to deepface, output-dir to target/eif)
 #
 # Outputs in <output-dir>:
@@ -23,20 +23,18 @@ WORKLOADS=("deepface" "di")
 
 usage() {
   printf '%s\n' \
-    "Usage: scripts/build-enclaves.sh [--workload <name>] [--allow-dirty] [output-dir]" \
+    "Usage: scripts/build-enclaves.sh [--workload <name>] [output-dir]" \
     "" \
     "Build a workload's enclave EIF and emit its PCR measurements." \
     "" \
     "Options:" \
     "  --workload <name>  Which enclave to build: ${WORKLOADS[*]} (default deepface)." \
-    "  --allow-dirty      Build from a dirty tree. The PCRs then describe no commit." \
     "  -h, --help         Show this help."
 }
 
 workload="deepface"
 out_dir="target/eif"
 output_dir_provided=false
-allow_dirty=false
 while (( $# > 0 )); do
   case "$1" in
     --workload)
@@ -46,9 +44,6 @@ while (( $# > 0 )); do
       fi
       workload="$2"
       shift
-      ;;
-    --allow-dirty)
-      allow_dirty=true
       ;;
     -h|--help)
       usage
@@ -82,21 +77,6 @@ command -v nix >/dev/null || {
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
-
-# A git flake is built from tracked files at their committed content, so uncommitted work is
-# measured out of the EIF without saying so. Measurements that describe no commit are worse
-# than no measurements.
-if [[ -n "$(git status --porcelain)" ]]; then
-  if [[ "$allow_dirty" != "true" ]]; then
-    echo "[ERROR] The working tree is dirty, and Nix builds this flake from committed" >&2
-    echo "        files only — the PCRs would describe no commit. Commit first, or pass" >&2
-    echo "        --allow-dirty if the measurements are throwaway." >&2
-    git status --short >&2
-    exit 1
-  fi
-  echo "[WARN] Dirty tree: building from committed files only. These PCRs describe no"
-  echo "       commit — do not register them with a client."
-fi
 
 mkdir -p "$out_dir"
 out_dir="$(cd "$out_dir" && pwd)"

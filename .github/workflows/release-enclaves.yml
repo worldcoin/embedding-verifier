@@ -2,9 +2,7 @@ name: release enclaves
 
 on:
   push:
-    tags:
-      - "deepface/v*"
-      - "di/v*"
+    tags: ["deepface/v*", "di/v*"]
   workflow_dispatch:
     inputs:
       workload:
@@ -21,7 +19,7 @@ on:
         required: true
         type: string
       dry_run:
-        description: "Build and verify without publishing."
+        description: "Build without publishing."
         required: false
         default: true
         type: boolean
@@ -45,13 +43,11 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
       sha: ${{ steps.release.outputs.sha }}
-      short-sha: ${{ steps.release.outputs.short-sha }}
       publish: ${{ steps.release.outputs.publish }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref || github.ref }}
-          fetch-depth: 0
       - id: release
         env:
           INPUT_WORKLOAD: ${{ inputs.workload }}
@@ -69,13 +65,11 @@ jobs:
             tag="$workload/v$version"
             publish=$([[ "$DRY_RUN" == "true" ]] && echo false || echo true)
           fi
-          sha=$(git rev-parse HEAD)
           {
             echo "workload=$workload"
             echo "version=$version"
             echo "tag=$tag"
-            echo "sha=$sha"
-            echo "short-sha=${sha::7}"
+            echo "sha=$(git rev-parse HEAD)"
             echo "publish=$publish"
           } >> "$GITHUB_OUTPUT"
 
@@ -83,15 +77,10 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    permissions:
-      contents: read
-      packages: write
     outputs:
       PCR0: ${{ steps.outputs.outputs.PCR0 }}
       PCR1: ${{ steps.outputs.outputs.PCR1 }}
       PCR2: ${{ steps.outputs.outputs.PCR2 }}
-      EIF_SHA256: ${{ steps.outputs.outputs.EIF_SHA256 }}
-      OCI_REF: ${{ steps.oci.outputs.ref }}
     env:
       WORKLOAD: ${{ needs.prepare.outputs.workload }}
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -121,53 +110,28 @@ jobs:
           oci_store=$(nix build --no-link --no-update-lock-file --print-out-paths ".#${WORKLOAD}-oci")
           tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
             -C "$oci_store" -czf "target/release/$WORKLOAD-oci.tar.gz" .
-      - name: Publish OCI image
-        id: oci
-        if: needs.prepare.outputs.publish == 'true'
-        env:
-          SHORT_SHA: ${{ needs.prepare.outputs.short-sha }}
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          oci_store=$(nix build --no-link --no-update-lock-file --print-out-paths ".#${WORKLOAD}-oci")
-          repo="$REGISTRY/$OWNER/embedding-verifier-$WORKLOAD-enclave"
-          nixpkgs_rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
-          skopeo="github:NixOS/nixpkgs/$nixpkgs_rev#skopeo"
-          nix run --no-update-lock-file "$skopeo" -- --insecure-policy copy \
-            "oci:$oci_store:$VERSION" "docker://$repo:v$VERSION" \
-            --dest-creds "$GHCR_USER:$GHCR_TOKEN"
-          digest=$(nix run --no-update-lock-file "$skopeo" -- --insecure-policy inspect \
-            "docker://$repo:v$VERSION" --creds "$GHCR_USER:$GHCR_TOKEN" | jq -r .Digest)
-          echo "ref=$repo@$digest" >> "$GITHUB_OUTPUT"
       - name: Build manifest
         env:
           RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
-          OCI_REF: ${{ steps.oci.outputs.ref }}
         run: |
           face_models='{}'
           if [[ "$WORKLOAD" == deepface ]]; then
             face_models=$(nix eval --json --no-update-lock-file .#faceModels | jq 'map_values({url, hash})')
           fi
           jq -n \
-            --arg workload "$WORKLOAD" \
-            --arg version "$VERSION" \
-            --arg gitSha "$RELEASE_SHA" \
-            --arg enclaveOci "$OCI_REF" \
+            --arg workload "$WORKLOAD" --arg version "$VERSION" --arg gitSha "$RELEASE_SHA" \
             --arg eifSha256 "$(sha256sum "target/release/$WORKLOAD-enclave.eif" | cut -d' ' -f1)" \
             --arg ociArchiveSha256 "$(sha256sum "target/release/$WORKLOAD-oci.tar.gz" | cut -d' ' -f1)" \
             --argjson measurements "$(cat "target/release/$WORKLOAD-pcr.json")" \
             --argjson faceModels "$face_models" \
             '{workload: $workload, version: $version, gitSha: $gitSha,
-              artifacts: {eifSha256: $eifSha256, ociArchiveSha256: $ociArchiveSha256,
-                          enclaveOci: $enclaveOci},
+              artifacts: {eifSha256: $eifSha256, ociArchiveSha256: $ociArchiveSha256},
               measurements: $measurements, faceModels: $faceModels}' \
             > target/release/manifest.json
       - id: outputs
         run: |
           jq -r '"PCR0=0x\(.PCR0)", "PCR1=0x\(.PCR1)", "PCR2=0x\(.PCR2)"' \
             "target/release/$WORKLOAD-pcr.json" >> "$GITHUB_OUTPUT"
-          echo "EIF_SHA256=$(sha256sum "target/release/$WORKLOAD-enclave.eif" | cut -d' ' -f1)" \
-            >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: enclave-release
@@ -179,27 +143,49 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  approve:
+  publish:
     needs: [prepare, build]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: release
-    steps:
-      - run: true
-
-  release:
-    needs: [prepare, build, approve]
-    if: needs.prepare.outputs.publish == 'true'
-    runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: enclave-release
           path: assets
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Publish OCI image
+        id: oci
+        env:
+          WORKLOAD: ${{ needs.prepare.outputs.workload }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repo="$REGISTRY/$OWNER/embedding-verifier-$WORKLOAD-enclave"
+          nixpkgs_rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
+          skopeo="github:NixOS/nixpkgs/$nixpkgs_rev#skopeo"
+          nix run --no-update-lock-file "$skopeo" -- --insecure-policy copy \
+            "oci-archive:assets/$WORKLOAD-oci.tar.gz" "docker://$repo:v$VERSION" \
+            --dest-creds "$GHCR_USER:$GHCR_TOKEN"
+          digest=$(nix run --no-update-lock-file "$skopeo" -- --insecure-policy inspect \
+            "docker://$repo:v$VERSION" --creds "$GHCR_USER:$GHCR_TOKEN" | jq -r .Digest)
+          echo "ref=$repo@$digest" >> "$GITHUB_OUTPUT"
+      - name: Add OCI reference to manifest
+        env:
+          OCI_REF: ${{ steps.oci.outputs.ref }}
+        run: |
+          jq --arg ref "$OCI_REF" '.artifacts.enclaveOci = $ref' assets/manifest.json \
+            > "$RUNNER_TEMP/manifest.json"
+          mv "$RUNNER_TEMP/manifest.json" assets/manifest.json
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: assets/*
@@ -210,7 +196,7 @@ jobs:
           PCR0: ${{ needs.build.outputs.PCR0 }}
           PCR1: ${{ needs.build.outputs.PCR1 }}
           PCR2: ${{ needs.build.outputs.PCR2 }}
-          OCI_REF: ${{ needs.build.outputs.OCI_REF }}
+          OCI_REF: ${{ steps.oci.outputs.ref }}
         run: |
           cat > "$RUNNER_TEMP/body.md" <<EOF
           ## Measurements
