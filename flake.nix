@@ -8,9 +8,9 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    nitro-cli-src = {
-      url = "github:aws/aws-nitro-enclaves-cli/v1.4.2";
-      flake = false;
+    nitro-util = {
+      url = "github:monzo/aws-nitro-util";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
@@ -19,7 +19,7 @@
       nixpkgs,
       crane,
       rust-overlay,
-      nitro-cli-src,
+      nitro-util,
       ...
     }:
     let
@@ -36,12 +36,8 @@
       faceModels = import ./nix/face-models.nix {
         inherit pkgs;
       };
-      nitroCli = import ./nix/nitro-cli.nix {
-        inherit pkgs;
-        src = nitro-cli-src;
-      };
       enclaveImages = import ./nix/enclave-images.nix {
-        inherit pkgs enclaveBins nitroCli;
+        inherit system pkgs nitro-util enclaveBins;
         deepfaceModels = faceModels.package;
       };
     in
@@ -52,7 +48,6 @@
         // {
           default = enclaveImages.deepface-oci;
           deepfaceModels = faceModels.package;
-          nitro-cli = nitroCli;
         };
 
       faceModels = faceModels.metadata;

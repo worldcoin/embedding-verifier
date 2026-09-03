@@ -81,7 +81,7 @@ jobs:
           GH_APP_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           set -euo pipefail
-          for output in di-enclave deepface-enclave di-oci deepface-oci di-eif deepface-eif nitro-cli; do
+          for output in di-enclave deepface-enclave di-oci deepface-oci di-eif deepface-eif; do
             drv="$(nix eval --raw --no-update-lock-file ".#packages.x86_64-linux.$output.drvPath")"
             echo "$output -> $drv"
           done
