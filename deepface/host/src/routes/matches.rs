@@ -6,17 +6,14 @@ use deepface_enclave_types as enclave;
 use crate::AppState;
 use crate::error::AppError;
 
-/// Largest match body this route accepts.
-///
-/// TODO: Increase this once PR for relaying image lands
-pub const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+/// Largest match body this route accepts. 12 MiB to allow for images in payload.
+pub const MAX_BODY_BYTES: usize = 12 * 1024 * 1024;
 
 /// Relays a sealed match request to the enclave.
 ///
 /// # Errors
 ///
-/// Returns [`AppError`] if the body is rejected, the challenge image cannot be fetched, or the
-/// enclave rejects the request.
+/// Returns [`AppError`] if the body is rejected or the enclave rejects the request.
 pub async fn handler(
     State(state): State<AppState>,
     body: Result<Json<MatchRequestBody>, JsonRejection>,
@@ -32,24 +29,9 @@ pub async fn handler(
         )
     })?;
 
-    let challenge_ciphertext = state
-        .challenge_source()
-        .fetch(&body.challenge_image_id)
-        .await
-        .map_err(AppError::challenge_fetch)?;
-
-    tracing::info!(
-        sealed_request_bytes = ciphertext.len(),
-        challenge_ciphertext_bytes = challenge_ciphertext.len(),
-        "forwarding sealed match request to enclave"
-    );
-
     let response = state
         .enclave_client()
-        .run_match(enclave::MatchRequest {
-            body: ciphertext,
-            challenge_ciphertext,
-        })
+        .run_match(enclave::MatchRequest { body: ciphertext })
         .await
         .map_err(|error| AppError::enclave_match(&error))?;
 

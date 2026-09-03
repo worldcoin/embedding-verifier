@@ -5,9 +5,7 @@ use attested_channel::channel::{CHANNEL_VERSION, SealedResponse, UnwrapErr};
 use deepface_client::{Config, FaceVerifierClient};
 use deepface_enclave_types::MatchRequest;
 use deepface_protocol::match_token::{self, EdDSAPublicKey};
-use deepface_protocol::messages::{
-    CHALLENGE_IV_LEN, CHALLENGE_KEY_LEN, MatchInputs, MatchResult, encrypt_challenge,
-};
+use deepface_protocol::messages::{MatchInputs, MatchResult};
 use pontifex::client::ConnectionDetails;
 use sha2::{Digest, Sha256};
 
@@ -36,13 +34,6 @@ async fn main() -> Result<()> {
         .context("enclave assignment did not verify")?;
     let requester = assignment.requester;
 
-    // Stands in for the RP: encrypt the challenge frame, keep the key for the sealed payload.
-    let challenge_image_key: [u8; CHALLENGE_KEY_LEN] = rand::random();
-    let challenge_image_iv: [u8; CHALLENGE_IV_LEN] = rand::random();
-    let challenge_ciphertext =
-        encrypt_challenge(&challenge_image, &challenge_image_key, &challenge_image_iv)
-            .map_err(|error| anyhow!("failed to encrypt the challenge image: {error:?}"))?;
-
     let hashes_json = hashes_json_for(&credential_image);
     let inputs = MatchInputs {
         version: CHANNEL_VERSION,
@@ -52,8 +43,8 @@ async fn main() -> Result<()> {
         // produce one yet — sending a second frame would only reach the enclave's `unimplemented!`.
         light_guard_image: None,
         hashes_json: hashes_json.clone(),
-        challenge_image_key,
-        challenge_image_iv,
+        // Stands in for the phone, which downloads this frame from the RP and seals it.
+        challenge_image: challenge_image.clone(),
         match_threshold,
     };
     let plaintext = inputs
@@ -67,7 +58,6 @@ async fn main() -> Result<()> {
         connection,
         &MatchRequest {
             body: sealed.into_bytes(),
-            challenge_ciphertext,
         },
     )
     .await

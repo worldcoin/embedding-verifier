@@ -3,16 +3,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::EnclaveError;
 
-/// Requests a 3-way face match. Both fields are ciphertext the host cannot read;
-/// `challenge_ciphertext` is keyed from inside `body`.
+/// Requests a 3-way face match.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchRequest {
     /// The sealed request: `enc || ciphertext`, relayed verbatim.
     #[serde(with = "serde_bytes")]
     pub body: Vec<u8>,
-    /// The RP's challenge image, AES-256-GCM ciphertext fetched by the host.
-    #[serde(with = "serde_bytes")]
-    pub challenge_ciphertext: Vec<u8>,
 }
 
 impl Request for MatchRequest {

@@ -1,27 +1,21 @@
 use std::sync::Arc;
 
-use crate::{Environment, challenge_fetcher::ChallengeSource, enclave::EnclaveClient};
+use crate::{Environment, enclave::EnclaveClient};
 
 /// Dependencies shared by API request handlers.
 #[derive(Clone)]
 pub struct AppState {
     environment: Environment,
     enclave_client: Arc<dyn EnclaveClient>,
-    challenge_source: Arc<dyn ChallengeSource>,
 }
 
 impl AppState {
     /// Creates API state from the runtime environment and enclave client.
     #[must_use]
-    pub fn new(
-        environment: Environment,
-        enclave_client: Arc<dyn EnclaveClient>,
-        challenge_source: Arc<dyn ChallengeSource>,
-    ) -> Self {
+    pub fn new(environment: Environment, enclave_client: Arc<dyn EnclaveClient>) -> Self {
         Self {
             environment,
             enclave_client,
-            challenge_source,
         }
     }
 
@@ -35,11 +29,5 @@ impl AppState {
     #[must_use]
     pub fn enclave_client(&self) -> Arc<dyn EnclaveClient> {
         Arc::clone(&self.enclave_client)
-    }
-
-    /// Returns the challenge-image source.
-    #[must_use]
-    pub fn challenge_source(&self) -> Arc<dyn ChallengeSource> {
-        Arc::clone(&self.challenge_source)
     }
 }

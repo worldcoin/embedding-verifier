@@ -133,9 +133,6 @@ impl FaceVerifierClient {
 
     /// Requests an assignment and returns it only if its attestation verifies.
     ///
-    /// No retry: the endpoint costs an NSM attestation per call, and the spec already has the
-    /// authenticator re-assigning when a match fails.
-    ///
     /// # Errors
     ///
     /// Returns [`ClientError`] if the request fails, the host answers with an error status,
@@ -182,7 +179,7 @@ impl FaceVerifierClient {
     /// [`MatchResult::Failed`] is a normal return, not an error. A statement is verified against the
     /// attested signing key first; call [`match_token::verify`] again to read its claims.
     ///
-    /// The object at `challenge_image_id` must be encrypted under the key and IV in `inputs`.
+    /// The caller supplies all three frames in `inputs`, challenge image included.
     ///
     /// # Errors
     ///
@@ -191,7 +188,6 @@ impl FaceVerifierClient {
         &self,
         assignment: &VerifiedAssignment,
         inputs: &MatchInputs,
-        challenge_image_id: &str,
         now: SystemTime,
     ) -> Result<MatchResult, ClientError> {
         let plaintext = inputs.to_cbor().map_err(|_| ClientError::MalformedResult)?;
@@ -208,7 +204,6 @@ impl FaceVerifierClient {
             .http
             .post(url)
             .json(&MatchRequestBody {
-                challenge_image_id: challenge_image_id.to_owned(),
                 ciphertext: STANDARD.encode(sealed.into_bytes()),
             })
             .send()
