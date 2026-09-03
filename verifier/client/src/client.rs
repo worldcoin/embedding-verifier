@@ -168,6 +168,9 @@ impl FaceVerifierClient {
 
     /// Sends a caller-customizable assignment request and verifies its response.
     ///
+    /// The `request` should be created from [`Self::build_assignment_request`] so it uses this
+    /// client's configured cookie store and timeouts.
+    ///
     /// # Errors
     ///
     /// Returns [`ClientError`] if the request fails, the host answers with an error status,
