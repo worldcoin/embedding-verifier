@@ -110,7 +110,22 @@ impl FaceVerifierClient {
     ///
     /// Returns [`ClientError`] if the HTTP client cannot be built.
     pub fn new(config: Config) -> Result<Self, ClientError> {
-        let http = reqwest::Client::builder()
+        Self::with_http_client_builder(config, reqwest::Client::builder())
+    }
+
+    /// Builds a client using an externally configured HTTP client builder.
+    ///
+    /// The configured cookie store, connection timeout, and request timeout are applied to the
+    /// supplied builder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the HTTP client cannot be built.
+    pub fn with_http_client_builder(
+        config: Config,
+        http: reqwest::ClientBuilder,
+    ) -> Result<Self, ClientError> {
+        let http = http
             // Replays the ALB's affinity cookie, so the match reaches the enclave that was assigned.
             .cookie_store(true)
             .connect_timeout(config.connect_timeout())
@@ -118,27 +133,17 @@ impl FaceVerifierClient {
             .build()
             .map_err(ClientError::Transport)?;
 
-        Ok(Self::with_http_client(config, http))
-    }
-
-    /// Builds a client using an externally configured HTTP client.
-    ///
-    /// The supplied client controls transport settings such as default headers, proxies,
-    /// cookies, and timeouts; timeout values from `config` are not applied to it.
-    #[must_use]
-    pub fn with_http_client(config: Config, http: reqwest::Client) -> Self {
-        Self {
+        Ok(Self {
             verifier: config.verifier(),
             http,
             config,
-        }
+        })
     }
 
     /// Creates the assignment request without sending it.
     ///
     /// Callers may customize the returned builder before passing it to
     /// [`Self::request_assignment_with`].
-    #[must_use]
     pub fn build_assignment_request(&self) -> reqwest::RequestBuilder {
         let url = format!(
             "{}/v1/enclave-assignment",
