@@ -5,16 +5,14 @@ Each workload releases on its own tag: `deepface/vX.Y.Z`, `di/vX.Y.Z`. The tag i
 
 ## Cutting a release
 
-1. **Bump the version.** Edit `package.version` in `<workload>/enclave/Cargo.toml`, then refresh
-   the lockfile beside it:
+1. **Bump the version.** Edit `workspace.package.version` in the root `Cargo.toml`, then refresh
+   the root lockfile:
    ```
-   cargo update --manifest-path <workload>/enclave/Cargo.toml --workspace
+   cargo update --workspace
    ```
-2. **Re-measure.** The bump moved PCR0, so `measurements.json` is now stale. Either build locally
-   (below) or push the bump and let CI tell you: `verify-measurements.yml` fails and writes the
-   fresh values into the job summary and a `fresh-measurements-<workload>` artifact. Paste them in.
-3. **One PR** carrying the version bump *and* the new `measurements.json`. Splitting them lets the
-   repo record a version whose measurement nobody checked. `verify-measurements.yml` gates it.
+2. **Re-measure.** The bump moved PCR0, so `measurements.json` is now stale. Build locally as
+   described below and paste the fresh values into `measurements.json`.
+3. **One PR** carrying the version bump *and* the new `measurements.json`.
 4. **Tag and push:**
    ```
    git tag deepface/v0.2.0 <sha-on-main>

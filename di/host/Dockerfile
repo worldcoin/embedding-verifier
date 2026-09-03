@@ -2,9 +2,6 @@
 
 # Builds the `di-host` service as a statically-linked musl binary and packages
 # it in a `scratch` image. Built with the repository root as the context.
-#
-# The host-side workspace reaches no private repository — `face-engine` lives in the
-# deepface/enclave workspace — so this build needs no GITHUB_TOKEN.
 
 FROM ghcr.io/rust-cross/rust-musl-cross:x86_64-musl AS chef
 USER root

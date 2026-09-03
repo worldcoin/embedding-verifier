@@ -325,9 +325,8 @@ jobs:
           if ! diff -u <(jq -S --arg w "$WORKLOAD" '.[$w]' "$reproduction/measurements.json") \
                        <(jq -S --arg w "$WORKLOAD" '.[$w]' "$canonical/measurements.json"); then
             echo "::error::Two builds of $GITHUB_SHA measured to different PCRs."
-            echo "::error::Most likely an input flake.nix's \`cargoFiles\` fileset does not capture"
-            echo "::error::(a newly embedded asset, a generated file), making the build depend on"
-            echo "::error::something outside the pinned closure. The layer diff below names it."
+            echo "::error::The build depends on something outside the pinned Nix closure."
+            echo "::error::The layer diff below may identify the differing input."
             diff -u "$reproduction/closure-$WORKLOAD.txt" "$canonical/closure-$WORKLOAD.txt" || true
             exit 1
           fi

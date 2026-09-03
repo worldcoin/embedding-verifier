@@ -2,7 +2,7 @@
 #
 # Enclave workload images are built reproducibly by flake.nix instead of Dockerfiles.
 # Docker is only used later as the transport into AWS nitro-cli's converter. See
-# scripts/build-eif.sh and verify-measurements.yml.
+# scripts/build-eif.sh and release.yml.
 #
 # Tagged releases call this through workflow_call rather than a `tags:` trigger, so the
 # host image is built at the same commit the reproducibility gate measured. See release.yml.

@@ -48,29 +48,13 @@ graph and the host-side one. They are members of the root workspace but inherit 
 an enclave graph either. Treat them as standalone crates: write the version, and the `edition`,
 in their own manifest. `deepface-api-types` is host-side only and inherits normally.
 
-`nix/enclave-binaries.nix` lists the crates each EIF build sees. A new path dependency has to be
-added there or the build fails.
-
-Package metadata matters as much as the dependency versions here. An inherited `edition` would
-change how an enclave compiles when the root workspace moved, and bumping the root
-`[workspace.package].version` would leave both enclave lockfiles stale against `--locked`.
-
-`face-engine` now lives only in `deepface/enclave`, so it is the one build that needs a token
-for `worldcoin/biometric-engines`. CI runs the other lanes without one, which is what keeps
-that true.
-
 ## Development
 
-Every command takes a `--manifest-path`, because there are three workspaces:
-
 ```bash
-# From the repository root — cargo-deny reads deny.toml from the working directory.
-for ws in . deepface/enclave di/enclave; do
-  cargo fmt    --manifest-path "$ws/Cargo.toml" --all -- --check
-  cargo clippy --manifest-path "$ws/Cargo.toml" --all-targets --all-features --
-  cargo test   --manifest-path "$ws/Cargo.toml" --all
-  cargo deny   --manifest-path "$ws/Cargo.toml" --all-features check
-done
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features --
+cargo test --workspace --all-features
+cargo deny --all-features check
 ```
 
 ```bash
@@ -81,7 +65,7 @@ RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin deepface-host
 curl http://localhost:8000/health
 
 # Run the secure enclave placeholder
-RUST_LOG=info cargo run --manifest-path deepface/enclave/Cargo.toml --bin deepface-enclave
+RUST_LOG=info cargo run --bin deepface-enclave
 ```
 
 ## Building images

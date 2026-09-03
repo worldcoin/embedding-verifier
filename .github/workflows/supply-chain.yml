@@ -26,30 +26,24 @@ env:
 
 jobs:
   audit-deps:
-    name: audit dependencies (${{ matrix.workspace }})
+    name: audit dependencies
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        workspace: [".", "deepface/enclave", "di/enclave"]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: ./.github/actions/setup-rust
         with:
-          workspace: ${{ matrix.workspace }}
           app-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
           private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
         with:
           # Pinned to the version deny.toml was authored against; its schema is version-coupled.
           tool: cargo-deny@0.20.2
-      # cargo-deny reads deny.toml from the working directory: one policy at the repository root
-      # covers all three workspaces, selected with --manifest-path.
+      # cargo-deny reads the repository policy and root workspace manifest.
       #
       # Non-blocking, as before: the Pontifex NSM chain carries an advisory with no fixed release.
       - name: cargo deny (advisories)
         continue-on-error: true
-        run: cargo deny --manifest-path ${{ matrix.workspace }}/Cargo.toml --all-features check advisories
+        run: cargo deny --all-features check advisories
       - name: cargo deny (bans licenses sources)
-        run: cargo deny --manifest-path ${{ matrix.workspace }}/Cargo.toml --all-features check bans licenses sources
+        run: cargo deny --all-features check bans licenses sources
