@@ -19,14 +19,22 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 
-RUN cargo chef cook --release --locked \
+RUN --mount=type=secret,id=github_token \
+    git config --global credential."https://github.com".helper \
+      "!f() { echo username=x-access-token; echo password=$(cat /run/secrets/github_token); }; f" \
+ && CARGO_NET_GIT_FETCH_WITH_CLI=true cargo chef cook --release --locked \
       --target x86_64-unknown-linux-musl \
       --recipe-path recipe.json \
-      --package deepface-host
+      --package deepface-host \
+ && rm -f /root/.gitconfig
 COPY . .
-RUN cargo build --release --locked \
+RUN --mount=type=secret,id=github_token \
+    git config --global credential."https://github.com".helper \
+      "!f() { echo username=x-access-token; echo password=$(cat /run/secrets/github_token); }; f" \
+ && CARGO_NET_GIT_FETCH_WITH_CLI=true cargo build --release --locked \
       --target x86_64-unknown-linux-musl \
       --package deepface-host \
+ && rm -f /root/.gitconfig \
  && mv target/x86_64-unknown-linux-musl/release/deepface-host /app/host-bin
 
 FROM scratch AS runtime
