@@ -10,10 +10,7 @@ publish.workspace = true
 anyhow.workspace = true
 attested-channel.workspace = true
 deepface-protocol.workspace = true
-deepface-enclave-types.workspace = true
-getrandom.workspace = true
 hex.workspace = true
-pontifex = { workspace = true, features = ["client", "nsm"] }
 rand.workspace = true
 sha2.workspace = true
 tokio.workspace = true
