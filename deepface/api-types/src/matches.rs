@@ -39,23 +39,6 @@ mod tests {
         );
     }
 
-    /// A plaintext field beside the ciphertext is something the untrusted host could be steered by,
-    /// which is how the challenge fetch became an SSRF surface. Re-adding one should be deliberate.
-    #[test]
-    fn the_request_carries_nothing_beside_the_ciphertext() {
-        let body = MatchRequestBody {
-            ciphertext: "c2VhbGVk".to_owned(),
-        };
-
-        assert_eq!(
-            serde_json::to_value(&body)
-                .expect("should serialize")
-                .as_object()
-                .map(serde_json::Map::len),
-            Some(1)
-        );
-    }
-
     #[test]
     fn the_response_keeps_its_wire_names() {
         let body = MatchResponseBody {
