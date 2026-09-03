@@ -70,6 +70,10 @@ pub enum ClientError {
     #[error("response ciphertext was not valid base64")]
     MalformedCiphertext,
 
+    /// The match inputs could not be encoded.
+    #[error("match inputs could not be encoded")]
+    MalformedRequest,
+
     /// The sealed plaintext was not a match result.
     #[error("sealed response was not a match result")]
     MalformedResult,
@@ -228,7 +232,9 @@ impl FaceVerifierClient {
     where
         F: FnOnce(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
     {
-        let plaintext = inputs.to_cbor().map_err(|_| ClientError::MalformedResult)?;
+        let plaintext = inputs
+            .to_cbor()
+            .map_err(|_| ClientError::MalformedRequest)?;
         let (sealed, opener) = assignment
             .requester
             .seal(&plaintext, &mut UnwrapErr(SysRng))
