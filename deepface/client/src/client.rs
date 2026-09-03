@@ -9,8 +9,10 @@ use attested_channel::nitro::{
     EnclaveAttestationError, EnclaveAttestationVerifier, VerifiedAttestation,
 };
 use deepface_api_types::{
-    ApiErrorResponse, EnclaveAssignmentResponse, MatchRequestBody, MatchResponseBody,
+    ApiErrorResponse, EnclaveAssignmentResponse, ExtractEmbeddingRequestBody,
+    ExtractEmbeddingResponseBody, MatchRequestBody, MatchResponseBody,
 };
+use deepface_protocol::embedding::{ExtractEmbeddingInputs, ExtractEmbeddingResult};
 use deepface_protocol::match_token::{self, EdDSAPublicKey};
 use deepface_protocol::messages::{MatchInputs, MatchResult};
 use getrandom::SysRng;
@@ -22,6 +24,9 @@ const ASSIGNMENT_PATH: &str = "/v1/enclave-assignment";
 
 /// Path of the match endpoint.
 const MATCHES_PATH: &str = "/v1/matches";
+
+/// Path of the embedding extraction endpoint.
+const EXTRACT_EMBEDDING_PATH: &str = "/v1/extract-embedding";
 
 /// Error code the host uses for a request that did not open.
 const REASSIGN_REQUIRED: &str = "reassign_required";
@@ -79,6 +84,10 @@ pub enum ClientError {
     /// The sealed plaintext was not a match result.
     #[error("sealed response was not a match result")]
     MalformedResult,
+
+    /// The sealed plaintext was not an embedding extraction result.
+    #[error("sealed response was not an embedding extraction result")]
+    MalformedEmbeddingExtractionResult,
 
     /// The attested signing public key was not a valid `BabyJubJub` point.
     #[error("attested signing public key was invalid")]
@@ -252,6 +261,63 @@ impl FaceVerifierClient {
         }
 
         Ok(result)
+    }
+
+    /// Extracts an enrollment embedding from the image in `inputs`.
+    ///
+    /// Image analysis failures are returned as [`ExtractEmbeddingResult::Failed`], not transport
+    /// errors. Both the image and the result remain sealed from the host.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::ReassignRequired`] when `assignment` is stale. The caller should
+    /// obtain a fresh assignment, re-seal, and retry once.
+    pub async fn request_extract_embedding(
+        &self,
+        assignment: &VerifiedAssignment,
+        inputs: &ExtractEmbeddingInputs,
+    ) -> Result<ExtractEmbeddingResult, ClientError> {
+        let plaintext = inputs
+            .to_cbor()
+            .map_err(|_| ClientError::MalformedEmbeddingExtractionResult)?;
+        let (sealed, opener) = assignment
+            .requester
+            .seal(&plaintext, &mut UnwrapErr(SysRng))
+            .map_err(ClientError::Channel)?;
+
+        let url = format!(
+            "{}{EXTRACT_EMBEDDING_PATH}",
+            self.config.host_url().as_str().trim_end_matches('/')
+        );
+        let response = self
+            .http
+            .post(url)
+            .json(&ExtractEmbeddingRequestBody {
+                ciphertext: STANDARD.encode(sealed.into_bytes()),
+            })
+            .send()
+            .await
+            .map_err(ClientError::Request)?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.ok();
+            return Err(Self::api_error(status.as_u16(), body.as_deref()));
+        }
+
+        let body: ExtractEmbeddingResponseBody = response
+            .json()
+            .await
+            .map_err(ClientError::MalformedResponse)?;
+        let ciphertext = STANDARD
+            .decode(body.response_ciphertext.trim())
+            .map_err(|_| ClientError::MalformedCiphertext)?;
+        let plaintext = opener
+            .open(&SealedResponse::from_bytes(ciphertext))
+            .map_err(ClientError::Channel)?;
+
+        ExtractEmbeddingResult::from_cbor(&plaintext)
+            .map_err(|_| ClientError::MalformedEmbeddingExtractionResult)
     }
 
     /// Classifies a non-success response, reading the error envelope when there is one.

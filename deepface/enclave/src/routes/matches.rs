@@ -217,7 +217,7 @@ mod tests {
 
     use super::handler;
     use crate::{
-        face_engine::{ComparisonScores, FaceComparator},
+        face_engine::{ComparisonScores, FaceProcessor},
         state::EnclaveState,
         test_support::EchoAttestor,
     };
@@ -255,7 +255,17 @@ mod tests {
         }
     }
 
-    impl FaceComparator for MockFaceEngine {
+    impl FaceProcessor for MockFaceEngine {
+        fn extract_embedding(
+            &self,
+            _image: &[u8],
+        ) -> Result<
+            deepface_protocol::embedding::Embedding,
+            deepface_protocol::embedding::EmbeddingExtractionFailureReason,
+        > {
+            panic!("match test unexpectedly extracted an embedding")
+        }
+
         fn compare_reference_to_probes(
             &self,
             credential_image: &[u8],

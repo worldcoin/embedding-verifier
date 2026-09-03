@@ -1,6 +1,7 @@
 //! HTTP route definitions.
 
 mod enclave_assignment;
+mod extract_embedding;
 mod health;
 mod matches;
 mod readiness;
@@ -18,5 +19,6 @@ pub fn handler() -> Router<AppState> {
         .route("/health", get(health::handler))
         .route("/ready", get(readiness::handler))
         .route("/v1/enclave-assignment", post(enclave_assignment::handler))
+        .route("/v1/extract-embedding", post(extract_embedding::handler))
         .route("/v1/matches", post(matches::handler))
 }
