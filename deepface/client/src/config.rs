@@ -19,9 +19,6 @@ const fn default_connect_timeout_millis() -> u64 {
     5_000
 }
 
-/// A match request now carries all three frames, so this covers a multi-megabyte upload over a
-/// mobile link before the enclave does any work. At the old 10s a request the enclave answered
-/// perfectly well would time out client-side on a slow uplink.
 const fn default_request_timeout_millis() -> u64 {
     60_000
 }

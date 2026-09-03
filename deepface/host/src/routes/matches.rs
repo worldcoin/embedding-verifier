@@ -8,13 +8,8 @@ use crate::error::AppError;
 
 /// Largest match body this route accepts.
 ///
-/// The sealed payload now carries all three frames, where it used to carry two and leave the
-/// challenge image to a separate fetch. Budgeting ~1.5 MiB each for the credential and live frames
-/// and 4 MiB for the challenge -- the ceiling the old fetch enforced -- gives ~7 MiB of images,
-/// which CBOR framing, HPKE overhead and base64 inflate by roughly a third.
-///
-/// It also bounds what the enclave is asked to allocate: the vsock framing takes the host's word
-/// for a length, so raising this raises the enclave's exposure with it.
+/// Also bounds what the enclave is asked to allocate: the vsock framing takes the host's word for
+/// a length, so raising this raises the enclave's exposure with it.
 pub const MAX_BODY_BYTES: usize = 12 * 1024 * 1024;
 
 /// Relays a sealed match request to the enclave.

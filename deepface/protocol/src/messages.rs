@@ -9,10 +9,7 @@ use crate::match_token::MatchToken;
 
 /// The sealed inputs to one match.
 ///
-/// All three frames travel here. The requester downloads the challenge image from the RP and seals
-/// it alongside the other two rather than naming an object for the host to fetch: the host relays
-/// bytes it cannot read either way, so the RP's own AES layer bought no secrecy against a requester
-/// that already held its key -- only a second key exchange to get wrong.
+/// All three frames travel here; the requester downloads the challenge image from the RP itself.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchInputs {
     /// Channel version the requester believes it is speaking. Advisory: the HPKE `info` binds the
@@ -33,12 +30,8 @@ pub struct MatchInputs {
     /// Raw `hashes.json` bytes from the PCP.
     #[serde(with = "serde_bytes")]
     pub hashes_json: Vec<u8>,
-    /// The RP's challenge frame, as the requester downloaded it.
-    ///
-    /// Nothing in here proves it is the frame the RP issued. The enclave commits to what it
-    /// actually compared, as `challenger_image_hash`, and the RP rejects a statement whose hash is
-    /// not the one it retained -- that check is the whole binding, and dropping it would let a
-    /// requester choose its own challenge.
+    /// The RP's challenge frame. Nothing here proves it is the one the RP issued -- the RP's own
+    /// `challenger_image_hash` check is what binds it.
     #[serde(with = "serde_bytes")]
     pub challenge_image: Vec<u8>,
     /// Minimum similarity the RP requires.
@@ -150,11 +143,8 @@ pub enum FailureReason {
     /// A comparison scored below the RP-supplied `match_threshold`.
     MatchBelowThreshold,
     /// The enclave could not get from the images to a score. Covers a decode failure, a quality
-    /// rejection, and a matcher that failed on well-formed embeddings; the enclave log distinguishes
-    /// them.
-    ///
-    /// Since the challenge image arrives sealed rather than authenticated by an AEAD, an empty or
-    /// corrupt challenge frame lands here too.
+    /// rejection, an unusable frame, and a matcher that failed on well-formed embeddings; the
+    /// enclave log distinguishes them.
     ImageAnalysisFailed,
 }
 
@@ -209,9 +199,8 @@ mod tests {
         );
     }
 
-    /// The shape an old requester sends, which omits the frame the enclave now expects to find
-    /// sealed. Decoding must refuse it rather than default the field to empty and compare a face
-    /// against nothing.
+    /// A payload with no challenge frame must be refused rather than defaulted to empty, which
+    /// would compare a face against nothing.
     #[test]
     fn inputs_without_a_challenge_image_do_not_decode() {
         #[derive(serde::Serialize)]

@@ -176,9 +176,7 @@ steered by.
 
 Nothing in the payload proves the challenge frame is the one the RP issued. The enclave commits to
 whatever it compared, as `challenger_image_hash`, and the RP rejects a statement whose hash is not
-the one it retained — that comparison is the entire binding. It replaced an AES-256-GCM layer the
-RP used to apply, which added a second key exchange but no secrecy: the requester already held the
-key, and the host could read neither form.
+the one it retained — that comparison is the entire binding.
 
 The sealed payload also carries an optional `light_guard_image`, a second liveness frame. Omitting
 it selects vanilla mode, the flow described here. Sending one selects LightGuard — challenge-response
