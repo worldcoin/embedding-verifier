@@ -2,9 +2,6 @@
 #
 # Enclave OCI images and EIFs are built reproducibly by flake.nix. This workflow only builds
 # and publishes host images.
-#
-# Tagged releases call this through workflow_call rather than a `tags:` trigger, so the
-# host image is built at the same commit the reproducibility gate measured. See release-hosts.yml.
 name: Build and Push Docker Image
 
 on:
