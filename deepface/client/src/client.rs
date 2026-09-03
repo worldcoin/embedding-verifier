@@ -117,6 +117,7 @@ impl FaceVerifierClient {
     /// Returns [`ClientError`] if the HTTP client cannot be built.
     pub fn new(config: Config) -> Result<Self, ClientError> {
         let http = reqwest::Client::builder()
+            // Replays the ALB's affinity cookie, so the match reaches the enclave that was assigned.
             .cookie_store(true)
             .connect_timeout(config.connect_timeout())
             .timeout(config.request_timeout())
