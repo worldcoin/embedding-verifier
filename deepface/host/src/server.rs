@@ -29,7 +29,7 @@ pub async fn start(state: AppState) -> anyhow::Result<()> {
         listener,
         routes::handler()
             .with_state(state)
-            .layer(TraceLayer::new())
+            .layer(TraceLayer::new_for_axum())
             .into_make_service(),
     )
     .with_graceful_shutdown(shutdown_signal())

@@ -19,7 +19,7 @@ deepface-api-types.workspace = true
 deepface-enclave-types.workspace = true
 pontifex = { workspace = true, features = ["client"] }
 serde.workspace = true
-telemetry-batteries.workspace = true
+telemetry-batteries = { workspace = true, features = ["axum"] }
 tokio.workspace = true
 tracing.workspace = true
 
