@@ -28,6 +28,11 @@ on:
         description: "Version tag to publish (including v prefix, e.g. v0.1.0)"
         required: false
         type: string
+      push:
+        description: "Push images to GHCR."
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       ref:
@@ -149,7 +154,7 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request' && inputs.push != false
+        if: github.event_name == 'push' || inputs.push == true
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -163,7 +168,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           # Publish on push/tag/dispatch; PRs and dry runs build only (validation).
-          push: ${{ github.event_name != 'pull_request' && inputs.push != false }}
+          push: ${{ github.event_name == 'push' || inputs.push == true }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -173,7 +178,7 @@ jobs:
             github_token=${{ steps.biometric-engines-token.outputs.token }}
 
       - name: Attest build provenance
-        if: github.event_name != 'pull_request' && inputs.push != false
+        if: github.event_name == 'push' || inputs.push == true
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           push-to-registry: true
