@@ -1,7 +1,7 @@
 //! End-to-end tests for the assignment client, over real HTTP.
 
 use std::net::{Ipv4Addr, SocketAddr};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::http::StatusCode;
@@ -18,6 +18,10 @@ const REAL_ATTESTATION_DOC_BASE64: &str =
 /// When the fixture was produced (2025-09-23T11:56:49.915Z). Its chain is valid only for a
 /// few hours around this instant, so tests pin the clock here.
 const FIXTURE_TIMESTAMP_MILLIS: u64 = 1_758_628_609_915;
+
+fn fixture_instant() -> SystemTime {
+    UNIX_EPOCH + Duration::from_millis(FIXTURE_TIMESTAMP_MILLIS)
+}
 
 fn config(base_url: &str) -> Config {
     let pcrs = vec![PcrMeasurement::new(
@@ -71,7 +75,7 @@ async fn fetches_and_verifies_an_assignment_over_http() {
 
     let verified = FaceVerifierClient::new(config(&base_url))
         .expect("client should build")
-        .request_assignment()
+        .request_assignment(fixture_instant())
         .await
         .expect("a well-formed assignment should verify");
 
@@ -90,7 +94,7 @@ async fn rejects_an_assignment_whose_attestation_does_not_verify() {
 
     let error = FaceVerifierClient::new(config(&base_url))
         .expect("client should build")
-        .request_assignment()
+        .request_assignment(fixture_instant())
         .await
         .expect_err("an unverifiable document must not be accepted");
 
@@ -110,7 +114,7 @@ async fn surfaces_a_host_error_status_rather_than_retrying() {
 
     let error = FaceVerifierClient::new(config(&base_url))
         .expect("client should build")
-        .request_assignment()
+        .request_assignment(fixture_instant())
         .await
         .expect_err("a 503 should surface to the caller");
 

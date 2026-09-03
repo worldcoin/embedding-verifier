@@ -150,8 +150,11 @@ impl FaceVerifierClient {
     ///
     /// Returns [`ClientError`] if the request fails, the host answers with an error status,
     /// or the attestation document does not verify.
-    pub async fn request_assignment(&self) -> Result<VerifiedAssignment, ClientError> {
-        self.request_assignment_with(|request| request).await
+    pub async fn request_assignment(
+        &self,
+        now: SystemTime,
+    ) -> Result<VerifiedAssignment, ClientError> {
+        self.request_assignment_with(now, |request| request).await
     }
 
     /// Requests an assignment after allowing the caller to customize its request builder.
@@ -162,6 +165,7 @@ impl FaceVerifierClient {
     /// or the attestation document does not verify.
     pub async fn request_assignment_with<F>(
         &self,
+        now: SystemTime,
         customize: F,
     ) -> Result<VerifiedAssignment, ClientError>
     where
@@ -188,7 +192,7 @@ impl FaceVerifierClient {
 
         let attestation = self
             .verifier
-            .verify_base64(assignment.attestation.trim(), SystemTime::now())?;
+            .verify_base64(assignment.attestation.trim(), now)?;
         let requester = Requester::from_attestation(&attestation.enclave_public_key)
             .map_err(|_| ClientError::InvalidEncryptionKey)?;
 
@@ -212,8 +216,9 @@ impl FaceVerifierClient {
         &self,
         assignment: &VerifiedAssignment,
         inputs: &MatchInputs,
+        now: SystemTime,
     ) -> Result<MatchResult, ClientError> {
-        self.request_match_with(assignment, inputs, |request| request)
+        self.request_match_with(assignment, inputs, now, |request| request)
             .await
     }
 
@@ -227,6 +232,7 @@ impl FaceVerifierClient {
         &self,
         assignment: &VerifiedAssignment,
         inputs: &MatchInputs,
+        now: SystemTime,
         customize: F,
     ) -> Result<MatchResult, ClientError>
     where
@@ -275,7 +281,7 @@ impl FaceVerifierClient {
         if let MatchResult::Success(statement) = &result {
             let attested = self
                 .verifier
-                .verify(&statement.signing_key_attestation, SystemTime::now())?;
+                .verify(&statement.signing_key_attestation, now)?;
             let signing_key = <[u8; 32]>::try_from(attested.enclave_public_key.as_slice())
                 .map_err(|_| ClientError::InvalidSigningKey)
                 .and_then(|bytes| {

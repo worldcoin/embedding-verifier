@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use attested_channel::channel::{Responder, SealedRequest, UnwrapErr};
 use attested_channel::nitro::VerifiedAttestation;
@@ -27,6 +28,10 @@ use flamingo_verifier_protocol::messages::{
 use getrandom::SysRng;
 use hex_literal::hex;
 use serde_json::{Value, json};
+
+fn instant() -> SystemTime {
+    UNIX_EPOCH + Duration::from_millis(1_758_628_609_915)
+}
 
 fn config(base_url: &str) -> Config {
     let pcrs = vec![PcrMeasurement::new(
@@ -185,7 +190,7 @@ async fn a_sealed_rejection_round_trips() {
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
 
     let result = client
-        .request_match(&assignment_for(&responder), &inputs())
+        .request_match(&assignment_for(&responder), &inputs(), instant())
         .await
         .expect("a rejection is a normal return");
 
@@ -213,7 +218,7 @@ async fn a_reply_from_another_exchange_cannot_be_opened() {
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
 
     let error = client
-        .request_match(&assignment_for(&responder), &inputs())
+        .request_match(&assignment_for(&responder), &inputs(), instant())
         .await
         .expect_err("a reply sealed on another exchange must not open");
 
@@ -227,7 +232,7 @@ async fn a_stale_assignment_asks_for_a_reassignment() {
     let responder = Responder::generate(&mut UnwrapErr(SysRng));
 
     let error = client
-        .request_match(&assignment_for(&responder), &inputs())
+        .request_match(&assignment_for(&responder), &inputs(), instant())
         .await
         .expect_err("a 409 is an error, not a result");
 
@@ -244,7 +249,7 @@ async fn other_envelopes_keep_their_code_and_retry_flag() {
     let responder = Responder::generate(&mut UnwrapErr(SysRng));
 
     let error = client
-        .request_match(&assignment_for(&responder), &inputs())
+        .request_match(&assignment_for(&responder), &inputs(), instant())
         .await
         .expect_err("a 413 is an error");
 
@@ -273,7 +278,7 @@ async fn a_status_without_an_envelope_still_surfaces() {
     let responder = Responder::generate(&mut UnwrapErr(SysRng));
 
     let error = client
-        .request_match(&assignment_for(&responder), &inputs())
+        .request_match(&assignment_for(&responder), &inputs(), instant())
         .await
         .expect_err("a 413 is an error");
 
@@ -294,7 +299,7 @@ async fn a_statement_whose_attestation_does_not_verify_is_rejected() {
         let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
 
         let error = client
-            .request_match(&assignment_for(&responder), &inputs())
+            .request_match(&assignment_for(&responder), &inputs(), instant())
             .await
             .expect_err("an unverifiable attestation must not yield a statement");
 
