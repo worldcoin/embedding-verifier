@@ -9,10 +9,7 @@ use crate::match_token::MatchToken;
 
 /// The sealed inputs to one match.
 ///
-/// All three frames travel here. The requester downloads the challenge image from the RP and seals
-/// it alongside the other two rather than naming an object for the host to fetch: the host relays
-/// bytes it cannot read either way, so the RP's own AES layer bought no secrecy against a requester
-/// that already held its key -- only a second key exchange to get wrong.
+/// All three frames travel here; the requester downloads the challenge image from the RP itself.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchInputs {
     /// Channel version the requester believes it is speaking. Advisory: the HPKE `info` binds the
@@ -145,11 +142,8 @@ pub enum FailureReason {
     /// A comparison scored below the RP-supplied `match_threshold`.
     MatchBelowThreshold,
     /// The enclave could not get from the images to a score. Covers a decode failure, a quality
-    /// rejection, and a matcher that failed on well-formed embeddings; the enclave log distinguishes
-    /// them.
-    ///
-    /// Since the challenge image arrives sealed rather than authenticated by an AEAD, an empty or
-    /// corrupt challenge frame lands here too.
+    /// rejection, an unusable frame, and a matcher that failed on well-formed embeddings; the
+    /// enclave log distinguishes them.
     ImageAnalysisFailed,
 }
 
@@ -204,9 +198,8 @@ mod tests {
         );
     }
 
-    /// The shape an old requester sends, which omits the frame the enclave now expects to find
-    /// sealed. Decoding must refuse it rather than default the field to empty and compare a face
-    /// against nothing.
+    /// A payload with no challenge frame must be refused rather than defaulted to empty, which
+    /// would compare a face against nothing.
     #[test]
     fn inputs_without_a_challenge_image_do_not_decode() {
         #[derive(serde::Serialize)]

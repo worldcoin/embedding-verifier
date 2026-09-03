@@ -199,8 +199,7 @@ mod tests {
 
     struct MockFaceEngine {
         result: Result<ComparisonScores, FailureReason>,
-        /// The challenge frame the engine must be handed. Nothing sits between the seal and here
-        /// any more, so whatever the requester sealed should arrive byte for byte.
+        /// The challenge frame the engine must be handed, byte for byte.
         expected_challenge: &'static [u8],
     }
 
@@ -248,7 +247,6 @@ mod tests {
             live_image: &[u8],
             challenge_image: &[u8],
         ) -> Result<ComparisonScores, FailureReason> {
-            // Each frame must arrive exactly as the requester sealed it.
             assert_eq!(credential_image, CREDENTIAL);
             assert_eq!(live_image, LIVE);
             assert_eq!(challenge_image, self.expected_challenge);
@@ -280,7 +278,7 @@ mod tests {
         }
     }
 
-    /// Seals `inputs` to `state`, which is the whole request now that nothing travels beside it.
+    /// Seals `inputs` to `state`, which is the whole request.
     fn request_for(state: &EnclaveState, inputs: &MatchInputs) -> (ResponseOpener, MatchRequest) {
         let requester = Requester::new(state.encryption_public_key()).expect("valid key");
         let plaintext = inputs.to_cbor().expect("encoding should succeed");
@@ -451,8 +449,7 @@ mod tests {
         );
     }
 
-    /// No AEAD stands in front of the challenge frame any more, so an unusable one reaches the
-    /// engine instead of being refused earlier. It must come back sealed, not as a panic.
+    /// An unusable challenge frame reaches the engine, so it must come back sealed, not as a panic.
     #[tokio::test]
     async fn an_empty_challenge_image_fails_the_analysis_sealed() {
         let state = state_with(MockFaceEngine::failing_on(
@@ -476,8 +473,8 @@ mod tests {
         );
     }
 
-    /// The statement's `challenger_image_hash` is the only thing left that catches a substituted
-    /// challenge frame, so it has to track the bytes actually sealed rather than any fixed value.
+    /// `challenger_image_hash` is what catches a substituted frame, so it has to track the bytes
+    /// actually sealed rather than any fixed value.
     #[tokio::test]
     async fn the_statement_commits_to_the_challenge_bytes_the_requester_sealed() {
         const OTHER_CHALLENGE: &[u8] = b"a-different-challenge-frame";
