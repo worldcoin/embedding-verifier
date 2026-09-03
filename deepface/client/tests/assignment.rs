@@ -75,7 +75,7 @@ async fn fetches_and_verifies_an_assignment_over_http() {
 
     let verified = FaceVerifierClient::new(config(&base_url))
         .expect("client should build")
-        .request_assignment(fixture_instant())
+        .request_assignment()
         .await
         .expect("a well-formed assignment should verify");
 
@@ -94,7 +94,7 @@ async fn rejects_an_assignment_whose_attestation_does_not_verify() {
 
     let error = FaceVerifierClient::new(config(&base_url))
         .expect("client should build")
-        .request_assignment(fixture_instant())
+        .request_assignment()
         .await
         .expect_err("an unverifiable document must not be accepted");
 
@@ -114,7 +114,7 @@ async fn surfaces_a_host_error_status_rather_than_retrying() {
 
     let error = FaceVerifierClient::new(config(&base_url))
         .expect("client should build")
-        .request_assignment(fixture_instant())
+        .request_assignment()
         .await
         .expect_err("a 503 should surface to the caller");
 

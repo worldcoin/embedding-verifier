@@ -137,9 +137,20 @@ impl FaceVerifierClient {
     ///
     /// Returns [`ClientError`] if the request fails, the host answers with an error status,
     /// or the attestation document does not verify.
-    pub async fn request_assignment(
+    pub async fn request_assignment(&self) -> Result<VerifiedAssignment, ClientError> {
+        let now = SystemTime::now();
+
+        self.request_assignment_at(now).await
+    }
+
+    /// Request an assignment and returns it only if its attestation verifier at `now`
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the request fails, the host answers with an error status,
+    /// or the attestation document does not verify.
+    pub async fn request_assignment_at(
         &self,
-        now: SystemTime,
+        time: SystemTime,
     ) -> Result<VerifiedAssignment, ClientError> {
         let url = format!(
             "{}{ASSIGNMENT_PATH}",
@@ -164,7 +175,7 @@ impl FaceVerifierClient {
 
         let attestation = self
             .verifier
-            .verify_base64(assignment.attestation.trim(), now)?;
+            .verify_base64(assignment.attestation.trim(), time)?;
         let requester = Requester::from_attestation(&attestation.enclave_public_key)
             .map_err(|_| ClientError::InvalidEncryptionKey)?;
 

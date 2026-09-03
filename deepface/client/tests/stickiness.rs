@@ -88,7 +88,7 @@ async fn carries_the_affinity_cookie_from_the_assignment_to_the_next_call() {
 
     for _ in 0..2 {
         client
-            .request_assignment(fixture_instant())
+            .request_assignment()
             .await
             .expect("the fixture assignment should verify");
     }
