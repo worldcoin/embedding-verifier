@@ -70,6 +70,18 @@ fn match_request(id: &str) -> Request<Body> {
         .expect("request should be valid")
 }
 
+/// Builds an embedding extraction request.
+fn extract_embedding_request(ciphertext: &str) -> Request<Body> {
+    let body = serde_json::json!({ "ciphertext": ciphertext }).to_string();
+
+    Request::builder()
+        .method(Method::POST)
+        .uri("/v1/extract-embedding")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .expect("request should be valid")
+}
+
 /// Serves only the encryption key. The stub panics on anything else, so this doubles as an
 /// assertion that the assignment route asks for one key and not the other.
 fn encryption_key(attestation: Vec<u8>) -> StubEnclaveClient {
@@ -292,6 +304,54 @@ async fn matches_answers_200_whatever_the_sealed_result_says() {
         Some(1),
         "the relay exposes the ciphertext and nothing else"
     );
+}
+
+#[tokio::test]
+async fn extract_embedding_relays_only_the_sealed_request() {
+    let state = state_with(StubEnclaveClient {
+        extract_embedding_result: Some(Ok(deepface_enclave_types::ExtractEmbeddingResponse {
+            ciphertext: vec![7u8; 48],
+        })),
+        expected_body: Some(b"sealed".to_vec()),
+        ..StubEnclaveClient::default()
+    });
+
+    let (status, body) = send(state, extract_embedding_request(&STANDARD.encode("sealed"))).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["response_ciphertext"], STANDARD.encode([7u8; 48]));
+    assert_eq!(
+        body.as_object().map(serde_json::Map::len),
+        Some(1),
+        "the host must expose only the sealed outcome"
+    );
+}
+
+#[tokio::test]
+async fn extract_embedding_rejects_a_non_base64_ciphertext() {
+    let (status, body) = send(
+        state_with(StubEnclaveClient::default()),
+        extract_embedding_request("not base64!"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "invalid_request");
+}
+
+#[tokio::test]
+async fn extract_embedding_maps_an_unopenable_request_to_conflict() {
+    let state = state_with(StubEnclaveClient {
+        extract_embedding_result: Some(Err(EnclaveClientError::Operation(
+            EnclaveError::RequestNotOpened,
+        ))),
+        ..StubEnclaveClient::default()
+    });
+
+    let (status, body) = send(state, extract_embedding_request(&STANDARD.encode("sealed"))).await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "reassign_required");
 }
 
 /// Readiness is not liveness: with the registry gone the enclave is the only dependency left,

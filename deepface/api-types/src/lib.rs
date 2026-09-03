@@ -13,8 +13,10 @@
 
 mod assignment;
 mod error;
+mod extract_embedding;
 mod matches;
 
 pub use assignment::EnclaveAssignmentResponse;
 pub use error::{ApiErrorResponse, ErrorBody};
+pub use extract_embedding::{ExtractEmbeddingRequestBody, ExtractEmbeddingResponseBody};
 pub use matches::{MatchRequestBody, MatchResponseBody};

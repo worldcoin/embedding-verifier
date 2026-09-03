@@ -8,7 +8,7 @@ use deepface_protocol::messages::FailureReason;
 
 use crate::{
     attestation::Attestor,
-    face_engine::{ComparisonScores, FaceComparator},
+    face_engine::{ComparisonScores, FaceProcessor},
     state::EnclaveState,
 };
 
@@ -93,7 +93,17 @@ impl Attestor for FailsAfterSuccessesAttestor {
 /// Panics if a test reaches it, for paths that must reject before comparing faces.
 pub struct UnusedFaceEngine;
 
-impl FaceComparator for UnusedFaceEngine {
+impl FaceProcessor for UnusedFaceEngine {
+    fn extract_embedding(
+        &self,
+        _image: &[u8],
+    ) -> Result<
+        deepface_protocol::embedding::Embedding,
+        deepface_protocol::embedding::EmbeddingExtractionFailureReason,
+    > {
+        panic!("test unexpectedly extracted an embedding")
+    }
+
     fn compare_reference_to_probes(
         &self,
         _: &[u8],

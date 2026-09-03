@@ -1,4 +1,4 @@
-//! The `DeepFace` match protocol: what goes into a match and what comes out.
+//! The sealed `DeepFace` face-processing protocol.
 //!
 //! [`messages`] holds both ends of one exchange; [`match_token`] holds the signed statement a
 //! successful [`messages::MatchResult`] carries.
@@ -17,6 +17,7 @@
     dead_code
 )]
 
+pub mod embedding;
 pub mod error;
 pub mod match_token;
 pub mod messages;

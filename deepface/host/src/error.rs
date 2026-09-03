@@ -124,6 +124,17 @@ impl AppError {
     /// Maps an enclave failure on the match route.
     #[must_use]
     pub fn enclave_match(error: &EnclaveClientError) -> Self {
+        Self::enclave_sealed_biometric_request(error)
+    }
+
+    /// Maps an enclave failure on the embedding extraction route.
+    #[must_use]
+    pub fn enclave_embedding_extraction(error: &EnclaveClientError) -> Self {
+        Self::enclave_sealed_biometric_request(error)
+    }
+
+    /// Maps a failure for a request carrying a sealed biometric payload.
+    fn enclave_sealed_biometric_request(error: &EnclaveClientError) -> Self {
         match error {
             EnclaveClientError::Timeout | EnclaveClientError::Transport(_) => {
                 Self::enclave_unreachable(error)
@@ -247,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn both_routes_agree_that_a_not_ready_enclave_is_retryable() {
+    fn all_routes_agree_that_a_not_ready_enclave_is_retryable() {
         for operation in [
             EnclaveError::NotReady,
             EnclaveError::SecureModuleNotInitialized,
@@ -257,6 +268,7 @@ mod tests {
 
             for mapped in [
                 AppError::enclave_assignment(&error),
+                AppError::enclave_embedding_extraction(&error),
                 AppError::enclave_match(&error),
             ] {
                 assert_eq!(mapped.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -284,9 +296,9 @@ mod tests {
         assert!(!mapped.allow_retry);
     }
 
-    /// Pins the whole per-route matrix in one place. The two paths deliberately disagree on
-    /// `RequestNotOpened` -- impossible on assignment, so a host bug; expected on the match path,
-    /// so a retryable `409`. Nothing else fails if one side is changed alone, hence this test.
+    /// Pins the whole per-route matrix in one place. Assignment and sealed biometric requests
+    /// deliberately disagree on `RequestNotOpened`: impossible on assignment, so a host bug;
+    /// expected on a sealed request, so a retryable `409`.
     #[test]
     fn each_enclave_error_maps_per_route() {
         let cases = [
@@ -324,6 +336,11 @@ mod tests {
                 AppError::enclave_assignment(&wrapped).status(),
                 on_assignment,
                 "assignment path for {error:?}"
+            );
+            assert_eq!(
+                AppError::enclave_embedding_extraction(&wrapped).status(),
+                on_match,
+                "embedding extraction path for {error:?}"
             );
             assert_eq!(
                 AppError::enclave_match(&wrapped).status(),

@@ -12,11 +12,13 @@
 )]
 
 mod error;
+mod extract_embedding;
 mod health;
 mod keys;
 mod matches;
 
 pub use error::EnclaveError;
+pub use extract_embedding::{ExtractEmbeddingRequest, ExtractEmbeddingResponse};
 pub use health::HealthRequest;
 pub use keys::{GetEncryptionKeyRequest, KeyAttestation};
 pub use matches::{MatchRequest, MatchResponse};

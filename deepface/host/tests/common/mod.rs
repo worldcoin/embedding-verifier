@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use deepface_enclave_types::{MatchRequest, MatchResponse};
+use deepface_enclave_types::{
+    ExtractEmbeddingRequest, ExtractEmbeddingResponse, MatchRequest, MatchResponse,
+};
 use deepface_host::challenge_fetcher::{ChallengeSource, FetchError};
 use deepface_host::enclave::{EnclaveClient, EnclaveClientError};
 use deepface_host::{AppState, Environment};
@@ -17,6 +19,7 @@ pub struct StubEnclaveClient {
     pub health: Option<Result<(), EnclaveClientError>>,
     pub encryption_key: Option<Result<Vec<u8>, EnclaveClientError>>,
     pub match_result: Option<Result<MatchResponse, EnclaveClientError>>,
+    pub extract_embedding_result: Option<Result<ExtractEmbeddingResponse, EnclaveClientError>>,
     /// Asserted against the sealed body the route forwards, if set.
     pub expected_body: Option<Vec<u8>>,
     /// Asserted against the fetched challenge blob the route forwards, if set.
@@ -46,6 +49,19 @@ impl EnclaveClient for StubEnclaveClient {
         self.match_result
             .clone()
             .expect("route ran a match but the stub was not configured to answer")
+    }
+
+    async fn extract_embedding(
+        &self,
+        request: ExtractEmbeddingRequest,
+    ) -> Result<ExtractEmbeddingResponse, EnclaveClientError> {
+        if let Some(expected) = &self.expected_body {
+            assert_eq!(&request.body, expected);
+        }
+
+        self.extract_embedding_result
+            .clone()
+            .expect("route extracted an embedding but the stub was not configured to answer")
     }
 }
 

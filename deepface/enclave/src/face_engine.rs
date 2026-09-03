@@ -2,7 +2,10 @@
 
 use std::{io::Cursor, sync::Arc};
 
-use deepface_protocol::messages::FailureReason;
+use deepface_protocol::{
+    embedding::{Embedding, EmbeddingExtractionFailureReason},
+    messages::FailureReason,
+};
 use face_engine::{
     components::{
         captured_image_analyzer::CapturedImageAnalyzer, template_generator::TemplateGenerator,
@@ -27,8 +30,18 @@ pub struct ComparisonScores {
     pub challenge_similarity: f32,
 }
 
-/// Face comparison behavior required by the enclave match operation.
-pub trait FaceComparator: Send + Sync {
+/// Face processing behavior required by the enclave operations.
+pub trait FaceProcessor: Send + Sync {
+    /// Extracts a versioned enrollment embedding from one image.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sealed-domain failure when the image is invalid or embedding generation fails.
+    fn extract_embedding(
+        &self,
+        image: &[u8],
+    ) -> Result<Embedding, EmbeddingExtractionFailureReason>;
+
     /// Generates one credential embedding and compares it with the live and challenge images.
     ///
     /// # Errors
@@ -141,7 +154,23 @@ impl FaceEngine {
     }
 }
 
-impl FaceComparator for FaceEngine {
+impl FaceProcessor for FaceEngine {
+    fn extract_embedding(
+        &self,
+        image: &[u8],
+    ) -> Result<Embedding, EmbeddingExtractionFailureReason> {
+        let generated = self
+            .generate_embedding(image)
+            .map_err(|_| EmbeddingExtractionFailureReason::ImageAnalysisFailed)?;
+
+        Ok(Embedding {
+            vector: generated.vector,
+            embedding_type: generated.embedding_type,
+            embedding_version: generated.embedding_version,
+            embedding_inference_backend: generated.embedding_inference_backend,
+        })
+    }
+
     fn compare_reference_to_probes(
         &self,
         credential_image: &[u8],

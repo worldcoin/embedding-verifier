@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 
 use crate::{
     attestation::{AttestedKey, Attestor, MAX_CACHED_AGE},
-    face_engine::FaceComparator,
+    face_engine::FaceProcessor,
     keys::SigningKey,
 };
 
@@ -20,7 +20,7 @@ pub struct EnclaveState {
     signing_key: SigningKey,
     attested_encryption_key: AttestedKey,
     attested_signing_key: AttestedKey,
-    face_engine: Arc<dyn FaceComparator>,
+    face_engine: Arc<dyn FaceProcessor>,
 }
 
 impl EnclaveState {
@@ -35,7 +35,7 @@ impl EnclaveState {
     /// cannot be attested.
     pub fn generate(
         attestor: Arc<dyn Attestor>,
-        face_engine: Arc<dyn FaceComparator>,
+        face_engine: Arc<dyn FaceProcessor>,
     ) -> Result<Self, EnclaveError> {
         let mut rng = UnwrapErr(SysRng);
         let responder = Responder::generate(&mut rng);
@@ -93,9 +93,9 @@ impl EnclaveState {
         self.signing_key.public_key()
     }
 
-    /// Returns the Face Engine used for enclave match operations.
+    /// Returns the Face Engine used for enclave biometric operations.
     #[must_use]
-    pub fn face_engine(&self) -> &dyn FaceComparator {
+    pub fn face_engine(&self) -> &dyn FaceProcessor {
         self.face_engine.as_ref()
     }
 

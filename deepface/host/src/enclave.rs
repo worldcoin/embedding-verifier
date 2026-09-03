@@ -4,15 +4,16 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use deepface_enclave_types::{
-    EnclaveError, GetEncryptionKeyRequest, HealthRequest, MatchRequest, MatchResponse,
+    EnclaveError, ExtractEmbeddingRequest, ExtractEmbeddingResponse, GetEncryptionKeyRequest,
+    HealthRequest, MatchRequest, MatchResponse,
 };
 use pontifex::Request;
 use pontifex::client::ConnectionDetails;
 use tokio::time::timeout;
 
 const CONTROL_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
-// Match requests can carry large payloads and require expensive computation.
-const MATCH_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+// Biometric requests can carry large payloads and require expensive computation.
+const BIOMETRIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Failures while calling an enclave operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +37,12 @@ pub trait EnclaveClient: Send + Sync {
 
     /// Runs a match inside the enclave.
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError>;
+
+    /// Extracts an enrollment embedding inside the enclave.
+    async fn extract_embedding(
+        &self,
+        request: ExtractEmbeddingRequest,
+    ) -> Result<ExtractEmbeddingResponse, EnclaveClientError>;
 }
 
 /// Pontifex-backed enclave client.
@@ -79,6 +86,13 @@ impl EnclaveClient for PontifexEnclaveClient {
     }
 
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError> {
-        self.call(request, MATCH_REQUEST_TIMEOUT).await
+        self.call(request, BIOMETRIC_REQUEST_TIMEOUT).await
+    }
+
+    async fn extract_embedding(
+        &self,
+        request: ExtractEmbeddingRequest,
+    ) -> Result<ExtractEmbeddingResponse, EnclaveClientError> {
+        self.call(request, BIOMETRIC_REQUEST_TIMEOUT).await
     }
 }

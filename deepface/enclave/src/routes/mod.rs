@@ -2,10 +2,13 @@
 
 use std::sync::Arc;
 
-use deepface_enclave_types::{GetEncryptionKeyRequest, HealthRequest, MatchRequest};
+use deepface_enclave_types::{
+    ExtractEmbeddingRequest, GetEncryptionKeyRequest, HealthRequest, MatchRequest,
+};
 use pontifex::Router;
 
 mod encryption_key;
+mod extract_embedding;
 mod health;
 mod matches;
 
@@ -16,6 +19,7 @@ pub(crate) fn router(state: Arc<EnclaveState>) -> Router<Arc<EnclaveState>> {
     Router::with_state(state)
         .route::<HealthRequest, _, _>(health::handler)
         .route::<GetEncryptionKeyRequest, _, _>(encryption_key::handler)
+        .route::<ExtractEmbeddingRequest, _, _>(extract_embedding::handler)
         .route::<MatchRequest, _, _>(matches::handler)
 }
 

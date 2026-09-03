@@ -1,4 +1,4 @@
-//! Secure-enclave runtime for private face comparison.
+//! Secure-enclave runtime for private face embedding extraction and comparison.
 
 #![deny(
     clippy::all,

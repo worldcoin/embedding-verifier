@@ -163,6 +163,30 @@ through the host, exercising the assignment route and the client together:
 VERIFIER_CONFIG=./client.json cargo run --bin deepface-e2e -- <credential> <live> <challenge>
 ```
 
+## Embedding extraction
+
+`POST /v1/extract-embedding` extracts a versioned Face Engine embedding from one enrollment image.
+Like the match flow, the image and result are sealed end-to-end; the host relays them without being
+able to inspect either one:
+
+```json
+{ "ciphertext": "<base64 enc || ciphertext>" }
+```
+
+The sealed request contains `ExtractEmbeddingInputs`: the channel version and raw image bytes. A
+successful sealed response contains the vector together with its embedding type, embedding version,
+and inference backend. Keeping that metadata beside the vector lets a later consumer reject an
+incompatible model output rather than silently comparing unlike embeddings.
+
+```json
+{ "response_ciphertext": "<base64 nonce || ciphertext>" }
+```
+
+Image decode, quality, and embedding-generation failures are returned as a sealed
+`ExtractEmbeddingResult::Failed`; the HTTP response is still `200`. An unopenable request returns
+`409 reassign_required`, malformed base64 returns `400 invalid_request`, and enclave availability
+or internal failures use the same statuses as `/v1/matches`.
+
 ## Matches
 
 `POST /v1/matches` compares a credential image against a live frame and the RP's challenge
