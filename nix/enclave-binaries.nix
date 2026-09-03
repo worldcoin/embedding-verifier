@@ -27,9 +27,9 @@ let
     || file.hasExt "b64"
   );
 
-  # Each enclave is its own cargo workspace with its own lockfile, so its build reads that
-  # manifest, that lockfile, and the path crates they name — never the root workspace.
-  # Listing those crates per workload is what makes the isolation real: with the whole tree
+  # Each enclave build uses the root workspace manifest and lockfile, while its source remains
+  # restricted to the path crates it reaches. Listing those crates per workload is what makes
+  # the isolation real: with the whole tree
   # as src, a deepface/host edit would still move di's PCR0. A new path dependency has to be
   # added here or the build fails to find it.
   srcFor =
@@ -39,13 +39,11 @@ let
       fileset = lib.fileset.unions ((map cargoFiles crates) ++ [ (root + "/rust-toolchain.toml") ]);
     };
 
-  # The biometric-engines rev the deepface enclave's lockfile pins, so the assets grafted
-  # into the vendor tree below cannot come from a different commit than the crates built
-  # against them. Read from that lockfile and no other: the root workspace no longer
-  # resolves face-engine at all.
+  # The biometric-engines rev pinned by the root lockfile, so the assets grafted into the
+  # vendor tree below cannot come from a different commit than the crates built against them.
   lockedFaceEngineRev =
     let
-      lock = builtins.fromTOML (builtins.readFile (root + "/deepface/enclave/Cargo.lock"));
+      lock = builtins.fromTOML (builtins.readFile (root + "/Cargo.lock"));
       sources = lib.unique (
         lib.filter (source: source != null && lib.hasInfix "worldcoin/biometric-engines" source) (
           map (package: package.source or null) lock.package
@@ -53,7 +51,7 @@ let
       );
     in
     assert lib.assertMsg (lib.length sources == 1) (
-      "expected one worldcoin/biometric-engines git source in deepface/enclave/Cargo.lock,"
+      "expected one worldcoin/biometric-engines git source in Cargo.lock,"
       + " found "
       + toString (lib.length sources)
     );
@@ -76,7 +74,7 @@ let
   # it without patching the crate. Nothing verifies the addition: cargo writes
   # `{"files":{}}` as the checksum manifest for vendored git crates.
   deepfaceVendorDir = craneLib.vendorCargoDeps {
-    cargoLock = root + "/deepface/enclave/Cargo.lock";
+    cargoLock = root + "/Cargo.lock";
     overrideVendorGitCheckout =
       packages: drv:
       if
@@ -94,7 +92,7 @@ let
   # Nothing in di's graph comes from a git source, so this needs no override and no
   # credentials — the lane that would notice a private dependency arriving is CI's.
   diVendorDir = craneLib.vendorCargoDeps {
-    cargoLock = root + "/di/enclave/Cargo.lock";
+    cargoLock = root + "/Cargo.lock";
   };
 
   commonArgs = {
@@ -147,9 +145,7 @@ let
     LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
   };
 
-  # The enclave manifests spell their version out rather than inheriting it, so read it from
-  # there. Taking it from the root workspace would put a host-side version bump in the PCRs.
-  versionOf = manifest: (builtins.fromTOML (builtins.readFile manifest)).package.version;
+  version = (builtins.fromTOML (builtins.readFile (root + "/Cargo.toml"))).workspace.package.version;
 
   # Two deviations from a stock crane build, both forced by the workspace being nested
   # inside the source rather than at its root:
@@ -177,7 +173,7 @@ let
       // extraArgs
       // {
         inherit pname cargoVendorDir;
-        version = versionOf (root + "/${workspace}/Cargo.toml");
+        inherit version;
         src = srcFor crates;
         postPatch = "cd ${workspace}";
         cargoArtifacts = null;
