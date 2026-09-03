@@ -3,7 +3,6 @@ name: release enclaves
 on:
   push:
     tags: ["deepface/v*", "di/v*"]
-  pull_request:
   workflow_dispatch:
     inputs:
       workload:
@@ -60,11 +59,6 @@ jobs:
             version="${GITHUB_REF_NAME#*/v}"
             tag="$GITHUB_REF_NAME"
             publish=true
-          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            workload=deepface
-            version=test
-            tag=test
-            publish=false
           else
             workload="$INPUT_WORKLOAD"
             version="$INPUT_VERSION"
@@ -83,17 +77,13 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        workload: ${{ github.event_name == 'pull_request' && fromJSON('["deepface", "di"]') || fromJSON(format('["{0}"]', needs.prepare.outputs.workload)) }}
     outputs:
       PCR0: ${{ steps.outputs.outputs.PCR0 }}
       PCR1: ${{ steps.outputs.outputs.PCR1 }}
       PCR2: ${{ steps.outputs.outputs.PCR2 }}
     env:
-      WORKLOAD: ${{ matrix.workload }}
-      VERSION: ${{ needs.prepare.outputs.version || 'test' }}
+      WORKLOAD: ${{ needs.prepare.outputs.workload }}
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -146,9 +136,9 @@ jobs:
         with:
           name: enclave-release
           path: |
-            target/release/${{ matrix.workload }}-enclave.eif
-            target/release/${{ matrix.workload }}-oci.tar.gz
-            target/release/${{ matrix.workload }}-pcr.json
+            target/release/${{ needs.prepare.outputs.workload }}-enclave.eif
+            target/release/${{ needs.prepare.outputs.workload }}-oci.tar.gz
+            target/release/${{ needs.prepare.outputs.workload }}-pcr.json
             target/release/manifest.json
           if-no-files-found: error
           retention-days: 7
