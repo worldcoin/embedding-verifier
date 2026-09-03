@@ -77,16 +77,14 @@ Nix builds the OCI image and converts its root filesystem directly with aws-nitr
 ```bash
 # Reproducible OCI image -> deterministic EIF + PCRs.
 # Needs Linux x86_64; Nitro hardware is only needed to run.
-scripts/build-eif.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcr.json
-scripts/build-eif.sh --workload di         # -> target/eif/di-enclave.eif, di-pcr.json
+scripts/build-enclaves.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcr.json
+scripts/build-enclaves.sh --workload di         # -> target/eif/di-enclave.eif, di-pcr.json
 
 # Build or inspect only the reproducible OCI boundary.
 nix build .#di-oci
 skopeo inspect \
   "oci:$(readlink -f result):$(nix eval --raw .#packages.x86_64-linux.di-enclave.version)"
 
-# Carrier image that launches an EIF on a Nitro node
-docker build -f scripts/Dockerfile.carrier --build-arg EIF_FILE=di-enclave.eif target/eif
 ```
 
 `GIT_HUB_TOKEN` and `HUGGING_FACE_TOKEN` are both `deepface`-only. The whole Cargo workspace

@@ -1,7 +1,7 @@
 # Releasing an enclave
 
 Each workload releases on its own tag: `deepface/vX.Y.Z`, `di/vX.Y.Z`. The tag is handled by
-[`.github/workflows/release.yml`](../.github/workflows/release.yml).
+[`.github/workflows/release-enclaves.yml`](../.github/workflows/release-enclaves.yml).
 
 ## Cutting a release
 
@@ -15,35 +15,28 @@ Each workload releases on its own tag: `deepface/vX.Y.Z`, `di/vX.Y.Z`. The tag i
    git tag deepface/v0.2.0 <sha-on-main>
    git push origin deepface/v0.2.0
    ```
-3. **Wait for the gate.** Two builds run first — about 90 minutes each, in parallel. Nothing is
-   published unless they agree.
+3. **Wait for the build.** The enclave build takes about 90 minutes when cold.
 4. **Review the draft**, check the PCR table, publish. The draft is the last human step: the
    release is created unpublished, so nothing is live until someone publishes it.
 
 > The `release` GitHub environment carries no protection rules today, so `approve-publish`
-> passes straight through and images are pushed as soon as the reproducibility gate is green.
+> passes straight through and images are pushed as soon as the enclave build succeeds.
 > To require a human before anything is published, add required reviewers to that environment —
 > a settings change, no workflow edit.
 
 To exercise the pipeline without a tag, dispatch it:
 
 ```
-gh workflow run release.yml -f workload=di -f ref=main -f dry_run=true
+gh workflow run release-enclaves.yml -f workload=di -f ref=main -f version=0.1.0 -f dry_run=true
 ```
 
 A dry run builds, verifies and publishes nothing.
 
 ## How the measurement is produced
 
-Two steps with different guarantees, and the difference matters:
-
-1. **Nix builds an OCI image** (`nix build .#<workload>-oci`) from the enclave binary, the
-   models and `pkgs.cacert`, with `dockerTools.buildLayeredImage` at a fixed creation time.
-   This half is content-addressed: same commit, same bytes, anywhere.
-2. **AWS nitro-cli converts that image to an EIF.** `skopeo` loads the OCI layout into a
-   Docker daemon and `nitro-cli build-enclave` runs its bundled LinuxKit over it. nitro-cli
-   v1.4.2 and its kernel, init, NSM and LinuxKit blobs are pinned by `nix/nitro-cli.nix`,
-   but **the Docker daemon is the host's and is not pinned**.
+Nix builds both artifacts from the same root filesystem. `dockerTools.buildLayeredImage`
+produces the OCI image, while `aws-nitro-util` produces the EIF using pinned AWS kernel,
+init, and NSM blobs. Both are content-addressed Nix outputs.
 
 PCR0 covers the kernel, the cmdline and both ramdisks; PCR1 the kernel and boot ramdisk;
 PCR2 the application ramdisk. The EIF metadata section — which carries a wall-clock
@@ -55,7 +48,7 @@ Needs x86_64-linux with Nix, plus read access to `worldcoin/biometric-engines` a
 `HUGGING_FACE_TOKEN` for deepface. Expect ~90 minutes cold for deepface.
 
 ```
-scripts/build-eif.sh --workload deepface target/eif
+scripts/build-enclaves.sh --workload deepface target/eif
 jq . target/eif/deepface-pcr.json
 ```
 
@@ -78,30 +71,12 @@ Registry rows carry the `pcr0` they were attested under, so a withdrawn image ca
 bulk. That path is not built yet: nothing sets `KeyStatus::Revoked`, the IAM policy grants no
 `UpdateItem`, and a bulk revoke needs a GSI on `pcr0`.
 
-## Re-deriving a PCR without building from source
-
-```
-# both values come from manifest.json: .images.enclaveOci and .gitSha
-skopeo --insecure-policy copy \
-  docker://ghcr.io/worldcoin/embedding-verifier-deepface-enclave-oci@sha256:<digest> \
-  docker-daemon:embedding-verifier-deepface-enclave:<version>
-
-nix run github:worldcoin/embedding-verifier/<gitSha>#nitro-cli -- build-enclave \
-  --docker-uri embedding-verifier-deepface-enclave:<version> \
-  --output-file enclave.eif
-```
-
-This needs a Docker daemon and nothing private. It does not prove the image matches the
-source — only someone with face-engine access can check that — but it does prove the
-published PCRs describe the published image, which is what a client is pinning.
-
 ## Verifying a published release
 
 ```
 gh release download deepface/v0.2.0 -R worldcoin/embedding-verifier
 gh attestation verify manifest.json --repo worldcoin/embedding-verifier \
-   --signer-workflow worldcoin/embedding-verifier/.github/workflows/release.yml
-sha256sum -c SHA256SUMS
+   --signer-workflow worldcoin/embedding-verifier/.github/workflows/release-enclaves.yml
 ```
 
 The attestation binds the assets to the workflow and commit that produced them. Then reproduce
