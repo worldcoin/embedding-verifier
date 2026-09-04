@@ -19,19 +19,20 @@ let
       version = enclaveBins.${pname}.version;
       imageName = "flamingo-verifier-${workload}-enclave";
 
-      root = pkgs.buildEnv {
-        name = "${pname}-root";
-        paths = [
-          enclaveBins.${pname}
-          pkgs.cacert
-        ]
-        ++ extraRoot;
-        pathsToLink = [
-          "/bin"
-          "/etc"
-          "/models"
-        ];
-      };
+      root = pkgs.runCommand "${pname}-root" { } ''
+        mkdir -p "$out/bin" "$out/etc/ssl/certs"
+        cp ${enclaveBins.${pname}}/bin/${pname} "$out/bin/${pname}"
+        cp ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt "$out/etc/ssl/certs/ca-bundle.crt"
+        ${
+          if extraRoot == [ ] then
+            ""
+          else
+            ''
+              mkdir -p "$out/models"
+              ${pkgs.lib.concatMapStringsSep "\n" (path: "cp -R ${path}/models/. \"$out/models/\"") extraRoot}
+            ''
+        }
+      '';
 
       dockerArchive = pkgs.dockerTools.buildLayeredImage {
         name = imageName;
@@ -94,6 +95,6 @@ in
 {
   di-oci = di.oci;
   di-eif = di.eif;
-  flamingo-verifier-oci = verifier.oci;
-  flamingo-verifier-eif = verifier.eif;
+  verifier-oci = verifier.oci;
+  verifier-eif = verifier.eif;
 }
