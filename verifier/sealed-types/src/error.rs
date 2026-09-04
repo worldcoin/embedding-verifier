@@ -9,6 +9,4 @@ pub enum Error {
     Encoding,
     /// An encoded match result exceeded its fixed sealed-response envelope.
     ResponseTooLarge,
-    /// Match inputs declared a channel version this build does not implement.
-    UnsupportedChannelVersion,
 }

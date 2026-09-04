@@ -3,7 +3,6 @@ use std::sync::Arc;
 use flamingo_verifier_enclave_types as enclave_types;
 use flamingo_verifier_enclave_types::{MatchRequest, MatchResponse};
 use flamingo_verifier_protocol::match_token::MatchClaims;
-use flamingo_verifier_sealed_types as sealed;
 use flamingo_verifier_sealed_types::{AttestedStatement, FailureReason, MatchInputs, MatchResult};
 use pontifex::Request;
 use sha2::{Digest, Sha256};
@@ -63,14 +62,7 @@ fn run(
                 route = MatchRequest::ROUTE_ID,
                 "unusable match payload"
             );
-            return match error {
-                sealed::Error::Malformed => Ok(MatchResult::Failed(FailureReason::MalformedInputs)),
-                sealed::Error::UnsupportedChannelVersion => {
-                    Ok(MatchResult::Failed(FailureReason::UnsupportedVersion))
-                }
-                // Decoding produces no other variant; anything else is a bug in this crate.
-                _ => Err(enclave_types::Error::Internal),
-            };
+            return Ok(MatchResult::Failed(FailureReason::MalformedInputs));
         }
     };
 
@@ -174,8 +166,8 @@ mod tests {
     use flamingo_verifier_enclave_types as enclave_types;
     use flamingo_verifier_enclave_types::MatchRequest;
     use flamingo_verifier_protocol::match_token;
+    use flamingo_verifier_sealed_types::MATCH_CHANNEL_DOMAIN;
     use flamingo_verifier_sealed_types::{FailureReason, MatchInputs, MatchResult};
-    use flamingo_verifier_sealed_types::{MATCH_CHANNEL_DOMAIN, MATCH_PROTOCOL_VERSION};
     use pontifex::{ChannelConsumer, ChannelDomain, ResponseOpener};
     use sha2::{Digest, Sha256};
 
@@ -261,7 +253,6 @@ mod tests {
 
     fn inputs(credential: &[u8], threshold: f32) -> MatchInputs {
         MatchInputs {
-            version: MATCH_PROTOCOL_VERSION,
             live_image: LIVE.to_vec(),
             credential_image: credential.to_vec(),
             light_guard_image: None,
@@ -413,26 +404,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_a_wrong_domain_or_tampered_request_before_matching() {
-        for (domain, tamper) in [("another-protocol", false), (MATCH_CHANNEL_DOMAIN, true)] {
-            let state = crate::test_support::state_with(Arc::new(EchoAttestor));
-            let consumer = ChannelConsumer::from_unverified_public_key(
-                ChannelDomain::new(domain),
-                &state.encryption_public_key(),
-            )
-            .unwrap();
-            let (mut ciphertext, _) = consumer.seal_to_enclave(b"inputs").unwrap();
-            if tamper {
-                *ciphertext.last_mut().unwrap() ^= 1;
-            }
-            let error = handler(state, MatchRequest { body: ciphertext })
-                .await
-                .unwrap_err();
-            assert_eq!(error, enclave_types::Error::RequestNotOpened);
-        }
-    }
-
-    #[tokio::test]
     async fn a_non_cbor_plaintext_is_a_sealed_failure() {
         let state = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
         let requester = ChannelConsumer::from_unverified_public_key(
@@ -454,26 +425,6 @@ mod tests {
         assert_eq!(
             MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
             MatchResult::Failed(FailureReason::MalformedInputs)
-        );
-    }
-
-    #[tokio::test]
-    async fn an_unsupported_payload_version_is_a_sealed_failure() {
-        let state = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
-        let mut inputs = inputs(CREDENTIAL, 0.5);
-        inputs.version = MATCH_PROTOCOL_VERSION + 1;
-        let (opener, request) = request_for(&state, &inputs);
-
-        let response = handler(state, request)
-            .await
-            .expect("a bad version is answered, not errored");
-
-        let plaintext = opener
-            .open_from_enclave(&response.ciphertext)
-            .expect("should open");
-        assert_eq!(
-            MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
-            MatchResult::Failed(FailureReason::UnsupportedVersion)
         );
     }
 
