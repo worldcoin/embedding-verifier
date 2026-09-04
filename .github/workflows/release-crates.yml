@@ -1,0 +1,38 @@
+name: Release Crates
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: release-plz
+  cancel-in-progress: false
+
+jobs:
+  release-crates:
+    name: Release Crates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.0
+
+      - name: Run release-plz
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
