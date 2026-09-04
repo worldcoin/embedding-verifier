@@ -1,7 +1,6 @@
 //! The crate's error type.
 
-use attested_channel::channel;
-use attested_channel::nitro;
+use pontifex::{ChannelError, attestation};
 
 /// Failures while configuring or calling the host.
 #[derive(Debug, thiserror::Error)]
@@ -37,11 +36,11 @@ pub enum Error {
 
     /// An attestation document did not verify.
     #[error(transparent)]
-    Attestation(#[from] nitro::Error),
+    Attestation(#[from] attestation::Error),
 
-    /// The attested encryption public key was absent or not exactly 32 bytes.
-    #[error("attested encryption public key was invalid")]
-    InvalidEncryptionKey,
+    /// The assignment document or public key was not valid base64.
+    #[error("assignment document or public key was not valid base64")]
+    MalformedAssignment,
 
     /// The host answered with an error envelope.
     #[error("host returned HTTP {status} ({code})")]
@@ -58,9 +57,9 @@ pub enum Error {
     #[error("the request was not sealed to the enclave's current key; re-assign and retry once")]
     ReassignRequired,
 
-    /// Sealing the request or opening the response failed.
+    /// Channel attestation, key binding, sealing or opening failed.
     #[error("sealed channel failure: {0:?}")]
-    Channel(channel::Error),
+    Channel(#[source] ChannelError),
 
     /// The response ciphertext was not valid base64.
     #[error("response ciphertext was not valid base64")]

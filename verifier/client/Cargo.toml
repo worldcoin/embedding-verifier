@@ -10,12 +10,12 @@ repository.workspace = true
 publish = true
 
 [dependencies]
-attested-channel = { workspace = true, features = ["attestation"] }
+pontifex = { workspace = true, features = ["channel", "attestation"] }
 base64.workspace = true
 flamingo-verifier-api-types.workspace = true
 flamingo-verifier-protocol.workspace = true
 flamingo-verifier-sealed-types.workspace = true
-getrandom.workspace = true
+hex = { workspace = true, features = ["serde"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

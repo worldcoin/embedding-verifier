@@ -6,11 +6,6 @@ git_release_enable = true
 git_release_type = "auto"
 
 [[package]]
-name = "attested-channel"
-release = true
-publish = true
-
-[[package]]
 name = "flamingo-verifier-api-types"
 release = true
 publish = true
@@ -32,7 +27,6 @@ publish = true
 changelog_update = true
 changelog_path = "CHANGELOG.md"
 changelog_include = [
-    "attested-channel",
     "flamingo-verifier-api-types",
     "flamingo-verifier-protocol",
     "flamingo-verifier-sealed-types",

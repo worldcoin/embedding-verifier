@@ -1,17 +1,14 @@
 //! HTTP client for the embedding verifier host.
 
-use std::time::SystemTime;
-
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-use attested_channel::channel::{Requester, SealedResponse, UnwrapErr};
-use attested_channel::nitro::{EnclaveAttestationVerifier, VerifiedAttestation};
 use flamingo_verifier_api_types::{
     ApiErrorResponse, EnclaveAssignmentResponse, MatchRequestBody, MatchResponseBody,
 };
 use flamingo_verifier_protocol::match_token::{self, EdDSAPublicKey};
-use flamingo_verifier_sealed_types::{MatchInputs, MatchResult};
-use getrandom::SysRng;
+use flamingo_verifier_sealed_types::{MATCH_CHANNEL_DOMAIN, MatchInputs, MatchResult};
+use pontifex::attestation::{VerifiedAttestation, Verifier};
+use pontifex::{ChannelConsumer, ChannelDomain};
 
 use crate::config::Config;
 use crate::error::Error;
@@ -26,12 +23,25 @@ const MATCHES_PATH: &str = "/v1/matches";
 const REASSIGN_REQUIRED: &str = "reassign_required";
 
 /// An assignment whose attestation verified and whose encryption key is ready for sealing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct VerifiedAssignment {
     /// Metadata read from the signed attestation document.
-    pub attestation: VerifiedAttestation,
-    /// The verified requester handle for sealing to this enclave boot.
-    pub requester: Requester,
+    attestation: VerifiedAttestation,
+    consumer: ChannelConsumer,
+}
+
+impl VerifiedAssignment {
+    /// Metadata from the verified channel-key attestation.
+    #[must_use]
+    pub const fn attestation(&self) -> &VerifiedAttestation {
+        &self.attestation
+    }
+
+    /// The channel consumer bound to this assignment's verified key.
+    #[must_use]
+    pub const fn consumer(&self) -> &ChannelConsumer {
+        &self.consumer
+    }
 }
 
 /// Calls the face verifier host and verifies the attestation documents it relays.
@@ -42,7 +52,7 @@ pub struct VerifiedAssignment {
 pub struct FaceVerifierClient {
     config: Config,
     http: reqwest::Client,
-    verifier: EnclaveAttestationVerifier,
+    verifier: Verifier,
 }
 
 impl FaceVerifierClient {
@@ -50,7 +60,7 @@ impl FaceVerifierClient {
     ///
     /// # Errors
     ///
-    /// Returns [`Error`] if the HTTP client cannot be built.
+    /// Returns [`Error`] if the configuration is invalid or the HTTP client cannot be built.
     pub fn new(config: Config) -> Result<Self, Error> {
         let http = reqwest::Client::builder()
             // Replays the ALB's affinity cookie, so the match reaches the enclave that was assigned.
@@ -61,7 +71,7 @@ impl FaceVerifierClient {
             .map_err(Error::Transport)?;
 
         Ok(Self {
-            verifier: config.verifier(),
+            verifier: config.verifier()?,
             http,
             config,
         })
@@ -73,7 +83,7 @@ impl FaceVerifierClient {
     ///
     /// Returns [`Error`] if the request fails, the host answers with an error status,
     /// or the attestation document does not verify.
-    pub async fn request_assignment(&self, now: SystemTime) -> Result<VerifiedAssignment, Error> {
+    pub async fn request_assignment(&self) -> Result<VerifiedAssignment, Error> {
         let url = format!(
             "{}{ASSIGNMENT_PATH}",
             self.config.host_url().as_str().trim_end_matches('/')
@@ -88,15 +98,23 @@ impl FaceVerifierClient {
         let assignment: EnclaveAssignmentResponse =
             response.json().await.map_err(Error::MalformedResponse)?;
 
-        let attestation = self
-            .verifier
-            .verify_base64(assignment.attestation.trim(), now)?;
-        let requester = Requester::from_attestation(&attestation.enclave_public_key)
-            .map_err(|_| Error::InvalidEncryptionKey)?;
+        let document = STANDARD
+            .decode(&assignment.attestation)
+            .map_err(|_| Error::MalformedAssignment)?;
+        let public_key = STANDARD
+            .decode(&assignment.public_key)
+            .map_err(|_| Error::MalformedAssignment)?;
+        let (consumer, attestation) = ChannelConsumer::from_attestation(
+            ChannelDomain::new(MATCH_CHANNEL_DOMAIN),
+            &self.verifier,
+            &document,
+            &public_key,
+        )
+        .map_err(Error::Channel)?;
 
         Ok(VerifiedAssignment {
             attestation,
-            requester,
+            consumer,
         })
     }
 
@@ -114,12 +132,19 @@ impl FaceVerifierClient {
         &self,
         assignment: &VerifiedAssignment,
         inputs: &MatchInputs,
-        now: SystemTime,
+    ) -> Result<MatchResult, Error> {
+        self.request_match_with_consumer(assignment.consumer(), inputs)
+            .await
+    }
+
+    async fn request_match_with_consumer(
+        &self,
+        consumer: &ChannelConsumer,
+        inputs: &MatchInputs,
     ) -> Result<MatchResult, Error> {
         let plaintext = inputs.to_cbor().map_err(|_| Error::MalformedResult)?;
-        let (sealed, opener) = assignment
-            .requester
-            .seal(&plaintext, &mut UnwrapErr(SysRng))
+        let (sealed, opener) = consumer
+            .seal_to_enclave(&plaintext)
             .map_err(Error::Channel)?;
 
         let url = format!(
@@ -130,7 +155,7 @@ impl FaceVerifierClient {
             .http
             .post(url)
             .json(&MatchRequestBody {
-                ciphertext: STANDARD.encode(sealed.into_bytes()),
+                ciphertext: STANDARD.encode(sealed),
             })
             .send()
             .await
@@ -148,23 +173,29 @@ impl FaceVerifierClient {
             .decode(body.response_ciphertext.trim())
             .map_err(|_| Error::MalformedCiphertext)?;
         let plaintext = opener
-            .open(&SealedResponse::from_bytes(ciphertext))
+            .open_from_enclave(&ciphertext)
             .map_err(Error::Channel)?;
         let result =
             MatchResult::from_padded_cbor(&plaintext).map_err(|_| Error::MalformedResult)?;
 
         // Only a statement needs the key, so a rejection skips the attestation entirely.
         if let MatchResult::Success(statement) = &result {
-            // Verified as of `now`: the document came sealed from the enclave that just answered.
+            // Response encryption alone does not authenticate the signing key.
             let attested = self
                 .verifier
-                .verify(&statement.signing_key_attestation, now)?;
-            let signing_key = <[u8; 32]>::try_from(attested.enclave_public_key.as_slice())
-                .map_err(|_| Error::InvalidSigningKey)
-                .and_then(|bytes| {
-                    EdDSAPublicKey::from_compressed_bytes(bytes)
-                        .map_err(|_| Error::InvalidSigningKey)
-                })?;
+                .verify_attestation_document(&statement.signing_key_attestation)?;
+            let signing_key = <[u8; 32]>::try_from(
+                attested
+                    .document()
+                    .public_key
+                    .as_ref()
+                    .ok_or(Error::InvalidSigningKey)?
+                    .as_slice(),
+            )
+            .map_err(|_| Error::InvalidSigningKey)
+            .and_then(|bytes| {
+                EdDSAPublicKey::from_compressed_bytes(bytes).map_err(|_| Error::InvalidSigningKey)
+            })?;
 
             match_token::verify(&statement.token, &signing_key)
                 .map_err(|_| Error::StatementInvalid)?;
@@ -192,3 +223,7 @@ impl FaceVerifierClient {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/matches.rs"]
+mod tests;

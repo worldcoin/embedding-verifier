@@ -10,7 +10,36 @@ use serde::{Deserialize, Serialize};
 use crate::error::Error;
 use url::Url;
 
-use attested_channel::nitro::{EnclaveAttestationVerifier, PcrMeasurement};
+use pontifex::attestation::{PcrConfig, Verifier};
+
+/// One expected PCR measurement in the client configuration.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PcrMeasurement {
+    /// PCR index; every configuration must include PCR0.
+    pub index: u32,
+    /// SHA-384 measurement, serialized as hex. A `0x` prefix is accepted on input.
+    #[serde(
+        serialize_with = "hex::serde::serialize",
+        deserialize_with = "deserialize_pcr"
+    )]
+    pub value: Vec<u8>,
+}
+
+impl PcrMeasurement {
+    /// Creates a measurement for a client configuration.
+    #[must_use]
+    pub fn new(index: u32, value: impl Into<Vec<u8>>) -> Self {
+        Self {
+            index,
+            value: value.into(),
+        }
+    }
+}
+
+fn deserialize_pcr<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    hex::decode(value.strip_prefix("0x").unwrap_or(&value)).map_err(serde::de::Error::custom)
+}
 
 /// Default freshness bound, matching the few-hour lifetime of a Nitro certificate.
 const fn default_max_attestation_age_millis() -> u64 {
@@ -27,6 +56,7 @@ const fn default_request_timeout_millis() -> u64 {
 
 /// Configuration to interact with an embedding verifier host.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// Base URL of the host, e.g. `https://verifier.example.com`.
     host_url: Url,
@@ -36,10 +66,6 @@ pub struct Config {
     /// How old an attestation document's own timestamp may be.
     #[serde(default = "default_max_attestation_age_millis")]
     max_attestation_age_millis: u64,
-    /// Whether to accept `--debug-mode` enclaves, whose measurements are all zero and whose
-    /// memory the parent instance can read. Development only.
-    #[serde(default)]
-    allow_debug_measurements: bool,
     /// Bound on establishing a connection.
     #[serde(default = "default_connect_timeout_millis")]
     connect_timeout_millis: u64,
@@ -53,8 +79,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns an error if `host_url` is not a valid URL, or if no measurements are given —
-    /// an empty policy would accept any genuine Nitro enclave, including somebody else's.
+    /// Returns an error if `host_url` is not a valid URL or the measurement policy fails
+    /// the requirements of [`Self::verifier`].
     pub fn new(
         host_url: &str,
         allowed_pcr_configs: Vec<Vec<PcrMeasurement>>,
@@ -68,7 +94,6 @@ impl Config {
             host_url,
             allowed_pcr_configs,
             max_attestation_age_millis: default_max_attestation_age_millis(),
-            allow_debug_measurements: false,
             connect_timeout_millis: default_connect_timeout_millis(),
             request_timeout_millis: default_request_timeout_millis(),
         };
@@ -81,15 +106,6 @@ impl Config {
     #[must_use]
     pub fn with_max_attestation_age(mut self, max_age: Duration) -> Self {
         self.max_attestation_age_millis = u64::try_from(max_age.as_millis()).unwrap_or(u64::MAX);
-        self
-    }
-
-    /// Accepts `--debug-mode` enclaves, whose memory the parent instance can read.
-    ///
-    /// Development only.
-    #[must_use]
-    pub const fn allowing_debug_measurements(mut self) -> Self {
-        self.allow_debug_measurements = true;
         self
     }
 
@@ -106,36 +122,53 @@ impl Config {
         Ok(config)
     }
 
-    /// Rejects configurations that would verify nothing.
+    /// Validates the measurement policy before constructing the verifier.
     fn validate(&self) -> Result<(), Error> {
-        // An empty set pins nothing and would match every enclave, so reject it even when
-        // other configurations sit beside it.
-        if self.allowed_pcr_configs.is_empty() || self.allowed_pcr_configs.iter().any(Vec::is_empty)
-        {
-            return Err(Error::InvalidConfig {
-                attribute: "allowed_pcr_configs".to_string(),
-                reason: "every configuration must pin at least one measurement, otherwise it \
-                         would accept any Nitro enclave"
-                    .to_string(),
-            });
-        }
-
-        Ok(())
+        self.verifier().map(|_| ())
     }
 
-    /// Builds a verifier applying this configuration's measurement policy.
-    #[must_use]
-    pub fn verifier(&self) -> EnclaveAttestationVerifier {
-        let verifier = EnclaveAttestationVerifier::new(
-            self.allowed_pcr_configs.clone(),
-            self.max_attestation_age_millis,
-        );
-
-        if self.allow_debug_measurements {
-            return verifier.allowing_debug_measurements();
+    /// Builds a Pontifex verifier applying the configured measurements and freshness bound.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an empty policy, a missing or zero PCR0, duplicate indices, or malformed measurements.
+    pub fn verifier(&self) -> Result<Verifier, Error> {
+        let invalid = || Error::InvalidConfig {
+            attribute: "allowed_pcr_configs".to_owned(),
+            reason: "each configuration must pin a nonzero 48-byte PCR0; \
+                     all measurements must be 48 bytes with unique indices"
+                .to_owned(),
+        };
+        if self.allowed_pcr_configs.is_empty() {
+            return Err(invalid());
         }
-
-        verifier
+        let mut configs = Vec::new();
+        for measurements in &self.allowed_pcr_configs {
+            let mut indices = std::collections::BTreeSet::new();
+            if measurements
+                .iter()
+                .any(|pcr| pcr.value.len() != 48 || !indices.insert(pcr.index))
+            {
+                return Err(invalid());
+            }
+            let pcr0 = measurements
+                .iter()
+                .find(|pcr| pcr.index == 0)
+                .ok_or_else(invalid)?;
+            let image = <[u8; 48]>::try_from(pcr0.value.as_slice()).map_err(|_| invalid())?;
+            if image == [0; 48] {
+                return Err(invalid());
+            }
+            let mut config = PcrConfig::new(image);
+            for pcr in measurements.iter().filter(|pcr| pcr.index != 0) {
+                config = config.with_pcr(pcr.index, pcr.value.clone());
+            }
+            configs.push(config);
+        }
+        Ok(Verifier::new(
+            configs,
+            Duration::from_millis(self.max_attestation_age_millis),
+        ))
     }
 
     /// The host to call.
@@ -162,8 +195,8 @@ mod tests {
     use std::time::Duration;
 
     use super::Config;
+    use super::PcrMeasurement;
     use crate::error::Error;
-    use attested_channel::nitro::PcrMeasurement;
 
     fn pcrs() -> Vec<Vec<PcrMeasurement>> {
         vec![vec![PcrMeasurement::new(0, [0xabu8; 48])]]
@@ -186,6 +219,41 @@ mod tests {
     }
 
     #[test]
+    fn rejects_missing_zero_malformed_and_duplicate_measurements() {
+        let policies = [
+            vec![],
+            vec![PcrMeasurement::new(1, [0xab; 48])],
+            vec![PcrMeasurement::new(0, [0; 48])],
+            vec![PcrMeasurement::new(0, [0xab; 32])],
+            vec![
+                PcrMeasurement::new(0, [0xab; 48]),
+                PcrMeasurement::new(1, [0xab; 32]),
+            ],
+            vec![
+                PcrMeasurement::new(0, [0xab; 48]),
+                PcrMeasurement::new(0, [0xcd; 48]),
+            ],
+        ];
+        for policy in policies {
+            let error = Config::new("http://localhost:8000", vec![policy]).unwrap_err();
+            assert!(matches!(error, Error::InvalidConfig { .. }));
+        }
+    }
+
+    #[test]
+    fn deserialization_cannot_bypass_client_policy_validation() {
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "host_url": "http://localhost:8000",
+            "allowed_pcr_configs": []
+        }))
+        .unwrap();
+        assert!(matches!(
+            crate::FaceVerifierClient::new(config),
+            Err(Error::InvalidConfig { .. })
+        ));
+    }
+
+    #[test]
     fn accepts_pcr_values_with_and_without_the_0x_prefix() {
         // Release metadata records PCRs 0x-prefixed; both spellings should be accepted.
         let json = r#"{
@@ -196,7 +264,10 @@ mod tests {
             ]]
         }"#;
 
-        let config = Config::from_json(json).expect("both spellings should parse");
+        let json = json
+            .replace("0xab01", &format!("0x{}", "ab".repeat(48)))
+            .replace("ab01", &"ab".repeat(48));
+        let config = Config::from_json(&json).expect("both spellings should parse");
 
         let pcrs = &config.allowed_pcr_configs[0];
         assert_eq!(pcrs[0].value, pcrs[1].value);
@@ -217,7 +288,8 @@ mod tests {
             "allowed_pcr_configs": [[{ "index": 0, "value": "abcd" }]]
         }"#;
 
-        let config = Config::from_json(json).expect("config should parse");
+        let json = json.replace("abcd", &"ab".repeat(48));
+        let config = Config::from_json(&json).expect("config should parse");
 
         assert_eq!(config.request_timeout(), Duration::from_mins(1));
     }

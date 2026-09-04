@@ -32,8 +32,7 @@ allow = [
     "BSD-3-Clause",
     # Reached via webpki-roots, the Mozilla CA bundle rustls uses in the verifier client.
     "CDLA-Permissive-2.0",
-    # Reached via webpki, which validates the Nitro attestation chain. Matches
-    # worldcoin/bedrock, whose verifier this port is derived from.
+    # Reached via Pontifex, which uses webpki to validate the Nitro attestation chain.
     "ISC",
     "MIT",
     "Unicode-3.0",
@@ -55,7 +54,6 @@ license-files = [{ path = "LICENSE", hash = 0x001c7e6c }]
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# Only verifier/enclave reaches biometric-engines; the other two workspaces resolve no git
-# source at all, so this goes unmatched there. See the note at the top.
+# Only verifier/enclave reaches biometric-engines in the unified workspace.
 unused-allowed-source = "allow"
 allow-git = ["https://github.com/worldcoin/biometric-engines"]
