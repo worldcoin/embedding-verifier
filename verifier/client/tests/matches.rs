@@ -46,7 +46,6 @@ fn config(base_url: &str) -> Config {
 
 fn inputs() -> MatchInputs {
     MatchInputs {
-        version: attested_channel::channel::CHANNEL_VERSION,
         live_image: b"liveness-frame".to_vec(),
         credential_image: b"credential-thumbnail".to_vec(),
         light_guard_image: None,

@@ -1,7 +1,7 @@
 use std::{env, fs, path::PathBuf, time::SystemTime};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use attested_channel::channel::{CHANNEL_VERSION, SealedResponse, UnwrapErr};
+use attested_channel::channel::{SealedResponse, UnwrapErr};
 use flamingo_verifier_client::{Config, FaceVerifierClient};
 use flamingo_verifier_enclave_types::MatchRequest;
 use flamingo_verifier_protocol::match_token::{self, EdDSAPublicKey};
@@ -36,7 +36,6 @@ async fn main() -> Result<()> {
 
     let hashes_json = hashes_json_for(&credential_image);
     let inputs = MatchInputs {
-        version: CHANNEL_VERSION,
         live_image: live_image.clone(),
         credential_image: credential_image.clone(),
         // Vanilla mode. The harness asserts on a signed statement, and the LightGuard flow cannot

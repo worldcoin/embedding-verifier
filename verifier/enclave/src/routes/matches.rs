@@ -71,9 +71,6 @@ fn run(
             );
             return match error {
                 ProtocolError::Malformed => Ok(MatchResult::Failed(FailureReason::MalformedInputs)),
-                ProtocolError::UnsupportedChannelVersion => {
-                    Ok(MatchResult::Failed(FailureReason::UnsupportedVersion))
-                }
                 // Decoding produces no other variant; anything else is a bug in this crate.
                 _ => Err(EnclaveError::Internal),
             };
@@ -179,9 +176,7 @@ fn seal(
 mod tests {
     use std::sync::Arc;
 
-    use attested_channel::channel::{
-        CHANNEL_VERSION, Requester, ResponseOpener, SealedResponse, UnwrapErr,
-    };
+    use attested_channel::channel::{Requester, ResponseOpener, SealedResponse, UnwrapErr};
     use flamingo_verifier_enclave_types::{EnclaveError, MatchRequest};
     use flamingo_verifier_protocol::match_token;
     use flamingo_verifier_protocol::messages::{FailureReason, MatchInputs, MatchResult};
@@ -270,7 +265,6 @@ mod tests {
 
     fn inputs(credential: &[u8], threshold: f32) -> MatchInputs {
         MatchInputs {
-            version: CHANNEL_VERSION,
             live_image: LIVE.to_vec(),
             credential_image: credential.to_vec(),
             light_guard_image: None,
@@ -445,26 +439,6 @@ mod tests {
         assert_eq!(
             MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
             MatchResult::Failed(FailureReason::MalformedInputs)
-        );
-    }
-
-    #[tokio::test]
-    async fn an_unsupported_payload_version_is_a_sealed_failure() {
-        let state = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
-        let mut inputs = inputs(CREDENTIAL, 0.5);
-        inputs.version = CHANNEL_VERSION + 1;
-        let (opener, request) = request_for(&state, &inputs);
-
-        let response = handler(state, request)
-            .await
-            .expect("a bad version is answered, not errored");
-
-        let plaintext = opener
-            .open(&SealedResponse::from_bytes(response.ciphertext))
-            .expect("should open");
-        assert_eq!(
-            MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
-            MatchResult::Failed(FailureReason::UnsupportedVersion)
         );
     }
 
