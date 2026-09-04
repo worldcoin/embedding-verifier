@@ -20,11 +20,7 @@ pub enum EnclaveError {
     Internal,
 }
 
-/// Why a sealed match payload could not be encoded or decoded.
-///
-/// Local by construction — no `Serialize`, so it cannot travel. The enclave turns a decode
-/// failure into a sealed [`crate::FailureReason`] instead, which is what keeps it out of the
-/// [`EnclaveError`] the host reads.
+/// Why a sealed match payload could not be encoded or decoded. Client-local only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FramingError {
     /// The bytes were not the CBOR framing [`crate::MatchInputs`] and [`crate::MatchResult`] write.

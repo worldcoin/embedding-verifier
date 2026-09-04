@@ -1,9 +1,5 @@
 //! Everything the `Verifier` enclave speaks: the vsock contract it serves the host, and the
-//! sealed payload it opens from the requester.
-//!
-//! [`MatchInputs`] and [`MatchResult`] are the end-to-end half: they travel sealed by
-//! [`attested_channel::channel`], and the host relays the ciphertext without a key for either.
-//! Everything else here is the vsock envelope the host does speak.
+//! sealed contract it serves the client.
 //!
 //! The client↔host HTTP contract is `flamingo-verifier-api-types`; the signed statement a
 //! successful [`MatchResult`] carries is `flamingo-verifier-protocol`.
