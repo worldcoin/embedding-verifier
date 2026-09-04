@@ -4,8 +4,8 @@ use std::time::SystemTime;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-use attested_channel::channel::{self, Requester, SealedResponse, UnwrapErr};
-use attested_channel::nitro::{self, EnclaveAttestationVerifier, VerifiedAttestation};
+use attested_channel::channel::{Requester, SealedResponse, UnwrapErr};
+use attested_channel::nitro::{EnclaveAttestationVerifier, VerifiedAttestation};
 use flamingo_verifier_api_types::{
     ApiErrorResponse, EnclaveAssignmentResponse, MatchRequestBody, MatchResponseBody,
 };
@@ -14,6 +14,7 @@ use flamingo_verifier_sealed_types::{MatchInputs, MatchResult};
 use getrandom::SysRng;
 
 use crate::config::Config;
+use crate::error::Error;
 
 /// Path of the assignment endpoint.
 const ASSIGNMENT_PATH: &str = "/v1/enclave-assignment";
@@ -23,69 +24,6 @@ const MATCHES_PATH: &str = "/v1/matches";
 
 /// Error code the host uses for a request that did not open.
 const REASSIGN_REQUIRED: &str = "reassign_required";
-
-/// Failures while calling the host.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// The HTTP client could not be constructed.
-    #[error("failed to build HTTP client: {0}")]
-    Transport(#[source] reqwest::Error),
-
-    /// The request failed, timed out, or the body could not be read.
-    #[error("request to the host failed: {0}")]
-    Request(#[source] reqwest::Error),
-
-    /// The host answered with a non-success status.
-    #[error("host returned HTTP {0}")]
-    Status(u16),
-
-    /// The response was not the JSON the endpoint is specified to return.
-    #[error("response was not valid JSON: {0}")]
-    MalformedResponse(#[source] reqwest::Error),
-
-    /// An attestation document did not verify.
-    #[error(transparent)]
-    Attestation(#[from] nitro::Error),
-
-    /// The attested encryption public key was absent or not exactly 32 bytes.
-    #[error("attested encryption public key was invalid")]
-    InvalidEncryptionKey,
-
-    /// The host answered with an error envelope.
-    #[error("host returned HTTP {status} ({code})")]
-    Api {
-        /// HTTP status the host chose.
-        status: u16,
-        /// Machine-readable code from the envelope.
-        code: String,
-        /// Whether the host says the request may be retried.
-        allow_retry: bool,
-    },
-
-    /// The assignment is stale: re-assign, re-seal, and retry once.
-    #[error("the request was not sealed to the enclave's current key; re-assign and retry once")]
-    ReassignRequired,
-
-    /// Sealing the request or opening the response failed.
-    #[error("sealed channel failure: {0:?}")]
-    Channel(channel::Error),
-
-    /// The response ciphertext was not valid base64.
-    #[error("response ciphertext was not valid base64")]
-    MalformedCiphertext,
-
-    /// The sealed plaintext was not a match result.
-    #[error("sealed response was not a match result")]
-    MalformedResult,
-
-    /// The attested signing public key was not a valid `BabyJubJub` point.
-    #[error("attested signing public key was invalid")]
-    InvalidSigningKey,
-
-    /// The statement did not verify under the attested signing key.
-    #[error("match statement did not verify under the attested signing key")]
-    StatementInvalid,
-}
 
 /// An assignment whose attestation verified and whose encryption key is ready for sealing.
 #[derive(Debug, Clone, PartialEq, Eq)]
