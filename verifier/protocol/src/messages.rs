@@ -119,6 +119,10 @@ impl MatchResult {
     }
 
     /// Encodes this result in the fixed-size sealed-response envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ResponseTooLarge`] when the result exceeds the envelope.
     pub fn to_padded_cbor(&self) -> Result<Vec<u8>, Error> {
         let encoded = self.to_cbor()?;
         let max_result_len = MATCH_RESULT_ENVELOPE_LEN - MATCH_RESULT_LENGTH_LEN;
@@ -147,6 +151,10 @@ impl MatchResult {
     }
 
     /// Decodes a result from the fixed-size sealed-response envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Malformed`] for an invalid envelope or result.
     pub fn from_padded_cbor(bytes: &[u8]) -> Result<Self, Error> {
         if bytes.len() != MATCH_RESULT_ENVELOPE_LEN {
             return Err(Error::Malformed);
