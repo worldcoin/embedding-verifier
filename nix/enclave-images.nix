@@ -87,7 +87,7 @@ let
   };
   verifier = buildEnclaveImage {
     workload = "verifier";
-    pname = "flamingo-verifier-enclave";
+    pname = "verifier-enclave";
     extraRoot = [ verifierModels ];
   };
 in

@@ -108,7 +108,7 @@ in
     pname = "di-enclave";
   };
   verifier-enclave = buildEnclaveBin {
-    pname = "flamingo-verifier-enclave";
+    pname = "verifier-enclave";
     extraArgs = faceEngineArgs;
   };
 }
