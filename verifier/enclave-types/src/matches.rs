@@ -1,7 +1,7 @@
 use pontifex::Request;
 use serde::{Deserialize, Serialize};
 
-use crate::EnclaveError;
+use crate::Error;
 
 /// Requests a 3-way face match.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,7 +13,7 @@ pub struct MatchRequest {
 
 impl Request for MatchRequest {
     const ROUTE_ID: &'static str = "/v1/matches";
-    type Response = Result<MatchResponse, EnclaveError>;
+    type Response = Result<MatchResponse, Error>;
 }
 
 /// The sealed outcome of a match.

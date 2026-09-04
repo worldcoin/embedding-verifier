@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use flamingo_verifier_enclave_types::{EnclaveError, GetEncryptionKeyRequest, KeyAttestation};
+use flamingo_verifier_enclave_types as enclave_types;
+use flamingo_verifier_enclave_types::{GetEncryptionKeyRequest, KeyAttestation};
 
 use crate::state::EnclaveState;
 
@@ -8,7 +9,7 @@ use crate::state::EnclaveState;
 pub async fn handler(
     state: Arc<EnclaveState>,
     _: GetEncryptionKeyRequest,
-) -> Result<KeyAttestation, EnclaveError> {
+) -> Result<KeyAttestation, enclave_types::Error> {
     Ok(KeyAttestation {
         document: state.encryption_key_attestation().await,
     })

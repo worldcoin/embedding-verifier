@@ -1,11 +1,11 @@
 //! The two ends of one match exchange: what the requester seals in, and what the enclave seals
 //! back. The host relays both ciphertexts and holds no key for either.
 
+use flamingo_verifier_protocol::match_token::MatchToken;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::error::Error;
-use crate::match_token::MatchToken;
 
 /// The sealed inputs to one match.
 ///
@@ -203,12 +203,12 @@ pub enum FailureReason {
 mod tests {
     use attested_channel::channel::CHANNEL_VERSION;
 
+    use flamingo_verifier_protocol::match_token::MatchToken;
+
     use super::{
         AttestedStatement, Error, FailureReason, MATCH_RESULT_ENVELOPE_LEN, MatchInputs,
         MatchResult,
     };
-
-    use crate::match_token::MatchToken;
 
     fn inputs() -> MatchInputs {
         MatchInputs {

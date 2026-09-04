@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use attested_channel::channel::{ENCRYPTION_KEY_LEN, Responder, UnwrapErr};
 use eddsa_babyjubjub::EdDSAPublicKey;
-use flamingo_verifier_enclave_types::EnclaveError;
+use flamingo_verifier_enclave_types as enclave_types;
 use getrandom::SysRng;
 use tokio::task::JoinHandle;
 
@@ -31,12 +31,12 @@ impl EnclaveState {
     ///
     /// # Errors
     ///
-    /// Returns [`EnclaveError`] if the signing public key cannot be serialized, or if either key
+    /// Returns [`enclave_types::Error`] if the signing public key cannot be serialized, or if either key
     /// cannot be attested.
     pub fn generate(
         attestor: Arc<dyn Attestor>,
         face_engine: Arc<dyn FaceComparator>,
-    ) -> Result<Self, EnclaveError> {
+    ) -> Result<Self, enclave_types::Error> {
         let mut rng = UnwrapErr(SysRng);
         let responder = Responder::generate(&mut rng);
         let signing_key = SigningKey::generate();
@@ -49,7 +49,7 @@ impl EnclaveState {
                 .to_compressed_bytes()
                 .map_err(|error| {
                     tracing::error!(%error, "failed to serialize the signing public key");
-                    EnclaveError::AttestationFailed
+                    enclave_types::Error::AttestationFailed
                 })?;
 
         let attested_encryption_key = AttestedKey::new(
@@ -128,7 +128,7 @@ impl EnclaveState {
 mod tests {
     use std::sync::Arc;
 
-    use flamingo_verifier_enclave_types::EnclaveError;
+    use flamingo_verifier_enclave_types as enclave_types;
 
     use super::EnclaveState;
     use crate::test_support::{EchoAttestor, FailingAttestor, UnusedFaceEngine, state_with};
@@ -181,6 +181,6 @@ mod tests {
         let error =
             EnclaveState::generate(Arc::new(FailingAttestor), Arc::new(UnusedFaceEngine)).err();
 
-        assert_eq!(error, Some(EnclaveError::AttestationFailed));
+        assert_eq!(error, Some(enclave_types::Error::AttestationFailed));
     }
 }

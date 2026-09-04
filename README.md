@@ -20,7 +20,8 @@ verifier/
 │   ├── enclave/           # Nitro enclave workload — the trusted side. Own workspace -> own Cargo.lock
 │   ├── api-types/         # Client↔host HTTP contract; stops at the host, so no enclave links it
 │   ├── enclave-types/     # Host↔enclave vsock contract: health, errors, key attestation, the match exchange
-│   ├── protocol/          # Match inputs and outputs; travels sealed, the host links none of it. Will likely move to `world-id-protocol`.
+│   ├── sealed-types/      # Sealed client↔enclave match payload; the host relays it, so the host does not link this
+│   ├── protocol/          # The signed match statement a held match produces. Will likely move to `world-id-protocol`.
 │   ├── client/            # Attestation-verifying client
 │   └── e2e/               # End-to-end harness driving host and enclave together
 └── di/                    # Skeleton — dirs and crates only, no behaviour yet
@@ -42,7 +43,8 @@ Each enclave is its own cargo workspace. One lockfile for the whole repository m
 pin. Now an EIF's inputs are its own `Cargo.toml`, the `Cargo.lock` beside it, and the path
 crates they name.
 
-`attested-channel`, `flamingo-verifier-protocol` and `flamingo-verifier-enclave-types` are in both an enclave
+`attested-channel`, `flamingo-verifier-protocol`, `flamingo-verifier-sealed-types` and
+`flamingo-verifier-enclave-types` are in both an enclave
 graph and the host-side one. They are members of the root workspace but inherit nothing from it
 — not `[workspace.dependencies]`, not `[workspace.package]` — so the root manifest cannot reach
 an enclave graph either. Treat them as standalone crates: write the version, and the `edition`,

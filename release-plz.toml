@@ -21,6 +21,11 @@ release = true
 publish = true
 
 [[package]]
+name = "flamingo-verifier-sealed-types"
+release = true
+publish = true
+
+[[package]]
 name = "flamingo-verifier-client"
 release = true
 publish = true
@@ -30,4 +35,5 @@ changelog_include = [
     "attested-channel",
     "flamingo-verifier-api-types",
     "flamingo-verifier-protocol",
+    "flamingo-verifier-sealed-types",
 ]

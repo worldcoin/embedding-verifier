@@ -5,7 +5,7 @@ use attested_channel::channel::{CHANNEL_VERSION, SealedResponse, UnwrapErr};
 use flamingo_verifier_client::{Config, FaceVerifierClient};
 use flamingo_verifier_enclave_types::MatchRequest;
 use flamingo_verifier_protocol::match_token::{self, EdDSAPublicKey};
-use flamingo_verifier_protocol::messages::{MatchInputs, MatchResult};
+use flamingo_verifier_sealed_types::{MatchInputs, MatchResult};
 use pontifex::client::ConnectionDetails;
 use sha2::{Digest, Sha256};
 
