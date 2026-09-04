@@ -21,6 +21,19 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  version-alignment:
+    name: Version Alignment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: worldcoin/bedrock/.github/actions/version-alignment@857c252013ac52cea24f5d7add3475a909d663f2
+        with:
+          uniffi_version: ${{ vars.UNIFFI_VERSION }}
+          rust_toolchain_channel: ${{ vars.RUST_TOOLCHAIN_CHANNEL }}
+
   cargo-clippy:
     name: clippy
     runs-on: ubuntu-latest
