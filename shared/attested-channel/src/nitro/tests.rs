@@ -8,9 +8,6 @@
 //! The fixture's certificate chain expired in September 2025, so tests pin `now` to the
 //! document's own timestamp, which falls inside its validity window.
 
-// `Duration::from_days` / `from_hours`, which clippy suggests here, are unstable on 1.97.
-#![allow(clippy::duration_suboptimal_units)]
-
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
