@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use attested_channel::channel::{SealedRequest, SealedResponse, UnwrapErr};
 use flamingo_verifier_enclave_types::{
-    AttestedStatement, EnclaveError, FailureReason, MatchInputs, MatchRequest, MatchResponse,
-    MatchResult, MessageError,
+    AttestedStatement, EnclaveError, FailureReason, FramingError, MatchInputs, MatchRequest,
+    MatchResponse, MatchResult,
 };
 use flamingo_verifier_protocol::match_token::MatchClaims;
 use getrandom::SysRng;
@@ -69,8 +69,8 @@ fn run(
                 "unusable match payload"
             );
             return match error {
-                MessageError::Malformed => Ok(MatchResult::Failed(FailureReason::MalformedInputs)),
-                MessageError::UnsupportedChannelVersion => {
+                FramingError::Malformed => Ok(MatchResult::Failed(FailureReason::MalformedInputs)),
+                FramingError::UnsupportedChannelVersion => {
                     Ok(MatchResult::Failed(FailureReason::UnsupportedVersion))
                 }
                 // Decoding produces no other variant; anything else is a bug in this crate.

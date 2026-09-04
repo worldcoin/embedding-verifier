@@ -22,7 +22,7 @@ mod keys;
 mod matches;
 mod messages;
 
-pub use error::{EnclaveError, MessageError};
+pub use error::{EnclaveError, FramingError};
 pub use health::HealthRequest;
 pub use keys::{GetEncryptionKeyRequest, KeyAttestation};
 pub use matches::{MatchRequest, MatchResponse};

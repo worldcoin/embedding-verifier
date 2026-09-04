@@ -22,10 +22,11 @@ pub enum EnclaveError {
 
 /// Why a sealed match payload could not be encoded or decoded.
 ///
-/// Separate from [`EnclaveError`], which the host sees: none of this ever leaves the sealed
-/// channel, so it is free to name what went wrong.
+/// Local by construction — no `Serialize`, so it cannot travel. The enclave turns a decode
+/// failure into a sealed [`crate::FailureReason`] instead, which is what keeps it out of the
+/// [`EnclaveError`] the host reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MessageError {
+pub enum FramingError {
     /// The bytes were not the CBOR framing [`crate::MatchInputs`] and [`crate::MatchResult`] write.
     Malformed,
     /// CBOR encoding failed.
