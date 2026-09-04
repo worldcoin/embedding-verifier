@@ -1,10 +1,13 @@
 [package]
 name = "flamingo-verifier-api-types"
+description = "HTTP API types for the Flamingo verifier"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = true
 
 # Host-side only, and deliberately not in either enclave's source set: the HTTP contract stops
 # at the host, so none of it belongs in an EIF.
