@@ -19,20 +19,19 @@ let
       version = enclaveBins.${pname}.version;
       imageName = "flamingo-verifier-${workload}-enclave";
 
-      root = pkgs.runCommand "${pname}-root" { } ''
-        mkdir -p "$out/bin" "$out/etc/ssl/certs"
-        cp ${enclaveBins.${pname}}/bin/${pname} "$out/bin/${pname}"
-        cp ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt "$out/etc/ssl/certs/ca-bundle.crt"
-        ${
-          if extraRoot == [ ] then
-            ""
-          else
-            ''
-              mkdir -p "$out/models"
-              ${pkgs.lib.concatMapStringsSep "\n" (path: "cp -R ${path}/models/. \"$out/models/\"") extraRoot}
-            ''
-        }
-      '';
+      root = pkgs.buildEnv {
+        name = "${pname}-root";
+        paths = [
+          enclaveBins.${pname}
+          pkgs.cacert
+        ]
+        ++ extraRoot;
+        pathsToLink = [
+          "/bin"
+          "/etc"
+          "/models"
+        ];
+      };
 
       dockerArchive = pkgs.dockerTools.buildLayeredImage {
         name = imageName;
@@ -69,7 +68,7 @@ let
         nsmKo = nitroBlobs.nsmKo;
         init = nitroBlobs.init;
         copyToRoot = root;
-        copyToRootWithClosure = false;
+        copyToRootWithClosure = true;
         entrypoint = "/bin/${pname}";
         env = ''
           RUST_LOG=info
