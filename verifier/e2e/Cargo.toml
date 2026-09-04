@@ -1,0 +1,20 @@
+[package]
+name = "flamingo-verifier-e2e"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+attested-channel.workspace = true
+flamingo-verifier-protocol.workspace = true
+flamingo-verifier-enclave-types.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+pontifex = { workspace = true, features = ["client", "nsm"] }
+rand.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+flamingo-verifier-client.workspace = true

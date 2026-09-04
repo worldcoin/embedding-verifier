@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "deepface/api-types",
-    "deepface/client",
-    "deepface/e2e",
-    "deepface/enclave-types",
-    "deepface/enclave",
-    "deepface/host",
-    "deepface/protocol",
+    "verifier/api-types",
+    "verifier/client",
+    "verifier/e2e",
+    "verifier/enclave-types",
+    "verifier/enclave",
+    "verifier/host",
+    "verifier/protocol",
     "di/enclave",
     "di/host",
     "shared/attested-channel",
@@ -32,10 +32,10 @@ base64 = "0.22"
 aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
 ciborium = "0.2"
 coset = "0.4.2"
-deepface-api-types = { path = "deepface/api-types" }
-deepface-client = { path = "deepface/client" }
-deepface-enclave-types = { path = "deepface/enclave-types" }
-deepface-protocol = { path = "deepface/protocol" }
+flamingo-verifier-api-types = { path = "verifier/api-types" }
+flamingo-verifier-client = { path = "verifier/client" }
+flamingo-verifier-enclave-types = { path = "verifier/enclave-types" }
+flamingo-verifier-protocol = { path = "verifier/protocol" }
 eddsa-babyjubjub = { package = "taceo-eddsa-babyjubjub", version = "0.5" }
 face-engine = { git = "https://github.com/worldcoin/biometric-engines", rev = "face-engine-v2.16.0", default-features = false, features = ["tract"] }
 getrandom = { version = "0.4", features = ["sys_rng"] }

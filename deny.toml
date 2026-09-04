@@ -55,7 +55,7 @@ license-files = [{ path = "LICENSE", hash = 0x001c7e6c }]
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# Only deepface/enclave reaches biometric-engines; the other two workspaces resolve no git
+# Only verifier/enclave reaches biometric-engines; the other two workspaces resolve no git
 # source at all, so this goes unmatched there. See the note at the top.
 unused-allowed-source = "allow"
 allow-git = ["https://github.com/worldcoin/biometric-engines"]

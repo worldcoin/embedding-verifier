@@ -2,14 +2,14 @@ name: release enclaves
 
 on:
   push:
-    tags: ["deepface/v*", "di/v*"]
+    tags: ["verifier/v*", "di/v*"]
   workflow_dispatch:
     inputs:
       workload:
         description: "Enclave to release."
         required: true
         type: choice
-        options: [deepface, di]
+        options: [verifier, di]
       ref:
         description: "Branch, tag, or commit SHA to build."
         required: true
@@ -115,7 +115,7 @@ jobs:
           RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
         run: |
           face_models='{}'
-          if [[ "$WORKLOAD" == deepface ]]; then
+          if [[ "$WORKLOAD" == verifier ]]; then
             face_models=$(nix eval --json --no-update-lock-file .#faceModels | jq 'map_values({url, hash})')
           fi
           jq -n \
@@ -170,7 +170,7 @@ jobs:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          repo="$REGISTRY/$OWNER/embedding-verifier-$WORKLOAD-enclave"
+          repo="$REGISTRY/$OWNER/flamingo-verifier-$WORKLOAD-enclave"
           nixpkgs_rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
           skopeo="github:NixOS/nixpkgs/$nixpkgs_rev#skopeo"
           nix run --no-update-lock-file "$skopeo" -- --insecure-policy copy \

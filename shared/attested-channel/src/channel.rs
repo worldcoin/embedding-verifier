@@ -49,12 +49,12 @@ pub const CHANNEL_VERSION: u8 = 1;
 pub const ENCRYPTION_KEY_LEN: usize = 32;
 
 /// Domain-separation prefix for the channel's HPKE `info`.
-const CHANNEL_INFO_DOMAIN: &[u8] = b"embedding-verifier/match";
+const CHANNEL_INFO_DOMAIN: &[u8] = b"verifier/match";
 
 /// Exporter context for the response secret — RFC 9458 §4.4 step 1. Substituted for the RFC's
 /// `"message/bhttp response"` under §4.6 and §6.4, which direct anyone reusing the format to
 /// choose their own label for key diversity.
-const RESPONSE_EXPORTER_LABEL: &[u8] = b"embedding-verifier/match response";
+const RESPONSE_EXPORTER_LABEL: &[u8] = b"verifier/match response";
 
 /// `Expand` info for the response AEAD key — RFC 9458 §4.4 step 4.
 const INFO_KEY: &[u8] = b"key";
@@ -912,12 +912,12 @@ mod kat {
         hex!("1a239249ea74403babc01f32df9931a16f71ac8972c461d69fed15640e310639");
     const PINNED_REQUEST: [u8; 60] = hex!(
         "e3b9708aaa21a7f1e62a95ee28d1e5d60b0fceed6c68599013a54b318e9e0b15"
-        "81fd0d3318729a9833bb0a090f9af62d8b87fc166aee22d70849f970"
+        "92cf4a1c0d799fdf9d359186dc9e8089574406cf34e093aa47c341ce"
     );
     const PINNED_RESPONSE: [u8; 57] = hex!(
         // The leading 32 bytes are the response_nonce exactly as drawn from the fixed RNG,
         // confirming the `response_nonce || ciphertext` layout of RFC 9458 section 4.4 step 7.
         "3333333333333333333333333333333333333333333333333333333333333333"
-        "ede83b5b125ab339ee2bd91d320571a796feec732954644a95"
+        "1d457d1e176f5921ae1ac4ff4cff6d057d76fd853849c5fd31"
     );
 }

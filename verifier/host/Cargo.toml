@@ -1,0 +1,31 @@
+[package]
+name = "flamingo-verifier-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "flamingo-verifier-host"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+flamingo-verifier-api-types.workspace = true
+flamingo-verifier-enclave-types.workspace = true
+pontifex = { workspace = true, features = ["client"] }
+serde.workspace = true
+telemetry-batteries = { workspace = true, features = ["axum"] }
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+http-body-util.workspace = true
+serde_json.workspace = true
+tower.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

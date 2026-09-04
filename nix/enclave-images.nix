@@ -3,7 +3,7 @@
   pkgs,
   nitro-util,
   enclaveBins,
-  deepfaceModels,
+  verifierModels,
 }:
 let
   nitroLib = nitro-util.lib.${system};
@@ -17,7 +17,7 @@ let
     }:
     let
       version = enclaveBins.${pname}.version;
-      imageName = "embedding-verifier-${workload}-enclave";
+      imageName = "flamingo-verifier-${workload}-enclave";
 
       root = pkgs.buildEnv {
         name = "${pname}-root";
@@ -85,15 +85,15 @@ let
     workload = "di";
     pname = "di-enclave";
   };
-  deepface = buildEnclaveImage {
-    workload = "deepface";
-    pname = "deepface-enclave";
-    extraRoot = [ deepfaceModels ];
+  verifier = buildEnclaveImage {
+    workload = "verifier";
+    pname = "flamingo-verifier-enclave";
+    extraRoot = [ verifierModels ];
   };
 in
 {
   di-oci = di.oci;
   di-eif = di.eif;
-  deepface-oci = deepface.oci;
-  deepface-eif = deepface.eif;
+  flamingo-verifier-oci = verifier.oci;
+  flamingo-verifier-eif = verifier.eif;
 }

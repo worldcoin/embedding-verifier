@@ -24,7 +24,7 @@ attestation = [
 [dependencies]
 # The HPKE suite's AEAD and the exporter-derived response half. AES-256-GCM because the RP
 # already writes AES-256-GCM blobs to S3 for the challenge image, so the enclave links one AEAD
-# rather than two. `deepface-protocol` pins the same version for that job.
+# rather than two. `flamingo-verifier-protocol` pins the same version for that job.
 aes-gcm.workspace = true
 # HKDF for the response derivation in RFC 9458 §4.4. Pinned to the 0.13 line because that is what
 # `hpke` already resolves for its own HKDF-SHA256, so this adds no crate to the enclave image.

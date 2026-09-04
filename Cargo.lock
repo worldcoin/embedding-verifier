@@ -1064,122 +1064,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deepface-api-types"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "deepface-client"
-version = "0.1.0"
-dependencies = [
- "attested-channel",
- "axum",
- "base64",
- "deepface-api-types",
- "deepface-protocol",
- "getrandom 0.4.3",
- "hex-literal",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "url",
-]
-
-[[package]]
-name = "deepface-e2e"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "attested-channel",
- "deepface-client",
- "deepface-enclave-types",
- "deepface-protocol",
- "getrandom 0.4.3",
- "hex",
- "pontifex",
- "rand 0.8.8",
- "sha2 0.10.9",
- "tokio",
-]
-
-[[package]]
-name = "deepface-enclave"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "attested-channel",
- "ciborium",
- "deepface-enclave-types",
- "deepface-protocol",
- "face-engine",
- "getrandom 0.4.3",
- "hex",
- "image",
- "pontifex",
- "rand 0.8.8",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2 0.10.9",
- "taceo-ark-babyjubjub",
- "taceo-eddsa-babyjubjub",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "deepface-enclave-types"
-version = "0.1.0"
-dependencies = [
- "pontifex",
- "serde",
- "serde_bytes",
-]
-
-[[package]]
-name = "deepface-host"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "base64",
- "deepface-api-types",
- "deepface-enclave-types",
- "http-body-util",
- "pontifex",
- "serde",
- "serde_json",
- "telemetry-batteries",
- "tokio",
- "tower",
- "tracing",
-]
-
-[[package]]
-name = "deepface-protocol"
-version = "0.1.0"
-dependencies = [
- "ark-ff",
- "attested-channel",
- "ciborium",
- "coset",
- "rand 0.8.8",
- "serde",
- "serde_bytes",
- "taceo-ark-babyjubjub",
- "taceo-eddsa-babyjubjub",
- "taceo-poseidon2",
- "zeroize",
-]
-
-[[package]]
 name = "defmt"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1596,6 +1480,122 @@ name = "flagset"
 version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
+
+[[package]]
+name = "flamingo-verifier-api-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "flamingo-verifier-client"
+version = "0.1.0"
+dependencies = [
+ "attested-channel",
+ "axum",
+ "base64",
+ "flamingo-verifier-api-types",
+ "flamingo-verifier-protocol",
+ "getrandom 0.4.3",
+ "hex-literal",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "flamingo-verifier-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "attested-channel",
+ "flamingo-verifier-client",
+ "flamingo-verifier-enclave-types",
+ "flamingo-verifier-protocol",
+ "getrandom 0.4.3",
+ "hex",
+ "pontifex",
+ "rand 0.8.8",
+ "sha2 0.10.9",
+ "tokio",
+]
+
+[[package]]
+name = "flamingo-verifier-enclave"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "attested-channel",
+ "ciborium",
+ "face-engine",
+ "flamingo-verifier-enclave-types",
+ "flamingo-verifier-protocol",
+ "getrandom 0.4.3",
+ "hex",
+ "image",
+ "pontifex",
+ "rand 0.8.8",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2 0.10.9",
+ "taceo-ark-babyjubjub",
+ "taceo-eddsa-babyjubjub",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "flamingo-verifier-enclave-types"
+version = "0.1.0"
+dependencies = [
+ "pontifex",
+ "serde",
+ "serde_bytes",
+]
+
+[[package]]
+name = "flamingo-verifier-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64",
+ "flamingo-verifier-api-types",
+ "flamingo-verifier-enclave-types",
+ "http-body-util",
+ "pontifex",
+ "serde",
+ "serde_json",
+ "telemetry-batteries",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
+name = "flamingo-verifier-protocol"
+version = "0.1.0"
+dependencies = [
+ "ark-ff",
+ "attested-channel",
+ "ciborium",
+ "coset",
+ "rand 0.8.8",
+ "serde",
+ "serde_bytes",
+ "taceo-ark-babyjubjub",
+ "taceo-eddsa-babyjubjub",
+ "taceo-poseidon2",
+ "zeroize",
+]
 
 [[package]]
 name = "flate2"

@@ -1,5 +1,5 @@
 {
-  description = "embedding-verifier — reproducible Nitro enclave images";
+  description = "flamingo-verifier — reproducible Nitro enclave images";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
@@ -38,7 +38,7 @@
       };
       enclaveImages = import ./nix/enclave-images.nix {
         inherit system pkgs nitro-util enclaveBins;
-        deepfaceModels = faceModels.package;
+        verifierModels = faceModels.package;
       };
     in
     {
@@ -46,7 +46,7 @@
         enclaveBins
         // enclaveImages
         // {
-          deepfaceModels = faceModels.package;
+          verifierModels = faceModels.package;
         };
 
       faceModels = faceModels.metadata;

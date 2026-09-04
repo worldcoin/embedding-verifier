@@ -1,6 +1,6 @@
 # Releasing an enclave
 
-Each workload releases on its own tag: `deepface/vX.Y.Z`, `di/vX.Y.Z`. The tag is handled by
+Each workload releases on its own tag: `verifier/vX.Y.Z`, `di/vX.Y.Z`. The tag is handled by
 [`.github/workflows/release-enclaves.yml`](../.github/workflows/release-enclaves.yml).
 
 ## Cutting a release
@@ -12,8 +12,8 @@ Each workload releases on its own tag: `deepface/vX.Y.Z`, `di/vX.Y.Z`. The tag i
    ```
 2. **Tag and push:**
    ```
-   git tag deepface/v0.2.0 <sha-on-main>
-   git push origin deepface/v0.2.0
+   git tag verifier/v0.2.0 <sha-on-main>
+   git push origin verifier/v0.2.0
    ```
 3. **Wait for the build.** The enclave build takes about 90 minutes when cold.
 4. **Review the draft**, check the PCR table, publish. The draft is the last human step: the
@@ -45,12 +45,12 @@ PCR2 the application ramdisk. The EIF metadata section — which carries a wall-
 ## Building and measuring locally
 
 Needs x86_64-linux with Nix and Git credentials that can read
-`worldcoin/biometric-engines`. Deepface also needs a `HUGGING_FACE_TOKEN` for its private
-models. Expect ~90 minutes cold for deepface.
+`worldcoin/biometric-engines`. Verifier also needs a `HUGGING_FACE_TOKEN` for its private
+models. Expect ~90 minutes cold for verifier.
 
 ```
-scripts/build-enclaves.sh --workload deepface target/eif
-jq . target/eif/deepface-pcr.json
+scripts/build-enclaves.sh --workload verifier target/eif
+jq . target/eif/flamingo-verifier-pcr.json
 ```
 
 `di` needs no model token, but the unified workspace vendor set currently still requires
@@ -58,7 +58,7 @@ Git access to `worldcoin/biometric-engines`.
 
 ## Rotating a measurement in production
 
-`deepface/client/src/config.rs` accepts an attestation matching **any one** entry of
+`verifier/client/src/config.rs` accepts an attestation matching **any one** entry of
 `allowed_pcr_configs` in full, so several enclave versions can be trusted at once. Use that
 overlap:
 
@@ -76,9 +76,9 @@ bulk. That path is not built yet: nothing sets `KeyStatus::Revoked`, the IAM pol
 ## Verifying a published release
 
 ```
-gh release download deepface/v0.2.0 -R worldcoin/embedding-verifier
-gh attestation verify manifest.json --repo worldcoin/embedding-verifier \
-   --signer-workflow worldcoin/embedding-verifier/.github/workflows/release-enclaves.yml
+gh release download verifier/v0.2.0 -R worldcoin/flamingo-verifier
+gh attestation verify manifest.json --repo worldcoin/flamingo-verifier \
+   --signer-workflow worldcoin/verifier/.github/workflows/release-enclaves.yml
 ```
 
 The attestation binds the assets to the workflow and commit that produced them. Then reproduce
@@ -88,5 +88,5 @@ the measurements from source and compare against `manifest.json`.
 
 - `di/host` and `di/enclave` are skeletons that exit with a failure code. A `di/v*` tag exercises
   the release pipeline; it does not ship a working service.
-- The EIF is published publicly, and the deepface enclave links private face-engine code. Confirm
-  with the `biometric-engines` owners before the first `deepface/v*` tag.
+- The EIF is published publicly, and the verifier enclave links private face-engine code. Confirm
+  with the `biometric-engines` owners before the first `verifier/v*` tag.
