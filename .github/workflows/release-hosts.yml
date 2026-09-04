@@ -1,0 +1,102 @@
+name: release hosts
+
+on:
+  push:
+    tags:
+      - "deepface-host/v*"
+      - "di-host/v*"
+  workflow_dispatch:
+    inputs:
+      workload:
+        description: "Host to release."
+        required: true
+        type: choice
+        options: [deepface, di]
+      ref:
+        description: "Branch, tag, or commit SHA to build."
+        required: true
+        type: string
+      version:
+        description: "Release version, without the v prefix."
+        required: true
+        type: string
+      dry_run:
+        description: "Build without publishing."
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: release-hosts-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      workload: ${{ steps.release.outputs.workload }}
+      version: ${{ steps.release.outputs.version }}
+      sha: ${{ steps.release.outputs.sha }}
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - id: release
+        env:
+          INPUT_WORKLOAD: ${{ inputs.workload }}
+          INPUT_VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            workload="${GITHUB_REF_NAME%%-host/*}"
+            version="${GITHUB_REF_NAME#*/v}"
+            publish=true
+          else
+            workload="$INPUT_WORKLOAD"
+            version="$INPUT_VERSION"
+            publish=$([[ "$DRY_RUN" == "true" ]] && echo false || echo true)
+          fi
+          {
+            echo "workload=$workload"
+            echo "version=$version"
+            echo "sha=$(git rev-parse HEAD)"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+      attestations: write
+    uses: ./.github/workflows/build-docker.yml
+    secrets: inherit
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+      version: v${{ needs.prepare.outputs.version }}
+      workload: ${{ needs.prepare.outputs.workload }}
+      push: ${{ needs.prepare.outputs.publish == 'true' }}
+
+  release:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          tag="${{ needs.prepare.outputs.workload }}-host/v$VERSION"
+          printf 'Host image: `%s@%s`\n' "$IMAGE" "$DIGEST" > "$RUNNER_TEMP/body.md"
+          gh release create --draft --target "$RELEASE_SHA" -t "$tag" \
+            -F "$RUNNER_TEMP/body.md" "$tag"

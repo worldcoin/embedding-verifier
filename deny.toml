@@ -1,14 +1,4 @@
-# One policy for all three workspaces: the root one, deepface/enclave and di/enclave.
-# cargo-deny reads `<cwd>/deny.toml`, so run it from the repository root and select the
-# workspace with --manifest-path:
-#
-#   cargo deny --manifest-path deepface/enclave/Cargo.toml --all-features check
-#
-# Each workspace sees a subset of the dependencies, so `unused-allowed-license` and
-# `unused-allowed-source` are set to "allow" below — otherwise every lane warns about the
-# allowances the other lanes need. The cost is that a genuinely stale allowance no longer
-# gets flagged; an allowance that matches nothing permits nothing, so it is a hygiene
-# question rather than a policy hole.
+# One policy for the repository's root Cargo workspace.
 [graph]
 all-features = true
 targets = ["x86_64-unknown-linux-gnu"]
@@ -30,7 +20,6 @@ deny = [
 [licenses]
 version = 2
 confidence-threshold = 1.0
-# See the note at the top: three workspaces share this allow list, each using part of it.
 unused-allowed-license = "allow"
 # biometric-engines is a private first-party repository whose crates are not
 # published with SPDX metadata. Keep enforcing licenses for every other source.

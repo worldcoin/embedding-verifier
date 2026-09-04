@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn accepts_pcr_values_with_and_without_the_0x_prefix() {
-        // measurements.json records PCRs 0x-prefixed; the README tells operators to copy them.
+        // Release metadata records PCRs 0x-prefixed; both spellings should be accepted.
         let json = r#"{
             "host_url": "http://localhost:8000",
             "allowed_pcr_configs": [[

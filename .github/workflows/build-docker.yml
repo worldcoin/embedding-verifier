@@ -1,11 +1,7 @@
 # Builds and publishes the host images to GHCR (attested).
 #
-# Enclave workload images are built reproducibly by flake.nix instead of Dockerfiles.
-# Docker is only used later as the transport into AWS nitro-cli's converter. See
-# scripts/build-eif.sh and verify-measurements.yml.
-#
-# Tagged releases call this through workflow_call rather than a `tags:` trigger, so the
-# host image is built at the same commit the reproducibility gate measured. See release.yml.
+# Enclave OCI images and EIFs are built reproducibly by flake.nix. This workflow only builds
+# and publishes host images.
 name: Build and Push Docker Image
 
 on:
@@ -29,6 +25,11 @@ on:
         description: "Version tag to publish (including v prefix, e.g. v0.1.0)"
         required: false
         type: string
+      push:
+        description: "Push images to GHCR."
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       ref:
@@ -59,8 +60,9 @@ on:
 permissions:
   contents: read
 
+
 jobs:
-  # A static matrix cannot be filtered by an input, and release.yml needs one workload at a
+  # A static matrix cannot be filtered by an input, and release-hosts.yml needs one workload at a
   # time. Cheaper than duplicating the build job per workload.
   resolve-matrix:
     name: Resolve build matrix
@@ -136,11 +138,20 @@ jobs:
             type=sha
             type=raw,value=${{ steps.version.outputs.version }},enable=${{ steps.version.outputs.version != '' }}
 
+      - name: Mint biometric-engines access token
+        id: biometric-engines-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
+          private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
+          owner: worldcoin
+          repositories: biometric-engines
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request' && inputs.push != false
+        if: github.event_name == 'push' || inputs.push == true
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -154,15 +165,17 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           # Publish on push/tag/dispatch; PRs and dry runs build only (validation).
-          push: ${{ github.event_name != 'pull_request' && inputs.push != false }}
+          push: ${{ github.event_name == 'push' || inputs.push == true }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
+          secrets: |
+            github_token=${{ steps.biometric-engines-token.outputs.token }}
 
       - name: Attest build provenance
-        if: github.event_name != 'pull_request' && inputs.push != false
+        if: github.event_name == 'push' || inputs.push == true
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           push-to-registry: true

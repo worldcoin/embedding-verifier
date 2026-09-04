@@ -1,10 +1,7 @@
 name: Setup Rust
-description: Rust toolchain, cargo cache and private-dependency credentials for one workspace.
+description: Rust toolchain, cargo cache and private-dependency credentials.
 
 inputs:
-  workspace:
-    description: Workspace directory, relative to the repository root.
-    required: true
   app-id:
     description: biometric-engines GitHub App client id.
     required: false
@@ -17,9 +14,7 @@ inputs:
 runs:
   using: composite
   steps:
-    # Only deepface/enclave resolves a private repository; the other workspaces need no token.
     - id: token
-      if: inputs.workspace == 'deepface/enclave'
       uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
       with:
         client-id: ${{ inputs.app-id }}
@@ -32,12 +27,9 @@ runs:
         toolchain: 1.97.0
         components: clippy, rustfmt
 
-    - uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: ${{ inputs.workspace }}
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-    - if: steps.token.outputs.token != ''
-      shell: bash
+    - shell: bash
       env:
         TOKEN: ${{ steps.token.outputs.token }}
       run: |

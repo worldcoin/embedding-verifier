@@ -254,7 +254,7 @@ fn rejects_empty_and_non_cbor_input() {
 
 #[test]
 fn pins_the_aws_nitro_root_certificate() {
-    use sha2::{Digest as _, Sha256};
+    use sha2_0_11::{Digest as _, Sha256};
 
     // The fingerprint AWS publishes at
     // https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html

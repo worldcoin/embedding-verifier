@@ -1,4 +1,4 @@
-# Three cargo workspaces, each with its own lockfile. Dependency auditing is supply-chain.yml.
+# Root Cargo workspace checks. Dependency auditing is supply-chain.yml.
 name: Rust CI
 
 on:
@@ -22,46 +22,34 @@ env:
 
 jobs:
   cargo-clippy:
-    name: clippy (${{ matrix.workspace }})
+    name: clippy
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        workspace: [".", "deepface/enclave", "di/enclave"]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: ./.github/actions/setup-rust
         with:
-          workspace: ${{ matrix.workspace }}
           app-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
           private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
       - name: fmt
-        run: cargo fmt --manifest-path ${{ matrix.workspace }}/Cargo.toml --all -- --check
+        run: cargo fmt --all -- --check
       - name: clippy
-        run: cargo clippy --manifest-path ${{ matrix.workspace }}/Cargo.toml --locked --all-targets --all-features --
+        run: cargo clippy --locked --workspace --all-targets --all-features --
 
   cargo-tests:
-    name: tests (${{ matrix.workspace }})
+    name: tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        workspace: [".", "deepface/enclave", "di/enclave"]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: ./.github/actions/setup-rust
         with:
-          workspace: ${{ matrix.workspace }}
           app-id: ${{ secrets.BIOMETRIC_ENGINES_APP_ID }}
           private-key: ${{ secrets.BIOMETRIC_ENGINES_APP_PRIVATE_KEY }}
       - name: tests
-        run: cargo test --manifest-path ${{ matrix.workspace }}/Cargo.toml --locked --all --all-features --verbose
+        run: cargo test --locked --workspace --all-features --verbose
 
-  # The cargo jobs never read flake.nix, and verify-measurements.yml skips PRs that touch nothing
-  # an enclave reaches. Evaluating every output catches a stale flake.lock or a path dependency
-  # missing from flake.nix without spending the 90-minute EIF build.
+  # Evaluate every Nix output without spending the 90-minute EIF build.
   flake:
     name: Flake eval
     runs-on: ubuntu-latest
@@ -93,11 +81,10 @@ jobs:
           GH_APP_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           set -euo pipefail
-          for output in di-enclave deepface-enclave di-oci deepface-oci di-eif deepface-eif nitro-cli; do
+          for output in di-enclave deepface-enclave di-oci deepface-oci di-eif deepface-eif; do
             drv="$(nix eval --raw --no-update-lock-file ".#packages.x86_64-linux.$output.drvPath")"
             echo "$output -> $drv"
           done
-      # Eval alone missed the enclaves moving into their own workspaces: the derivation built and
-      # cargo failed inside it. di is public and small, so build it; deepface stays eval-only.
+      # Build the small DI image so evaluation-only errors do not slip through.
       - name: Build the di enclave image
         run: nix build --no-link --no-update-lock-file .#packages.x86_64-linux.di-oci

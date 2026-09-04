@@ -28,7 +28,7 @@ use hpke::{
     Deserializable, Kem as KemTrait, OpModeR, OpModeS, Serializable, aead::AeadCtxS,
     setup_receiver, setup_sender_with_rng,
 };
-use sha2::Sha256;
+use sha2_0_11::Sha256;
 use zeroize::Zeroizing;
 
 /// The channel ciphersuite, pinned at the type level so it cannot drift silently:

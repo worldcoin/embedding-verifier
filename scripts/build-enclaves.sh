@@ -3,19 +3,17 @@ set -euo pipefail
 
 # Build a workload's enclave EIF and emit its PCR measurements.
 #
-# Nix first constructs a reproducible OCI image, then runs the AWS conversion
-# path with a Nix-packaged nitro-cli v1.4.2 and its bundled LinuxKit and EIF builder.
+# Nix constructs a reproducible OCI image and converts its root filesystem directly into
+# an EIF with aws-nitro-util and AWS's EIF builder.
 #
-# Needs x86_64-linux and a running Docker daemon. Nitro hardware is only needed to run.
+# Needs x86_64-linux. Nitro hardware is only needed to run.
 #
-# Usage: scripts/build-eif.sh [--workload <name>] [--allow-dirty] [output-dir]
+# Usage: scripts/build-enclaves.sh [--workload <name>] [output-dir]
 #        (workload defaults to deepface, output-dir to target/eif)
 #
 # Outputs in <output-dir>:
 #   <workload>-enclave.eif   the enclave image
-#   <workload>-pcr.json      raw PCR output from eif_build
-#   measurements.json        measurements.json with the freshly measured PCRs
-#                            substituted into this workload's entry
+#   <workload>-pcr.json      PCR measurements extracted from the EIF
 #
 # Env: HUGGING_FACE_TOKEN (deepface only, and only when a model is not in the store
 #      yet — read access to the model repositories).
@@ -23,25 +21,20 @@ set -euo pipefail
 # A new workload is an entry here plus a `<name>-eif` output in flake.nix.
 WORKLOADS=("deepface" "di")
 
-# Workloads whose enclave graph reaches a private repository.
-PRIVATE_DEP_WORKLOADS=("deepface")
-
 usage() {
   printf '%s\n' \
-    "Usage: scripts/build-eif.sh [--workload <name>] [--allow-dirty] [output-dir]" \
+    "Usage: scripts/build-enclaves.sh [--workload <name>] [output-dir]" \
     "" \
     "Build a workload's enclave EIF and emit its PCR measurements." \
     "" \
     "Options:" \
     "  --workload <name>  Which enclave to build: ${WORKLOADS[*]} (default deepface)." \
-    "  --allow-dirty      Build from a dirty tree. The PCRs then describe no commit." \
     "  -h, --help         Show this help."
 }
 
 workload="deepface"
 out_dir="target/eif"
 output_dir_provided=false
-allow_dirty=false
 while (( $# > 0 )); do
   case "$1" in
     --workload)
@@ -51,9 +44,6 @@ while (( $# > 0 )); do
       fi
       workload="$2"
       shift
-      ;;
-    --allow-dirty)
-      allow_dirty=true
       ;;
     -h|--help)
       usage
@@ -81,32 +71,12 @@ if [[ ! " ${WORKLOADS[*]} " == *" $workload "* ]]; then
 fi
 
 command -v nix >/dev/null || {
-  echo "[ERROR] nix not found. The OCI image and converter are built by flake.nix." >&2
-  exit 1
-}
-command -v docker >/dev/null || {
-  echo "[ERROR] docker not found. AWS nitro-cli reads the Nix-built OCI image through" >&2
-  echo "        the Docker API, matching the conversion path used before PR #38." >&2
+  echo "[ERROR] nix not found. The OCI image and EIF are built by flake.nix." >&2
   exit 1
 }
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
-
-# A git flake is built from tracked files at their committed content, so uncommitted work is
-# measured out of the EIF without saying so. Measurements that describe no commit are worse
-# than no measurements.
-if [[ -n "$(git status --porcelain)" ]]; then
-  if [[ "$allow_dirty" != "true" ]]; then
-    echo "[ERROR] The working tree is dirty, and Nix builds this flake from committed" >&2
-    echo "        files only — the PCRs would describe no commit. Commit first, or pass" >&2
-    echo "        --allow-dirty if the measurements are throwaway." >&2
-    git status --short >&2
-    exit 1
-  fi
-  echo "[WARN] Dirty tree: building from committed files only. These PCRs describe no"
-  echo "       commit — do not register them with a client."
-fi
 
 mkdir -p "$out_dir"
 out_dir="$(cd "$out_dir" && pwd)"
@@ -122,7 +92,7 @@ trap 'rm -rf "$work_dir"' EXIT
 # matching `nix flake update` would otherwise be resolved to whatever upstream serves right
 # now, and the lock silently rewritten. The PCRs must follow the committed lock or nothing.
 if [[ "$workload" == "deepface" ]]; then
-  echo "[1/3] Fetching face models..."
+  echo "Fetching face models..."
   models_json="$(nix eval --json --no-update-lock-file .#faceModels)"
 
   for file in $(jq -r 'keys[]' <<<"$models_json"); do
@@ -166,7 +136,7 @@ if [[ "$workload" == "deepface" ]]; then
   done
 fi
 
-echo "[2/4] Building reproducible $workload OCI image..."
+echo "Building reproducible $workload OCI image..."
 if ! oci_store=$(nix build ".#${workload}-oci" --no-update-lock-file --no-link --print-out-paths); then
   echo >&2
   echo "[ERROR] OCI image build failed; the error above says why. A 'platform" >&2
@@ -174,25 +144,18 @@ if ! oci_store=$(nix build ".#${workload}-oci" --no-update-lock-file --no-link -
   exit 1
 fi
 
-echo "[3/4] Converting $workload OCI image to EIF..."
-build_json="$out_dir/$workload-build-enclave.json"
-if ! nix run --no-update-lock-file ".#${workload}-eif" -- \
-  "$out_dir/$workload-enclave.eif" | tee "$build_json"; then
+echo "Building $workload EIF..."
+if ! eif_store=$(nix build ".#${workload}-eif" --no-update-lock-file --no-link --print-out-paths); then
   echo >&2
-  echo "[ERROR] AWS nitro-cli failed to convert the Nix-built OCI image." >&2
+  echo "[ERROR] EIF build failed; the error above says why." >&2
   exit 1
 fi
 
-if ! jq -e '.Measurements | type == "object"' "$build_json" >/dev/null; then
-  echo "[ERROR] nitro-cli returned no Measurements object; do not register this EIF." >&2
-  exit 1
-fi
-jq '.Measurements' "$build_json" > "$work_dir/measurements.json"
-install -m 0644 "$work_dir/measurements.json" "$out_dir/$workload-pcr.json"
+install -m 0644 "$eif_store/image.eif" "$out_dir/$workload-enclave.eif"
+install -m 0644 "$eif_store/pcr.json" "$out_dir/$workload-pcr.json"
 
-echo "[4/4] Recording measurements..."
-# Registering a missing or malformed PCR with a client would weaken verification, so check
-# nitro-cli's output shape before copying any value into measurements.json.
+echo "Validating measurements..."
+# Registering a missing or malformed PCR with a client would weaken verification.
 for pcr in PCR0 PCR1 PCR2; do
   value="$(jq -r --arg k "$pcr" '.[$k] // ""' "$out_dir/$workload-pcr.json")"
   if [[ ! "$value" =~ ^[0-9a-f]{96}$ ]]; then
@@ -202,27 +165,8 @@ for pcr in PCR0 PCR1 PCR2; do
   fi
 done
 
-# A whole measurements.json rather than the PCRs alone, so the output is directly
-# comparable to the committed file. The other workload's entry is carried over
-# untouched — this build is in no position to recompute it. An earlier run's output in
-# $out_dir wins over the committed file, so refreshing both workloads in turn keeps both
-# fresh values instead of reverting the first.
-base="$repo_root/measurements.json"
-if [[ -f "$out_dir/measurements.json" ]]; then
-  base="$out_dir/measurements.json"
-fi
-
-# Through the scratch dir: $out_dir can be the repo root, and redirecting straight to the
-# destination truncates it before jq opens it — which would empty the committed file.
-jq -S --slurpfile built "$out_dir/$workload-pcr.json" --arg workload "$workload" \
-  '.[$workload] = {pcr0: ("0x" + $built[0].PCR0),
-                   pcr1: ("0x" + $built[0].PCR1),
-                   pcr2: ("0x" + $built[0].PCR2)}' \
-  "$base" > "$work_dir/measurements.json"
-install -m 0644 "$work_dir/measurements.json" "$out_dir/measurements.json"
-
 echo
 echo "OCI image:    $oci_store"
 echo "EIF:          $out_dir/$workload-enclave.eif"
-echo "Measurements: $out_dir/measurements.json"
-jq . "$out_dir/measurements.json"
+echo "Measurements: $out_dir/$workload-pcr.json"
+jq . "$out_dir/$workload-pcr.json"
