@@ -1,4 +1,4 @@
-: Embedding Verifier
+# Embedding Verifier
 
 TODO: This Readme contains a lot of AI slob and needs to be fully reworked once we move out of prototyping phase.
 
