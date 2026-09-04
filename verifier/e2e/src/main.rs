@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
     let sealed_outcome = opener
         .open(&SealedResponse::from_bytes(response.ciphertext))
         .map_err(|error| anyhow!("failed to open the sealed response: {error:?}"))?;
-    let result = MatchResult::from_cbor(&sealed_outcome)
+    let result = MatchResult::from_padded_cbor(&sealed_outcome)
         .map_err(|error| anyhow!("failed to decode the sealed result: {error:?}"))?;
 
     // The sealed result is the only account of what happened; the host reported nothing but success.
@@ -88,6 +88,9 @@ async fn main() -> Result<()> {
 
     let statement = match_token::verify(&attested.token, &signing_key)
         .map_err(|error| anyhow!("the match statement did not verify: {error:?}"))?;
+    let live_image_hash: [u8; 32] = Sha256::digest(&live_image).into();
+    let challenge_image_hash: [u8; 32] = Sha256::digest(&challenge_image).into();
+    let hashes_json_hash: [u8; 32] = Sha256::digest(&hashes_json).into();
     ensure!(
         statement.match_coefficient >= match_threshold,
         "credential/live score {} did not meet threshold {}",
@@ -95,15 +98,15 @@ async fn main() -> Result<()> {
         match_threshold
     );
     ensure!(
-        statement.live_image_hash == Sha256::digest(&live_image).as_slice(),
+        statement.live_image_hash == live_image_hash,
         "statement did not commit to the live image"
     );
     ensure!(
-        statement.challenger_image_hash == Sha256::digest(&challenge_image).as_slice(),
+        statement.challenger_image_hash == challenge_image_hash,
         "statement did not commit to the challenge image"
     );
     ensure!(
-        statement.credential_claim == Sha256::digest(&hashes_json).as_slice(),
+        statement.credential_claim == hashes_json_hash,
         "statement did not commit to hashes.json"
     );
 

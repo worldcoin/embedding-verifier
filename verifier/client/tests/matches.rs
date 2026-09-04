@@ -146,7 +146,10 @@ async fn serve_enclave(
                         own_sealer
                     };
 
-                    let encoded = state.answer.to_cbor().expect("result should encode");
+                    let encoded = state
+                        .answer
+                        .to_padded_cbor()
+                        .expect("result should fit the envelope");
                     let response = sealer
                         .seal(&encoded, &mut UnwrapErr(SysRng))
                         .expect("sealing should succeed");

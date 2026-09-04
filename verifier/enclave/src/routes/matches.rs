@@ -162,7 +162,7 @@ fn seal(
     sealer: attested_channel::channel::ResponseSealer,
     result: &MatchResult,
 ) -> Result<SealedResponse, EnclaveError> {
-    let encoded = result.to_cbor().map_err(|error| {
+    let encoded = result.to_padded_cbor().map_err(|error| {
         tracing::error!(?error, "failed to encode the match result");
         EnclaveError::Internal
     })?;
@@ -310,7 +310,7 @@ mod tests {
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("the requester should open its own response");
         let MatchResult::Success(attested) =
-            MatchResult::from_cbor(&plaintext).expect("result should decode")
+            MatchResult::from_padded_cbor(&plaintext).expect("result should decode")
         else {
             panic!("a held match should carry a statement");
         };
@@ -351,9 +351,26 @@ mod tests {
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         assert_eq!(
-            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
             MatchResult::Failed(FailureReason::MatchBelowThreshold)
         );
+    }
+
+    #[tokio::test]
+    async fn sealed_outcomes_are_indistinguishable_by_length() {
+        let success_state = state_with(MockFaceEngine::scoring(0.95, 0.90));
+        let failure_state = state_with(MockFaceEngine::scoring(0.95, 0.40));
+        let (_, success_request) = request_for(&success_state, &inputs(CREDENTIAL, 0.5));
+        let (_, failure_request) = request_for(&failure_state, &inputs(CREDENTIAL, 0.9));
+
+        let success = handler(success_state, success_request)
+            .await
+            .expect("success should seal");
+        let failure = handler(failure_state, failure_request)
+            .await
+            .expect("failure should seal");
+
+        assert_eq!(success.ciphertext.len(), failure.ciphertext.len());
     }
 
     #[tokio::test]
@@ -371,7 +388,7 @@ mod tests {
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         assert_eq!(
-            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
             MatchResult::Failed(FailureReason::ThumbnailHashMismatch)
         );
     }
@@ -426,7 +443,7 @@ mod tests {
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         assert_eq!(
-            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
             MatchResult::Failed(FailureReason::MalformedInputs)
         );
     }
@@ -446,7 +463,7 @@ mod tests {
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         assert_eq!(
-            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
             MatchResult::Failed(FailureReason::UnsupportedVersion)
         );
     }
@@ -470,7 +487,7 @@ mod tests {
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         assert_eq!(
-            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
             MatchResult::Failed(FailureReason::ImageAnalysisFailed)
         );
     }
@@ -493,7 +510,7 @@ mod tests {
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         let MatchResult::Success(attested) =
-            MatchResult::from_cbor(&plaintext).expect("result should decode")
+            MatchResult::from_padded_cbor(&plaintext).expect("result should decode")
         else {
             panic!("a held match should carry a statement");
         };
@@ -520,7 +537,7 @@ mod tests {
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         assert_eq!(
-            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
             MatchResult::Failed(FailureReason::ImageAnalysisFailed)
         );
     }
@@ -542,7 +559,7 @@ mod tests {
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         assert_eq!(
-            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
             MatchResult::Failed(FailureReason::InvalidHashesJson)
         );
     }
@@ -562,7 +579,7 @@ mod tests {
             .open(&SealedResponse::from_bytes(response.ciphertext))
             .expect("should open");
         assert!(matches!(
-            MatchResult::from_cbor(&plaintext).expect("should decode"),
+            MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
             MatchResult::Success(_)
         ));
     }
