@@ -4,10 +4,8 @@ use std::time::SystemTime;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-use attested_channel::channel::{ChannelError, Requester, SealedResponse, UnwrapErr};
-use attested_channel::nitro::{
-    EnclaveAttestationError, EnclaveAttestationVerifier, VerifiedAttestation,
-};
+use attested_channel::channel::{self, Requester, SealedResponse, UnwrapErr};
+use attested_channel::nitro::{self, EnclaveAttestationVerifier, VerifiedAttestation};
 use flamingo_verifier_api_types::{
     ApiErrorResponse, EnclaveAssignmentResponse, MatchRequestBody, MatchResponseBody,
 };
@@ -28,7 +26,7 @@ const REASSIGN_REQUIRED: &str = "reassign_required";
 
 /// Failures while calling the host.
 #[derive(Debug, thiserror::Error)]
-pub enum ClientError {
+pub enum Error {
     /// The HTTP client could not be constructed.
     #[error("failed to build HTTP client: {0}")]
     Transport(#[source] reqwest::Error),
@@ -47,7 +45,7 @@ pub enum ClientError {
 
     /// An attestation document did not verify.
     #[error(transparent)]
-    Attestation(#[from] EnclaveAttestationError),
+    Attestation(#[from] nitro::Error),
 
     /// The attested encryption public key was absent or not exactly 32 bytes.
     #[error("attested encryption public key was invalid")]
@@ -70,7 +68,7 @@ pub enum ClientError {
 
     /// Sealing the request or opening the response failed.
     #[error("sealed channel failure: {0:?}")]
-    Channel(ChannelError),
+    Channel(channel::Error),
 
     /// The response ciphertext was not valid base64.
     #[error("response ciphertext was not valid base64")]
@@ -114,15 +112,15 @@ impl FaceVerifierClient {
     ///
     /// # Errors
     ///
-    /// Returns [`ClientError`] if the HTTP client cannot be built.
-    pub fn new(config: Config) -> Result<Self, ClientError> {
+    /// Returns [`Error`] if the HTTP client cannot be built.
+    pub fn new(config: Config) -> Result<Self, Error> {
         let http = reqwest::Client::builder()
             // Replays the ALB's affinity cookie, so the match reaches the enclave that was assigned.
             .cookie_store(true)
             .connect_timeout(config.connect_timeout())
             .timeout(config.request_timeout())
             .build()
-            .map_err(ClientError::Transport)?;
+            .map_err(Error::Transport)?;
 
         Ok(Self {
             verifier: config.verifier(),
@@ -135,38 +133,28 @@ impl FaceVerifierClient {
     ///
     /// # Errors
     ///
-    /// Returns [`ClientError`] if the request fails, the host answers with an error status,
+    /// Returns [`Error`] if the request fails, the host answers with an error status,
     /// or the attestation document does not verify.
-    pub async fn request_assignment(
-        &self,
-        now: SystemTime,
-    ) -> Result<VerifiedAssignment, ClientError> {
+    pub async fn request_assignment(&self, now: SystemTime) -> Result<VerifiedAssignment, Error> {
         let url = format!(
             "{}{ASSIGNMENT_PATH}",
             self.config.host_url().as_str().trim_end_matches('/')
         );
-        let response = self
-            .http
-            .post(url)
-            .send()
-            .await
-            .map_err(ClientError::Request)?;
+        let response = self.http.post(url).send().await.map_err(Error::Request)?;
 
         let status = response.status();
         if !status.is_success() {
-            return Err(ClientError::Status(status.as_u16()));
+            return Err(Error::Status(status.as_u16()));
         }
 
-        let assignment: EnclaveAssignmentResponse = response
-            .json()
-            .await
-            .map_err(ClientError::MalformedResponse)?;
+        let assignment: EnclaveAssignmentResponse =
+            response.json().await.map_err(Error::MalformedResponse)?;
 
         let attestation = self
             .verifier
             .verify_base64(assignment.attestation.trim(), now)?;
         let requester = Requester::from_attestation(&attestation.enclave_public_key)
-            .map_err(|_| ClientError::InvalidEncryptionKey)?;
+            .map_err(|_| Error::InvalidEncryptionKey)?;
 
         Ok(VerifiedAssignment {
             attestation,
@@ -183,18 +171,18 @@ impl FaceVerifierClient {
     ///
     /// # Errors
     ///
-    /// [`ClientError::ReassignRequired`] on a stale assignment — retry once with a fresh one.
+    /// [`Error::ReassignRequired`] on a stale assignment — retry once with a fresh one.
     pub async fn request_match(
         &self,
         assignment: &VerifiedAssignment,
         inputs: &MatchInputs,
         now: SystemTime,
-    ) -> Result<MatchResult, ClientError> {
-        let plaintext = inputs.to_cbor().map_err(|_| ClientError::MalformedResult)?;
+    ) -> Result<MatchResult, Error> {
+        let plaintext = inputs.to_cbor().map_err(|_| Error::MalformedResult)?;
         let (sealed, opener) = assignment
             .requester
             .seal(&plaintext, &mut UnwrapErr(SysRng))
-            .map_err(ClientError::Channel)?;
+            .map_err(Error::Channel)?;
 
         let url = format!(
             "{}{MATCHES_PATH}",
@@ -208,7 +196,7 @@ impl FaceVerifierClient {
             })
             .send()
             .await
-            .map_err(ClientError::Request)?;
+            .map_err(Error::Request)?;
 
         let status = response.status();
         if !status.is_success() {
@@ -216,19 +204,16 @@ impl FaceVerifierClient {
             return Err(Self::api_error(status.as_u16(), body.as_deref()));
         }
 
-        let body: MatchResponseBody = response
-            .json()
-            .await
-            .map_err(ClientError::MalformedResponse)?;
+        let body: MatchResponseBody = response.json().await.map_err(Error::MalformedResponse)?;
 
         let ciphertext = STANDARD
             .decode(body.response_ciphertext.trim())
-            .map_err(|_| ClientError::MalformedCiphertext)?;
+            .map_err(|_| Error::MalformedCiphertext)?;
         let plaintext = opener
             .open(&SealedResponse::from_bytes(ciphertext))
-            .map_err(ClientError::Channel)?;
+            .map_err(Error::Channel)?;
         let result =
-            MatchResult::from_padded_cbor(&plaintext).map_err(|_| ClientError::MalformedResult)?;
+            MatchResult::from_padded_cbor(&plaintext).map_err(|_| Error::MalformedResult)?;
 
         // Only a statement needs the key, so a rejection skips the attestation entirely.
         if let MatchResult::Success(statement) = &result {
@@ -237,32 +222,32 @@ impl FaceVerifierClient {
                 .verifier
                 .verify(&statement.signing_key_attestation, now)?;
             let signing_key = <[u8; 32]>::try_from(attested.enclave_public_key.as_slice())
-                .map_err(|_| ClientError::InvalidSigningKey)
+                .map_err(|_| Error::InvalidSigningKey)
                 .and_then(|bytes| {
                     EdDSAPublicKey::from_compressed_bytes(bytes)
-                        .map_err(|_| ClientError::InvalidSigningKey)
+                        .map_err(|_| Error::InvalidSigningKey)
                 })?;
 
             match_token::verify(&statement.token, &signing_key)
-                .map_err(|_| ClientError::StatementInvalid)?;
+                .map_err(|_| Error::StatementInvalid)?;
         }
 
         Ok(result)
     }
 
     /// Classifies a non-success response, reading the error envelope when there is one.
-    fn api_error(status: u16, body: Option<&str>) -> ClientError {
+    fn api_error(status: u16, body: Option<&str>) -> Error {
         let Some(envelope) =
             body.and_then(|body| serde_json::from_str::<ApiErrorResponse>(body).ok())
         else {
-            return ClientError::Status(status);
+            return Error::Status(status);
         };
 
         if envelope.error.code == REASSIGN_REQUIRED {
-            return ClientError::ReassignRequired;
+            return Error::ReassignRequired;
         }
 
-        ClientError::Api {
+        Error::Api {
             status,
             code: envelope.error.code,
             allow_retry: envelope.allow_retry,

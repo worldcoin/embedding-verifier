@@ -11,7 +11,7 @@
 mod error;
 mod messages;
 
-pub use error::FramingError;
+pub use error::Error;
 pub use messages::{
     AttestedStatement, FailureReason, MATCH_RESULT_ENVELOPE_LEN, MatchInputs, MatchResult,
 };

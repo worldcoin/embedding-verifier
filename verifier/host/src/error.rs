@@ -11,9 +11,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use flamingo_verifier_api_types::{ApiErrorResponse, ErrorBody};
-use flamingo_verifier_enclave_types::EnclaveError;
+use flamingo_verifier_enclave_types as enclave_types;
 
-use crate::enclave::EnclaveClientError;
+use crate::enclave;
 
 /// An API failure, with the status and body to return for it.
 #[derive(Debug)]
@@ -69,82 +69,84 @@ impl AppError {
     /// enclave answered a request it was not asked. That is a host bug, not retryable
     /// unavailability.
     #[must_use]
-    pub fn enclave_assignment(error: &EnclaveClientError) -> Self {
+    pub fn enclave_assignment(error: &enclave::Error) -> Self {
         match error {
-            EnclaveClientError::Timeout | EnclaveClientError::Transport(_) => {
+            enclave::Error::Timeout | enclave::Error::Transport(_) => {
                 Self::enclave_unreachable(error)
             }
-            EnclaveClientError::Operation(operation) => match operation {
-                EnclaveError::NotReady
-                | EnclaveError::SecureModuleNotInitialized
-                | EnclaveError::AttestationFailed => Self::enclave_not_ready(*operation),
-                EnclaveError::RequestNotOpened | EnclaveError::Internal => Self::new(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal_error",
-                    "Internal server error",
-                    false,
-                )
-                .with_detail(format!(
-                    "unexpected enclave error on assignment: {operation:?}"
-                )),
+            enclave::Error::Operation(operation) => match operation {
+                enclave_types::Error::NotReady
+                | enclave_types::Error::SecureModuleNotInitialized
+                | enclave_types::Error::AttestationFailed => Self::enclave_not_ready(*operation),
+                enclave_types::Error::RequestNotOpened | enclave_types::Error::Internal => {
+                    Self::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal_error",
+                        "Internal server error",
+                        false,
+                    )
+                    .with_detail(format!(
+                        "unexpected enclave error on assignment: {operation:?}"
+                    ))
+                }
             },
         }
     }
 
     /// Maps an enclave failure on the match route.
     #[must_use]
-    pub fn enclave_match(error: &EnclaveClientError) -> Self {
+    pub fn enclave_match(error: &enclave::Error) -> Self {
         match error {
-            EnclaveClientError::Timeout | EnclaveClientError::Transport(_) => {
+            enclave::Error::Timeout | enclave::Error::Transport(_) => {
                 Self::enclave_unreachable(error)
             }
-            EnclaveClientError::Operation(operation) => match operation {
+            enclave::Error::Operation(operation) => match operation {
                 // The request did not open. Indistinguishable from a corrupt ciphertext here, so
                 // the client is told to re-assign and re-seal -- once. See the spec's §6 note on
                 // bounding this retry: an unbounded one would loop on a genuine sealing bug.
-                EnclaveError::RequestNotOpened => Self::new(
+                enclave_types::Error::RequestNotOpened => Self::new(
                     StatusCode::CONFLICT,
                     "reassign_required",
                     "The request was not sealed to this enclave's current encryption key",
                     true,
                 )
                 .with_detail(format!("{operation:?}")),
-                EnclaveError::Internal => Self::new(
+                enclave_types::Error::Internal => Self::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal_error",
                     "Internal server error",
                     true,
                 )
                 .with_detail(format!("{operation:?}")),
-                EnclaveError::NotReady
-                | EnclaveError::SecureModuleNotInitialized
-                | EnclaveError::AttestationFailed => Self::enclave_not_ready(*operation),
+                enclave_types::Error::NotReady
+                | enclave_types::Error::SecureModuleNotInitialized
+                | enclave_types::Error::AttestationFailed => Self::enclave_not_ready(*operation),
             },
         }
     }
 
     /// The request never reached a working enclave.
-    fn enclave_unreachable(error: &EnclaveClientError) -> Self {
+    fn enclave_unreachable(error: &enclave::Error) -> Self {
         match error {
-            EnclaveClientError::Timeout => Self::new(
+            enclave::Error::Timeout => Self::new(
                 StatusCode::GATEWAY_TIMEOUT,
                 "enclave_timeout",
                 "The enclave did not answer in time",
                 true,
             ),
-            EnclaveClientError::Transport(detail) => Self::new(
+            enclave::Error::Transport(detail) => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "enclave_unreachable",
                 "The enclave is unreachable",
                 true,
             )
             .with_detail(detail.clone()),
-            EnclaveClientError::Operation(_) => unreachable!("caller matched a transport failure"),
+            enclave::Error::Operation(_) => unreachable!("caller matched a transport failure"),
         }
     }
 
     /// The enclave answered but cannot serve requests yet.
-    fn enclave_not_ready(operation: EnclaveError) -> Self {
+    fn enclave_not_ready(operation: enclave_types::Error) -> Self {
         Self::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "enclave_not_ready",
@@ -190,21 +192,21 @@ impl IntoResponse for AppError {
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
-    use flamingo_verifier_enclave_types::EnclaveError;
+    use flamingo_verifier_enclave_types as enclave_types;
 
     use super::AppError;
-    use crate::enclave::EnclaveClientError;
+    use crate::enclave;
 
     #[test]
     fn assignment_maps_transport_failures_to_retryable_statuses() {
         for (error, status, code) in [
             (
-                EnclaveClientError::Timeout,
+                enclave::Error::Timeout,
                 StatusCode::GATEWAY_TIMEOUT,
                 "enclave_timeout",
             ),
             (
-                EnclaveClientError::Transport("boom".to_string()),
+                enclave::Error::Transport("boom".to_string()),
                 StatusCode::SERVICE_UNAVAILABLE,
                 "enclave_unreachable",
             ),
@@ -219,11 +221,11 @@ mod tests {
     #[test]
     fn both_routes_agree_that_a_not_ready_enclave_is_retryable() {
         for operation in [
-            EnclaveError::NotReady,
-            EnclaveError::SecureModuleNotInitialized,
-            EnclaveError::AttestationFailed,
+            enclave_types::Error::NotReady,
+            enclave_types::Error::SecureModuleNotInitialized,
+            enclave_types::Error::AttestationFailed,
         ] {
-            let error = EnclaveClientError::Operation(operation);
+            let error = enclave::Error::Operation(operation);
 
             for mapped in [
                 AppError::enclave_assignment(&error),
@@ -240,7 +242,7 @@ mod tests {
     /// why the mapping is per route rather than a blanket `From` impl.
     #[test]
     fn an_unopenable_request_is_retryable_on_matches_and_a_host_bug_on_assignment() {
-        let error = EnclaveClientError::Operation(EnclaveError::RequestNotOpened);
+        let error = enclave::Error::Operation(enclave_types::Error::RequestNotOpened);
 
         // On the match path the client should re-assign and re-seal.
         let mapped = AppError::enclave_match(&error);
@@ -261,34 +263,34 @@ mod tests {
     fn each_enclave_error_maps_per_route() {
         let cases = [
             (
-                EnclaveError::NotReady,
+                enclave_types::Error::NotReady,
                 StatusCode::SERVICE_UNAVAILABLE,
                 StatusCode::SERVICE_UNAVAILABLE,
             ),
             (
-                EnclaveError::SecureModuleNotInitialized,
+                enclave_types::Error::SecureModuleNotInitialized,
                 StatusCode::SERVICE_UNAVAILABLE,
                 StatusCode::SERVICE_UNAVAILABLE,
             ),
             (
-                EnclaveError::AttestationFailed,
+                enclave_types::Error::AttestationFailed,
                 StatusCode::SERVICE_UNAVAILABLE,
                 StatusCode::SERVICE_UNAVAILABLE,
             ),
             (
-                EnclaveError::RequestNotOpened,
+                enclave_types::Error::RequestNotOpened,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 StatusCode::CONFLICT,
             ),
             (
-                EnclaveError::Internal,
+                enclave_types::Error::Internal,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 StatusCode::INTERNAL_SERVER_ERROR,
             ),
         ];
 
         for (error, on_assignment, on_match) in cases {
-            let wrapped = EnclaveClientError::Operation(error);
+            let wrapped = enclave::Error::Operation(error);
 
             assert_eq!(
                 AppError::enclave_assignment(&wrapped).status(),

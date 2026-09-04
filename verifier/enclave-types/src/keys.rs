@@ -1,7 +1,7 @@
 use pontifex::Request;
 use serde::{Deserialize, Serialize};
 
-use crate::EnclaveError;
+use crate::Error;
 
 /// One NSM attestation document, for whichever key was asked for.
 ///
@@ -20,7 +20,7 @@ pub struct GetEncryptionKeyRequest;
 
 impl Request for GetEncryptionKeyRequest {
     const ROUTE_ID: &'static str = "/v1/encryption-key";
-    type Response = Result<KeyAttestation, EnclaveError>;
+    type Response = Result<KeyAttestation, Error>;
 }
 
 #[cfg(test)]

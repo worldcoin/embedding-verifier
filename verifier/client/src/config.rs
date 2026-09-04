@@ -25,7 +25,7 @@ const fn default_request_timeout_millis() -> u64 {
 
 /// Failures while building a [`Config`].
 #[derive(Debug, thiserror::Error)]
-pub enum ConfigError {
+pub enum Error {
     /// A field was not usable.
     #[error("invalid {attribute}: {reason}")]
     InvalidInput {
@@ -73,8 +73,8 @@ impl Config {
     pub fn new(
         host_url: &str,
         allowed_pcr_configs: Vec<Vec<PcrMeasurement>>,
-    ) -> Result<Self, ConfigError> {
-        let host_url = Url::parse(host_url).map_err(|error| ConfigError::InvalidInput {
+    ) -> Result<Self, Error> {
+        let host_url = Url::parse(host_url).map_err(|error| Error::InvalidInput {
             attribute: "host_url".to_string(),
             reason: error.to_string(),
         })?;
@@ -113,21 +113,21 @@ impl Config {
     /// # Errors
     ///
     /// Returns an error if the JSON is invalid or the resulting configuration is not usable.
-    pub fn from_json(json: &str) -> Result<Self, ConfigError> {
-        let config: Self = serde_json::from_str(json)
-            .map_err(|error| ConfigError::Serialization(error.to_string()))?;
+    pub fn from_json(json: &str) -> Result<Self, Error> {
+        let config: Self =
+            serde_json::from_str(json).map_err(|error| Error::Serialization(error.to_string()))?;
         config.validate()?;
 
         Ok(config)
     }
 
     /// Rejects configurations that would verify nothing.
-    fn validate(&self) -> Result<(), ConfigError> {
+    fn validate(&self) -> Result<(), Error> {
         // An empty set pins nothing and would match every enclave, so reject it even when
         // other configurations sit beside it.
         if self.allowed_pcr_configs.is_empty() || self.allowed_pcr_configs.iter().any(Vec::is_empty)
         {
-            return Err(ConfigError::InvalidInput {
+            return Err(Error::InvalidInput {
                 attribute: "allowed_pcr_configs".to_string(),
                 reason: "every configuration must pin at least one measurement, otherwise it \
                          would accept any Nitro enclave"
@@ -176,7 +176,7 @@ impl Config {
 mod tests {
     use std::time::Duration;
 
-    use super::{Config, ConfigError};
+    use super::{Config, Error};
     use attested_channel::nitro::PcrMeasurement;
 
     fn pcrs() -> Vec<Vec<PcrMeasurement>> {
@@ -188,7 +188,7 @@ mod tests {
         let error = Config::new("http://localhost:8000", Vec::new())
             .expect_err("an empty policy must fail closed");
 
-        assert!(matches!(error, ConfigError::InvalidInput { .. }));
+        assert!(matches!(error, Error::InvalidInput { .. }));
     }
 
     #[test]
@@ -196,7 +196,7 @@ mod tests {
         let error =
             Config::new("not a url", pcrs()).expect_err("an unparseable URL must be rejected");
 
-        assert!(matches!(error, ConfigError::InvalidInput { .. }));
+        assert!(matches!(error, Error::InvalidInput { .. }));
     }
 
     #[test]

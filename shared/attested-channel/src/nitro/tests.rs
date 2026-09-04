@@ -17,9 +17,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use hex_literal::hex;
 
-use super::{
-    AWS_NITRO_ROOT_CERT, EnclaveAttestationError, EnclaveAttestationVerifier, PcrMeasurement,
-};
+use super::{AWS_NITRO_ROOT_CERT, EnclaveAttestationVerifier, Error, PcrMeasurement};
 
 const REAL_ATTESTATION_DOC_BASE64: &str = include_str!("testdata/real_attestation_doc.b64");
 
@@ -116,10 +114,7 @@ fn rejects_a_corrupted_cose_signature() {
         .expect_err("a corrupted signature must not verify");
 
     assert!(
-        matches!(
-            error,
-            EnclaveAttestationError::AttestationSignatureInvalid(_)
-        ),
+        matches!(error, Error::AttestationSignatureInvalid(_)),
         "expected a signature failure, got: {error}"
     );
 }
@@ -135,7 +130,7 @@ fn rejects_a_document_under_a_different_root() {
         .expect_err("a chain that does not reach the pinned root must not verify");
 
     assert!(
-        matches!(error, EnclaveAttestationError::AttestationChainInvalid(_)),
+        matches!(error, Error::AttestationChainInvalid(_)),
         "unexpected error: {error}"
     );
 }
@@ -149,7 +144,7 @@ fn rejects_an_expired_certificate_chain() {
         .expect_err("an expired chain must not verify");
 
     assert!(
-        matches!(error, EnclaveAttestationError::AttestationChainInvalid(_)),
+        matches!(error, Error::AttestationChainInvalid(_)),
         "unexpected error: {error}"
     );
 }
@@ -178,7 +173,7 @@ fn rejects_measurements_that_match_no_allowed_configuration() {
             .expect_err(&format!("{label} must fail closed"));
 
         assert!(
-            matches!(error, EnclaveAttestationError::CodeUntrusted(_)),
+            matches!(error, Error::CodeUntrusted(_)),
             "{label}: unexpected error: {error}"
         );
     }
@@ -207,7 +202,7 @@ fn rejects_a_stale_document() {
         .expect_err("a document older than the policy allows must not verify");
 
     assert!(
-        matches!(error, EnclaveAttestationError::AttestationStale { .. }),
+        matches!(error, Error::AttestationStale { .. }),
         "unexpected error: {error}"
     );
 }
@@ -221,10 +216,7 @@ fn rejects_a_document_timestamped_in_the_future() {
         .expect_err("a document from the future must not verify");
 
     assert!(
-        matches!(
-            error,
-            EnclaveAttestationError::AttestationInvalidTimestamp(_)
-        ),
+        matches!(error, Error::AttestationInvalidTimestamp(_)),
         "unexpected error: {error}"
     );
 }
@@ -243,10 +235,7 @@ fn rejects_empty_and_non_cbor_input() {
             .expect_err(&format!("{label} input should be rejected"));
 
         assert!(
-            matches!(
-                error,
-                EnclaveAttestationError::AttestationDocumentParseError(_)
-            ),
+            matches!(error, Error::AttestationDocumentParseError(_)),
             "{label} should fail parsing, got: {error}"
         );
     }
@@ -279,7 +268,7 @@ fn rejects_an_empty_configuration_rather_than_matching_it_vacuously() {
         .expect_err("an empty configuration must never match");
 
     assert!(
-        matches!(error, EnclaveAttestationError::CodeUntrusted(_)),
+        matches!(error, Error::CodeUntrusted(_)),
         "unexpected error: {error}"
     );
 }
@@ -330,7 +319,7 @@ fn verify_stored_still_rejects_unknown_measurements() {
         .verify_stored(&real_document(), long_after_the_fixture())
         .expect_err("an unpinned image must not verify, however old the document is");
 
-    assert!(matches!(error, EnclaveAttestationError::CodeUntrusted(_)));
+    assert!(matches!(error, Error::CodeUntrusted(_)));
 }
 
 /// A document cannot have been signed after now, whoever holds the leaf key.
@@ -343,8 +332,5 @@ fn verify_stored_rejects_a_timestamp_in_the_future() {
         )
         .expect_err("a future timestamp is not a document that was stored");
 
-    assert!(matches!(
-        error,
-        EnclaveAttestationError::AttestationInvalidTimestamp(_)
-    ));
+    assert!(matches!(error, Error::AttestationInvalidTimestamp(_)));
 }

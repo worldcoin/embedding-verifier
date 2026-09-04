@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use flamingo_verifier_enclave_types::EnclaveError;
+use flamingo_verifier_enclave_types as enclave_types;
 use flamingo_verifier_sealed_types::FailureReason;
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
 pub struct EchoAttestor;
 
 impl Attestor for EchoAttestor {
-    fn attest_public_key(&self, public_key: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+    fn attest_public_key(&self, public_key: &[u8]) -> Result<Vec<u8>, enclave_types::Error> {
         Ok(public_key.to_vec())
     }
 }
@@ -24,8 +24,8 @@ impl Attestor for EchoAttestor {
 pub struct FailingAttestor;
 
 impl Attestor for FailingAttestor {
-    fn attest_public_key(&self, _: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        Err(EnclaveError::AttestationFailed)
+    fn attest_public_key(&self, _: &[u8]) -> Result<Vec<u8>, enclave_types::Error> {
+        Err(enclave_types::Error::AttestationFailed)
     }
 }
 
@@ -49,7 +49,7 @@ impl CountingAttestor {
 }
 
 impl Attestor for CountingAttestor {
-    fn attest_public_key(&self, public_key: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+    fn attest_public_key(&self, public_key: &[u8]) -> Result<Vec<u8>, enclave_types::Error> {
         let call = self.calls.fetch_add(1, Ordering::Relaxed);
 
         let mut document = public_key.to_vec();
@@ -60,7 +60,7 @@ impl Attestor for CountingAttestor {
 }
 
 /// Succeeds for the configured number of calls, then returns
-/// [`EnclaveError::AttestationFailed`].
+/// [`enclave_types::Error::AttestationFailed`].
 pub struct FailsAfterSuccessesAttestor {
     calls: AtomicUsize,
     successful_calls: usize,
@@ -80,12 +80,12 @@ impl FailsAfterSuccessesAttestor {
 }
 
 impl Attestor for FailsAfterSuccessesAttestor {
-    fn attest_public_key(&self, public_key: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+    fn attest_public_key(&self, public_key: &[u8]) -> Result<Vec<u8>, enclave_types::Error> {
         let call = self.calls.fetch_add(1, Ordering::Relaxed);
         if call < self.successful_calls {
             Ok(public_key.to_vec())
         } else {
-            Err(EnclaveError::AttestationFailed)
+            Err(enclave_types::Error::AttestationFailed)
         }
     }
 }
