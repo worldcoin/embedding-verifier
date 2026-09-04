@@ -26,4 +26,4 @@ models/
 *.eif
 
 # Local biometric fixtures used by the E2E client
-deepface/e2e/**/fixtures/
+verifier/e2e/**/fixtures/

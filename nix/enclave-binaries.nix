@@ -47,7 +47,7 @@ let
   # checkout, one level above the crate directories, so restoring assets/ there satisfies
   # it without patching the crate. Nothing verifies the addition: cargo writes
   # `{"files":{}}` as the checksum manifest for vendored git crates.
-  deepfaceVendorDir = craneLib.vendorCargoDeps {
+  verifierVendorDir = craneLib.vendorCargoDeps {
     cargoLock = root + "/Cargo.lock";
     overrideVendorGitCheckout =
       packages: drv:
@@ -98,7 +98,7 @@ let
       // {
         inherit pname version;
         src = root;
-        cargoVendorDir = deepfaceVendorDir;
+        cargoVendorDir = verifierVendorDir;
         cargoExtraArgs = "--locked --bin ${pname}";
       }
     );
@@ -107,8 +107,8 @@ in
   di-enclave = buildEnclaveBin {
     pname = "di-enclave";
   };
-  deepface-enclave = buildEnclaveBin {
-    pname = "deepface-enclave";
+  flamingo-verifier-enclave = buildEnclaveBin {
+    pname = "flamingo-verifier-enclave";
     extraArgs = faceEngineArgs;
   };
 }

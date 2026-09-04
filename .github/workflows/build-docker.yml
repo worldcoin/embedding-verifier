@@ -7,7 +7,7 @@ name: Build and Push Docker Image
 on:
   pull_request:
     paths:
-      - "deepface/**"
+      - "verifier/**"
       - "di/**"
       - "shared/**"
       - "scripts/**"
@@ -77,8 +77,8 @@ jobs:
         run: |
           set -euo pipefail
           all='[
-            {"name":"deepface-host","dockerfile":"deepface/host/Dockerfile","image":"embedding-verifier","workload":"deepface"},
-            {"name":"di-host","dockerfile":"di/host/Dockerfile","image":"embedding-verifier-di-host","workload":"di"}
+            {"name":"flamingo-verifier-host","dockerfile":"verifier/host/Dockerfile","image":"flamingo-verifier","workload":"verifier"},
+            {"name":"di-host","dockerfile":"di/host/Dockerfile","image":"flamingo-verifier-di-host","workload":"di"}
           ]'
           if [[ -n "${WORKLOAD:-}" ]]; then
             include=$(jq -c --arg w "$WORKLOAD" 'map(select(.workload == $w))' <<<"$all")

@@ -3,7 +3,7 @@ name: release hosts
 on:
   push:
     tags:
-      - "deepface-host/v*"
+      - "flamingo-verifier-host/v*"
       - "di-host/v*"
   workflow_dispatch:
     inputs:
@@ -11,7 +11,7 @@ on:
         description: "Host to release."
         required: true
         type: choice
-        options: [deepface, di]
+        options: [verifier, di]
       ref:
         description: "Branch, tag, or commit SHA to build."
         required: true

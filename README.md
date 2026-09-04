@@ -6,16 +6,16 @@ Rust workspaces for the embedding verifier host and secure enclave.
 
 ## Structure
 
-Two workloads over the same host/enclave shape — the `DeepFace` verifier and the
+Two workloads over the same host/enclave shape — the `Verifier` verifier and the
 `DeepIdentifier` migration. Each owns a top-level directory; what both would duplicate
-lives in `shared/`. Crate names compose from the path: `deepface/host` is `deepface-host`.
+lives in `shared/`. Crate names compose from the path: `verifier/host` is `flamingo-verifier-host`.
 
 ```text
-embedding-verifier/
+verifier/
 ├── Cargo.toml             # Host-side workspace  -> Cargo.lock
 ├── shared/
 │   └── attested-channel/  # Client↔enclave channel and the attestation it rests on; destined for pontifex
-├── deepface/
+├── verifier/
 │   ├── host/              # Axum HTTP API — the untrusted side of the boundary
 │   ├── enclave/           # Nitro enclave workload — the trusted side. Own workspace -> own Cargo.lock
 │   ├── api-types/         # Client↔host HTTP contract; stops at the host, so no enclave links it
@@ -29,7 +29,7 @@ embedding-verifier/
 ```
 
 One crate per boundary, in the graphs that boundary reaches. Nothing is shared between
-`deepface/` and `di/`, because a shared crate means a `deepface` edit rotates `di`'s PCR0.
+`verifier/` and `di/`, because a shared crate means a `flamingo-verifier` edit rotates `di`'s PCR0.
 
 `di-host` and `di-enclave` log and exit non-zero — a skeleton that idled would read as healthy. See
 [Spec: DeepIdentifier Migration TEE Setup v1](https://app.notion.com/p/worldcoin/Spec-DeepIdentifier-Migration-TEE-Setup-v1-3c08614bdf8c8014b7ddf50f3cac4e4b)
@@ -38,15 +38,15 @@ for what goes in them.
 ### Three workspaces, three lockfiles
 
 Each enclave is its own cargo workspace. One lockfile for the whole repository meant a
-`deepface-host` dependency bump re-resolved the enclave graph and moved PCR0, which clients
+`flamingo-verifier-host` dependency bump re-resolved the enclave graph and moved PCR0, which clients
 pin. Now an EIF's inputs are its own `Cargo.toml`, the `Cargo.lock` beside it, and the path
 crates they name.
 
-`attested-channel`, `deepface-protocol` and `deepface-enclave-types` are in both an enclave
+`attested-channel`, `flamingo-verifier-protocol` and `flamingo-verifier-enclave-types` are in both an enclave
 graph and the host-side one. They are members of the root workspace but inherit nothing from it
 — not `[workspace.dependencies]`, not `[workspace.package]` — so the root manifest cannot reach
 an enclave graph either. Treat them as standalone crates: write the version, and the `edition`,
-in their own manifest. `deepface-api-types` is host-side only and inherits normally.
+in their own manifest. `flamingo-verifier-api-types` is host-side only and inherits normally.
 
 ## Development
 
@@ -61,11 +61,11 @@ cargo deny --all-features check
 # Run the host on http://localhost:8000
 # ENCLAVE_CID and ENCLAVE_PORT are required; the process panics without them. The host pins no
 # measurements of its own -- it is the untrusted side, and it is the client that pins PCR0.
-RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin deepface-host
+RUST_LOG=info ENCLAVE_CID=16 ENCLAVE_PORT=1000 cargo run --bin flamingo-verifier-host
 curl http://localhost:8000/health
 
 # Run the secure enclave placeholder
-RUST_LOG=info cargo run --bin deepface-enclave
+RUST_LOG=info cargo run --bin flamingo-verifier-enclave
 ```
 
 ## Building images
@@ -77,7 +77,7 @@ Nix builds the OCI image and converts its root filesystem directly with aws-nitr
 ```bash
 # Reproducible OCI image -> deterministic EIF + PCRs.
 # Needs Linux x86_64; Nitro hardware is only needed to run.
-scripts/build-enclaves.sh --workload deepface   # -> target/eif/deepface-enclave.eif, deepface-pcr.json
+scripts/build-enclaves.sh --workload verifier   # -> target/eif/flamingo-verifier-enclave.eif, flamingo-verifier-pcr.json
 scripts/build-enclaves.sh --workload di         # -> target/eif/di-enclave.eif, di-pcr.json
 
 # Build or inspect only the reproducible OCI boundary.
@@ -87,7 +87,7 @@ skopeo inspect \
 
 ```
 
-`GIT_HUB_TOKEN` and `HUGGING_FACE_TOKEN` are both `deepface`-only. The whole Cargo workspace
+`GIT_HUB_TOKEN` and `HUGGING_FACE_TOKEN` are both `verifier`-only. The whole Cargo workspace
 is resolved from the root lockfile; `di` itself has no private dependencies or models.
 
 `di-enclave` exits non-zero on start, so its EIF builds and measures but will not stay
@@ -112,7 +112,7 @@ Attest errors do not block serving until the document is older than `MAX_SERVABL
 at which point the refresh task exits and the enclave process exits. The cache is boot-scoped,
 so a restart takes it along and there is nothing for the host to invalidate.
 
-`deepface-client` verifies the document — the COSE signature, the certificate chain up to the
+`flamingo-verifier-client` verifies the document — the COSE signature, the certificate chain up to the
 pinned AWS Nitro root, and the expected measurements. It is configured by a JSON file, in the
 shape `world-id-protocol` uses for an authenticator:
 
@@ -120,7 +120,7 @@ shape `world-id-protocol` uses for an authenticator:
 {
   "host_url": "http://localhost:8000",
   "allowed_pcr_configs": [
-    [{ "index": 0, "value": "<PCR0 hex from deepface-pcrs.json>" }]
+    [{ "index": 0, "value": "<PCR0 hex from flamingo-verifier-pcrs.json>" }]
   ],
   "max_attestation_age_millis": 3600000,
   "allow_debug_measurements": false
@@ -133,11 +133,11 @@ proves a document came from *some* enclave. A `--debug-mode` enclave reports all
 its memory is readable from the parent instance, so it is rejected unless
 `allow_debug_measurements` is set.
 
-`deepface-e2e` reads that file from `VERIFIER_CONFIG` and fetches its encryption key
+`flamingo-verifier-e2e` reads that file from `VERIFIER_CONFIG` and fetches its encryption key
 through the host, exercising the assignment route and the client together:
 
 ```bash
-VERIFIER_CONFIG=./client.json cargo run --bin deepface-e2e -- <credential> <live> <challenge>
+VERIFIER_CONFIG=./client.json cargo run --bin flamingo-verifier-e2e -- <credential> <live> <challenge>
 ```
 
 ## Matches
@@ -172,7 +172,7 @@ document is the only thing saying which enclave signed it. A rejection carries n
 Only the requester can open any of it — a second channel to the same enclave key cannot.
 
 The signing key's attestation is a separate document from the encryption key's on purpose: it
-outlives the exchange and is carried into the `DeepFace` proof, while the encryption key's is
+outlives the exchange and is carried into the `Verifier` proof, while the encryption key's is
 transport setup discarded with the channel.
 
 The host learns only that the enclave answered. Once a request has been opened there is a sealed
@@ -198,7 +198,7 @@ all, so do not look for it here.
 
 All three frames arrive inside one sealed payload, so the request body is the only thing bounding
 what the host buffers and what the enclave is then asked to allocate — the vsock framing takes the
-host's word for a length. `MAX_BODY_BYTES` in `deepface/host/src/routes/matches.rs` sets it to
+host's word for a length. `MAX_BODY_BYTES` in `verifier/host/src/routes/matches.rs` sets it to
 12 MiB, budgeting ~7 MiB of images plus the ~1.37x that CBOR framing, HPKE overhead and base64 add.
 
 It hangs off the match route alone. Assignment sends no body and the health routes are `GET`s, so
@@ -242,7 +242,7 @@ Install Rust and the components these workspaces use:
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 rustup component add rustfmt clippy
-for ws in . deepface/enclave di/enclave; do cargo test --manifest-path "$ws/Cargo.toml" --all; done
+for ws in . verifier/enclave di/enclave; do cargo test --manifest-path "$ws/Cargo.toml" --all; done
 ```
 
 For private repository access, install and authenticate the GitHub CLI using its

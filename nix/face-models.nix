@@ -35,7 +35,7 @@ let
       sha256 = source.hash;
     };
 
-  package = pkgs.runCommandLocal "deepface-models" { } (
+  package = pkgs.runCommandLocal "flamingo-verifier-models" { } (
     ''
       mkdir -p $out/models
     ''

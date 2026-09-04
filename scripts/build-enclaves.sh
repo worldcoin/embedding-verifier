@@ -9,17 +9,17 @@ set -euo pipefail
 # Needs x86_64-linux. Nitro hardware is only needed to run.
 #
 # Usage: scripts/build-enclaves.sh [--workload <name>] [output-dir]
-#        (workload defaults to deepface, output-dir to target/eif)
+#        (workload defaults to verifier, output-dir to target/eif)
 #
 # Outputs in <output-dir>:
 #   <workload>-enclave.eif   the enclave image
 #   <workload>-pcr.json      PCR measurements extracted from the EIF
 #
-# Env: HUGGING_FACE_TOKEN (deepface only, and only when a model is not in the store
+# Env: HUGGING_FACE_TOKEN (verifier only, and only when a model is not in the store
 #      yet — read access to the model repositories).
 
 # A new workload is an entry here plus a `<name>-eif` output in flake.nix.
-WORKLOADS=("deepface" "di")
+WORKLOADS=("verifier" "di")
 
 usage() {
   printf '%s\n' \
@@ -28,11 +28,11 @@ usage() {
     "Build a workload's enclave EIF and emit its PCR measurements." \
     "" \
     "Options:" \
-    "  --workload <name>  Which enclave to build: ${WORKLOADS[*]} (default deepface)." \
+    "  --workload <name>  Which enclave to build: ${WORKLOADS[*]} (default verifier)." \
     "  -h, --help         Show this help."
 }
 
-workload="deepface"
+workload="verifier"
 out_dir="target/eif"
 output_dir_provided=false
 while (( $# > 0 )); do
@@ -91,7 +91,7 @@ trap 'rm -rf "$work_dir"' EXIT
 # --no-update-lock-file on the flake calls below: an input added to flake.nix without a
 # matching `nix flake update` would otherwise be resolved to whatever upstream serves right
 # now, and the lock silently rewritten. The PCRs must follow the committed lock or nothing.
-if [[ "$workload" == "deepface" ]]; then
+if [[ "$workload" == "verifier" ]]; then
   echo "Fetching face models..."
   models_json="$(nix eval --json --no-update-lock-file .#faceModels)"
 
