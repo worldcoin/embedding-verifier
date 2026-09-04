@@ -58,7 +58,7 @@ on:
         value: ${{ jobs.docker-build.outputs.image }}
 
 permissions:
-contents: read
+  contents: read
 
 
 jobs:

@@ -75,6 +75,7 @@ jobs:
       packages: write
       attestations: write
     uses: ./.github/workflows/build-docker.yml
+    secrets: inherit
     with:
       ref: ${{ needs.prepare.outputs.sha }}
       version: v${{ needs.prepare.outputs.version }}

@@ -44,15 +44,17 @@ PCR2 the application ramdisk. The EIF metadata section — which carries a wall-
 
 ## Building and measuring locally
 
-Needs x86_64-linux with Nix, plus read access to `worldcoin/biometric-engines` and a
-`HUGGING_FACE_TOKEN` for deepface. Expect ~90 minutes cold for deepface.
+Needs x86_64-linux with Nix and Git credentials that can read
+`worldcoin/biometric-engines`. Deepface also needs a `HUGGING_FACE_TOKEN` for its private
+models. Expect ~90 minutes cold for deepface.
 
 ```
 scripts/build-enclaves.sh --workload deepface target/eif
 jq . target/eif/deepface-pcr.json
 ```
 
-`di` needs neither the token nor the models — it reaches no private repository.
+`di` needs no model token, but the unified workspace vendor set currently still requires
+Git access to `worldcoin/biometric-engines`.
 
 ## Rotating a measurement in production
 
