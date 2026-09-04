@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "flamingo-verifier-enclave"
+name = "verifier-enclave"
 path = "src/main.rs"
 
 [dependencies]
