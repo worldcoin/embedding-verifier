@@ -21,10 +21,8 @@ use flamingo_verifier_client::nitro::PcrMeasurement;
 use flamingo_verifier_client::{
     ClientError, Config, FaceVerifierClient, Requester, VerifiedAssignment,
 };
+use flamingo_verifier_enclave_types::{AttestedStatement, FailureReason, MatchInputs, MatchResult};
 use flamingo_verifier_protocol::match_token::MatchToken;
-use flamingo_verifier_protocol::messages::{
-    AttestedStatement, FailureReason, MatchInputs, MatchResult,
-};
 use getrandom::SysRng;
 use hex_literal::hex;
 use serde_json::{Value, json};

@@ -1497,6 +1497,7 @@ dependencies = [
  "axum",
  "base64",
  "flamingo-verifier-api-types",
+ "flamingo-verifier-enclave-types",
  "flamingo-verifier-protocol",
  "getrandom 0.4.3",
  "hex-literal",
@@ -1555,9 +1556,13 @@ dependencies = [
 name = "flamingo-verifier-enclave-types"
 version = "0.1.0"
 dependencies = [
+ "attested-channel",
+ "ciborium",
+ "flamingo-verifier-protocol",
  "pontifex",
  "serde",
  "serde_bytes",
+ "zeroize",
 ]
 
 [[package]]
@@ -1585,8 +1590,6 @@ name = "flamingo-verifier-protocol"
 version = "0.1.0"
 dependencies = [
  "ark-ff",
- "attested-channel",
- "ciborium",
  "coset",
  "rand 0.8.8",
  "serde",
@@ -1594,7 +1597,6 @@ dependencies = [
  "taceo-ark-babyjubjub",
  "taceo-eddsa-babyjubjub",
  "taceo-poseidon2",
- "zeroize",
 ]
 
 [[package]]

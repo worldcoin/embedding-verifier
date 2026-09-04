@@ -1,6 +1,6 @@
 [package]
 name = "flamingo-verifier-protocol"
-description = "Sealed request, response, and match-token protocol for the Flamingo verifier"
+description = "Match-token protocol for the Flamingo verifier"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,14 +11,11 @@ publish = true
 [dependencies]
 ark-babyjubjub.workspace = true
 ark-ff.workspace = true
-attested-channel.workspace = true
-ciborium.workspace = true
 coset.workspace = true
 eddsa-babyjubjub.workspace = true
 poseidon2.workspace = true
 serde.workspace = true
 serde_bytes.workspace = true
-zeroize.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

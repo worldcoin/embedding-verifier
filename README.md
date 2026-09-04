@@ -19,8 +19,8 @@ verifier/
 │   ├── host/              # Axum HTTP API — the untrusted side of the boundary
 │   ├── enclave/           # Nitro enclave workload — the trusted side. Own workspace -> own Cargo.lock
 │   ├── api-types/         # Client↔host HTTP contract; stops at the host, so no enclave links it
-│   ├── enclave-types/     # Host↔enclave vsock contract: health, errors, key attestation, the match exchange
-│   ├── protocol/          # Match inputs and outputs; travels sealed, the host links none of it. Will likely move to `world-id-protocol`.
+│   ├── enclave-types/     # Everything the enclave speaks: the host↔enclave vsock contract, and the sealed match inputs and outputs the host relays but cannot read
+│   ├── protocol/          # The signed match statement a held match produces. Will likely move to `world-id-protocol`.
 │   ├── client/            # Attestation-verifying client
 │   └── e2e/               # End-to-end harness driving host and enclave together
 └── di/                    # Skeleton — dirs and crates only, no behaviour yet

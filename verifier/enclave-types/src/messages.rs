@@ -1,11 +1,11 @@
 //! The two ends of one match exchange: what the requester seals in, and what the enclave seals
 //! back. The host relays both ciphertexts and holds no key for either.
 
+use flamingo_verifier_protocol::match_token::MatchToken;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use crate::error::Error;
-use crate::match_token::MatchToken;
+use crate::error::MessageError;
 
 /// The sealed inputs to one match.
 ///
@@ -42,10 +42,10 @@ impl MatchInputs {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Encoding`] if CBOR encoding fails.
-    pub fn to_cbor(&self) -> Result<Zeroizing<Vec<u8>>, Error> {
+    /// Returns [`MessageError::Encoding`] if CBOR encoding fails.
+    pub fn to_cbor(&self) -> Result<Zeroizing<Vec<u8>>, MessageError> {
         let mut encoded = Vec::new();
-        ciborium::into_writer(self, &mut encoded).map_err(|_| Error::Encoding)?;
+        ciborium::into_writer(self, &mut encoded).map_err(|_| MessageError::Encoding)?;
 
         Ok(Zeroizing::new(encoded))
     }
@@ -54,16 +54,16 @@ impl MatchInputs {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Malformed`] if the bytes are not this framing, or
-    /// [`Error::UnsupportedChannelVersion`] if the declared version is not
+    /// Returns [`MessageError::Malformed`] if the bytes are not this framing, or
+    /// [`MessageError::UnsupportedChannelVersion`] if the declared version is not
     /// [`attested_channel::channel::CHANNEL_VERSION`].
-    pub fn from_cbor(bytes: &[u8]) -> Result<Self, Error> {
-        let inputs: Self = ciborium::from_reader(bytes).map_err(|_| Error::Malformed)?;
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, MessageError> {
+        let inputs: Self = ciborium::from_reader(bytes).map_err(|_| MessageError::Malformed)?;
 
         if inputs.version == attested_channel::channel::CHANNEL_VERSION {
             Ok(inputs)
         } else {
-            Err(Error::UnsupportedChannelVersion)
+            Err(MessageError::UnsupportedChannelVersion)
         }
     }
 }
@@ -110,10 +110,10 @@ impl MatchResult {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Encoding`] if CBOR encoding fails.
-    pub fn to_cbor(&self) -> Result<Vec<u8>, Error> {
+    /// Returns [`MessageError::Encoding`] if CBOR encoding fails.
+    pub fn to_cbor(&self) -> Result<Vec<u8>, MessageError> {
         let mut encoded = Vec::new();
-        ciborium::into_writer(self, &mut encoded).map_err(|_| Error::Encoding)?;
+        ciborium::into_writer(self, &mut encoded).map_err(|_| MessageError::Encoding)?;
 
         Ok(encoded)
     }
@@ -122,16 +122,16 @@ impl MatchResult {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::ResponseTooLarge`] when the result exceeds the envelope.
-    pub fn to_padded_cbor(&self) -> Result<Vec<u8>, Error> {
+    /// Returns [`MessageError::ResponseTooLarge`] when the result exceeds the envelope.
+    pub fn to_padded_cbor(&self) -> Result<Vec<u8>, MessageError> {
         let encoded = self.to_cbor()?;
         let max_result_len = MATCH_RESULT_ENVELOPE_LEN - MATCH_RESULT_LENGTH_LEN;
         let length: u16 = encoded
             .len()
             .try_into()
-            .map_err(|_| Error::ResponseTooLarge)?;
+            .map_err(|_| MessageError::ResponseTooLarge)?;
         if encoded.len() > max_result_len {
-            return Err(Error::ResponseTooLarge);
+            return Err(MessageError::ResponseTooLarge);
         }
 
         let mut envelope = vec![0; MATCH_RESULT_ENVELOPE_LEN];
@@ -145,31 +145,31 @@ impl MatchResult {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Malformed`] if the bytes are not this framing.
-    pub fn from_cbor(bytes: &[u8]) -> Result<Self, Error> {
-        ciborium::from_reader(bytes).map_err(|_| Error::Malformed)
+    /// Returns [`MessageError::Malformed`] if the bytes are not this framing.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, MessageError> {
+        ciborium::from_reader(bytes).map_err(|_| MessageError::Malformed)
     }
 
     /// Decodes a result from the fixed-size sealed-response envelope.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Malformed`] for an invalid envelope or result.
-    pub fn from_padded_cbor(bytes: &[u8]) -> Result<Self, Error> {
+    /// Returns [`MessageError::Malformed`] for an invalid envelope or result.
+    pub fn from_padded_cbor(bytes: &[u8]) -> Result<Self, MessageError> {
         if bytes.len() != MATCH_RESULT_ENVELOPE_LEN {
-            return Err(Error::Malformed);
+            return Err(MessageError::Malformed);
         }
         let length = u16::from_be_bytes(
             bytes[..MATCH_RESULT_LENGTH_LEN]
                 .try_into()
-                .map_err(|_| Error::Malformed)?,
+                .map_err(|_| MessageError::Malformed)?,
         ) as usize;
         let result_end = MATCH_RESULT_LENGTH_LEN
             .checked_add(length)
             .filter(|end| *end <= bytes.len())
-            .ok_or(Error::Malformed)?;
+            .ok_or(MessageError::Malformed)?;
         if bytes[result_end..].iter().any(|byte| *byte != 0) {
-            return Err(Error::Malformed);
+            return Err(MessageError::Malformed);
         }
 
         Self::from_cbor(&bytes[MATCH_RESULT_LENGTH_LEN..result_end])
@@ -203,12 +203,12 @@ pub enum FailureReason {
 mod tests {
     use attested_channel::channel::CHANNEL_VERSION;
 
-    use super::{
-        AttestedStatement, Error, FailureReason, MATCH_RESULT_ENVELOPE_LEN, MatchInputs,
-        MatchResult,
-    };
+    use flamingo_verifier_protocol::match_token::MatchToken;
 
-    use crate::match_token::MatchToken;
+    use super::{
+        AttestedStatement, FailureReason, MATCH_RESULT_ENVELOPE_LEN, MatchInputs, MatchResult,
+        MessageError,
+    };
 
     fn inputs() -> MatchInputs {
         MatchInputs {
@@ -284,7 +284,7 @@ mod tests {
 
         assert_eq!(
             MatchInputs::from_cbor(&encoded).err(),
-            Some(Error::Malformed)
+            Some(MessageError::Malformed)
         );
     }
 
@@ -292,7 +292,7 @@ mod tests {
     fn rejects_non_cbor_inputs() {
         assert_eq!(
             MatchInputs::from_cbor(b"not cbor framing").err(),
-            Some(Error::Malformed)
+            Some(MessageError::Malformed)
         );
     }
 
@@ -304,7 +304,7 @@ mod tests {
 
         assert_eq!(
             MatchInputs::from_cbor(&encoded).err(),
-            Some(Error::UnsupportedChannelVersion)
+            Some(MessageError::UnsupportedChannelVersion)
         );
     }
 
@@ -368,7 +368,7 @@ mod tests {
             signing_key_attestation: vec![0; MATCH_RESULT_ENVELOPE_LEN],
         });
 
-        assert_eq!(result.to_padded_cbor(), Err(Error::ResponseTooLarge));
+        assert_eq!(result.to_padded_cbor(), Err(MessageError::ResponseTooLarge));
     }
 
     /// A round trip that dropped the document would leave a token nothing can verify.
@@ -405,7 +405,7 @@ mod tests {
     fn rejects_non_cbor_results() {
         assert_eq!(
             MatchResult::from_cbor(b"not cbor framing").err(),
-            Some(Error::Malformed)
+            Some(MessageError::Malformed)
         );
     }
 }

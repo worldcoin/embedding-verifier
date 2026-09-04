@@ -20,6 +20,12 @@ name = "flamingo-verifier-protocol"
 release = true
 publish = true
 
+# Carries the sealed payload the client seals and opens, so it ships with the client.
+[[package]]
+name = "flamingo-verifier-enclave-types"
+release = true
+publish = true
+
 [[package]]
 name = "flamingo-verifier-client"
 release = true
@@ -30,4 +36,5 @@ changelog_include = [
     "attested-channel",
     "flamingo-verifier-api-types",
     "flamingo-verifier-protocol",
+    "flamingo-verifier-enclave-types",
 ]

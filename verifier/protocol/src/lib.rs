@@ -1,10 +1,7 @@
-//! The `Verifier` match protocol: what goes into a match and what comes out.
+//! The `Verifier` match statement: the signed claim a held match produces.
 //!
-//! [`messages`] holds both ends of one exchange; [`match_token`] holds the signed statement a
-//! successful [`messages::MatchResult`] carries.
-//!
-//! Both halves travel end-to-end between the client and the enclave, sealed by
-//! [`attested_channel::channel`]. The host relays the ciphertext and links none of this.
+//! [`match_token`] holds the statement itself. What it travels in — the sealed request and
+//! response of one exchange — is `flamingo-verifier-enclave-types`.
 //!
 //! Work in progress — no external security review yet, and the token format is provisional
 //! pending protocol sign-off. Not production ready.
@@ -19,6 +16,5 @@
 
 pub mod error;
 pub mod match_token;
-pub mod messages;
 
 pub use error::Error;

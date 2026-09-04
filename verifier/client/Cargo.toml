@@ -13,6 +13,7 @@ publish = true
 attested-channel = { workspace = true, features = ["attestation"] }
 base64.workspace = true
 flamingo-verifier-api-types.workspace = true
+flamingo-verifier-enclave-types.workspace = true
 flamingo-verifier-protocol.workspace = true
 getrandom.workspace = true
 reqwest.workspace = true
@@ -23,6 +24,7 @@ url.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
+flamingo-verifier-enclave-types.workspace = true
 flamingo-verifier-protocol.workspace = true
 hex-literal.workspace = true
 tokio.workspace = true

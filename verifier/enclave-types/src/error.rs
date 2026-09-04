@@ -19,3 +19,19 @@ pub enum EnclaveError {
     /// The enclave failed while producing a response. Detail stays in the enclave log.
     Internal,
 }
+
+/// Why a sealed match payload could not be encoded or decoded.
+///
+/// Separate from [`EnclaveError`], which the host sees: none of this ever leaves the sealed
+/// channel, so it is free to name what went wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageError {
+    /// The bytes were not the CBOR framing [`crate::MatchInputs`] and [`crate::MatchResult`] write.
+    Malformed,
+    /// CBOR encoding failed.
+    Encoding,
+    /// An encoded match result exceeded its fixed sealed-response envelope.
+    ResponseTooLarge,
+    /// Match inputs declared a channel version this build does not implement.
+    UnsupportedChannelVersion,
+}
