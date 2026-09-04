@@ -40,7 +40,7 @@ let
     allRefs = true;
   };
 
-  # NOTE: Temporary - while we keep around biometric-engines as a build dep 
+  # NOTE: Temporary - while we keep around biometric-engines as a build dep
   # face-engine's consts.rs reads its default graph configs with
   # include_str!("../../../assets/..."), which resolves only in a monorepo checkout —
   # cargo vendors every crate standalone. That path lands at the root of the vendored
@@ -107,8 +107,8 @@ in
   di-enclave = buildEnclaveBin {
     pname = "di-enclave";
   };
-  flamingo-verifier-enclave = buildEnclaveBin {
-    pname = "flamingo-verifier-enclave";
+  verifier-enclave = buildEnclaveBin {
+    pname = "verifier-enclave";
     extraArgs = faceEngineArgs;
   };
 }

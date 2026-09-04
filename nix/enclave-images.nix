@@ -68,7 +68,7 @@ let
         nsmKo = nitroBlobs.nsmKo;
         init = nitroBlobs.init;
         copyToRoot = root;
-        copyToRootWithClosure = false;
+        copyToRootWithClosure = true;
         entrypoint = "/bin/${pname}";
         env = ''
           RUST_LOG=info
@@ -87,13 +87,13 @@ let
   };
   verifier = buildEnclaveImage {
     workload = "verifier";
-    pname = "flamingo-verifier-enclave";
+    pname = "verifier-enclave";
     extraRoot = [ verifierModels ];
   };
 in
 {
   di-oci = di.oci;
   di-eif = di.eif;
-  flamingo-verifier-oci = verifier.oci;
-  flamingo-verifier-eif = verifier.eif;
+  verifier-oci = verifier.oci;
+  verifier-eif = verifier.eif;
 }
