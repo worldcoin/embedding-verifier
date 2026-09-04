@@ -17,6 +17,7 @@ attested-channel.workspace = true
 ciborium.workspace = true
 flamingo-verifier-enclave-types.workspace = true
 flamingo-verifier-protocol.workspace = true
+flamingo-verifier-sealed-types.workspace = true
 eddsa-babyjubjub.workspace = true
 face-engine.workspace = true
 getrandom.workspace = true

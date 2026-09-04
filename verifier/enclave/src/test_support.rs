@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use flamingo_verifier_enclave_types::EnclaveError;
-use flamingo_verifier_enclave_types::FailureReason;
+use flamingo_verifier_sealed_types::FailureReason;
 
 use crate::{
     attestation::Attestor,

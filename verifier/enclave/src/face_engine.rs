@@ -10,7 +10,7 @@ use face_engine::{
     matchers::cosine_similarity::CosineSimilarity,
     nodes::{subject_extraction::SubjectFace, template_generation::EmbeddingVector},
 };
-use flamingo_verifier_enclave_types::FailureReason;
+use flamingo_verifier_sealed_types::FailureReason;
 use image::ImageReader;
 
 const FACE_ANALYZER_CONFIG: &str = include_str!("../config/face_analyzer.yaml");

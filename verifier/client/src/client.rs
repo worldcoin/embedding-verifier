@@ -11,8 +11,8 @@ use attested_channel::nitro::{
 use flamingo_verifier_api_types::{
     ApiErrorResponse, EnclaveAssignmentResponse, MatchRequestBody, MatchResponseBody,
 };
-use flamingo_verifier_enclave_types::{MatchInputs, MatchResult};
 use flamingo_verifier_protocol::match_token::{self, EdDSAPublicKey};
+use flamingo_verifier_sealed_types::{MatchInputs, MatchResult};
 use getrandom::SysRng;
 
 use crate::config::Config;

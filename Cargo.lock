@@ -1497,8 +1497,8 @@ dependencies = [
  "axum",
  "base64",
  "flamingo-verifier-api-types",
- "flamingo-verifier-enclave-types",
  "flamingo-verifier-protocol",
+ "flamingo-verifier-sealed-types",
  "getrandom 0.4.3",
  "hex-literal",
  "reqwest 0.12.28",
@@ -1518,6 +1518,7 @@ dependencies = [
  "flamingo-verifier-client",
  "flamingo-verifier-enclave-types",
  "flamingo-verifier-protocol",
+ "flamingo-verifier-sealed-types",
  "getrandom 0.4.3",
  "hex",
  "pontifex",
@@ -1536,6 +1537,7 @@ dependencies = [
  "face-engine",
  "flamingo-verifier-enclave-types",
  "flamingo-verifier-protocol",
+ "flamingo-verifier-sealed-types",
  "getrandom 0.4.3",
  "hex",
  "image",
@@ -1556,13 +1558,9 @@ dependencies = [
 name = "flamingo-verifier-enclave-types"
 version = "0.1.0"
 dependencies = [
- "attested-channel",
- "ciborium",
- "flamingo-verifier-protocol",
  "pontifex",
  "serde",
  "serde_bytes",
- "zeroize",
 ]
 
 [[package]]
@@ -1597,6 +1595,18 @@ dependencies = [
  "taceo-ark-babyjubjub",
  "taceo-eddsa-babyjubjub",
  "taceo-poseidon2",
+]
+
+[[package]]
+name = "flamingo-verifier-sealed-types"
+version = "0.1.0"
+dependencies = [
+ "attested-channel",
+ "ciborium",
+ "flamingo-verifier-protocol",
+ "serde",
+ "serde_bytes",
+ "zeroize",
 ]
 
 [[package]]

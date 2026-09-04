@@ -10,6 +10,7 @@ publish.workspace = true
 anyhow.workspace = true
 attested-channel.workspace = true
 flamingo-verifier-protocol.workspace = true
+flamingo-verifier-sealed-types.workspace = true
 flamingo-verifier-enclave-types.workspace = true
 getrandom.workspace = true
 hex.workspace = true

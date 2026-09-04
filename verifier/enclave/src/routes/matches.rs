@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use attested_channel::channel::{SealedRequest, SealedResponse, UnwrapErr};
-use flamingo_verifier_enclave_types::{
-    AttestedStatement, EnclaveError, FailureReason, FramingError, MatchInputs, MatchRequest,
-    MatchResponse, MatchResult,
-};
+use flamingo_verifier_enclave_types::{EnclaveError, MatchRequest, MatchResponse};
 use flamingo_verifier_protocol::match_token::MatchClaims;
+use flamingo_verifier_sealed_types::{
+    AttestedStatement, FailureReason, FramingError, MatchInputs, MatchResult,
+};
 use getrandom::SysRng;
 use pontifex::Request;
 use sha2::{Digest, Sha256};
@@ -181,10 +181,9 @@ mod tests {
     use attested_channel::channel::{
         CHANNEL_VERSION, Requester, ResponseOpener, SealedResponse, UnwrapErr,
     };
-    use flamingo_verifier_enclave_types::{
-        EnclaveError, FailureReason, MatchInputs, MatchRequest, MatchResult,
-    };
+    use flamingo_verifier_enclave_types::{EnclaveError, MatchRequest};
     use flamingo_verifier_protocol::match_token;
+    use flamingo_verifier_sealed_types::{FailureReason, MatchInputs, MatchResult};
     use getrandom::SysRng;
     use sha2::{Digest, Sha256};
 

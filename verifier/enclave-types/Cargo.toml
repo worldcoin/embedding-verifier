@@ -1,20 +1,11 @@
 [package]
 name = "flamingo-verifier-enclave-types"
-description = "Sealed payload and vsock contract for the Flamingo verifier enclave"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-homepage.workspace = true
-repository.workspace = true
-# Published because `flamingo-verifier-client` needs the sealed payload types.
-publish = true
-
+publish.workspace = true
 [dependencies]
-attested-channel.workspace = true
-ciborium.workspace = true
-flamingo-verifier-protocol.workspace = true
 pontifex.workspace = true
 serde.workspace = true
 serde_bytes.workspace = true
-zeroize.workspace = true

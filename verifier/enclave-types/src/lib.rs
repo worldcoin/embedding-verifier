@@ -1,8 +1,7 @@
-//! Everything the `Verifier` enclave speaks: the vsock contract it serves the host, and the
-//! sealed contract it serves the client.
+//! The vsock contract between the `Verifier` host and its enclave.
 //!
-//! The client↔host HTTP contract is `flamingo-verifier-api-types`; the signed statement a
-//! successful [`MatchResult`] carries is `flamingo-verifier-protocol`.
+//! The client↔host HTTP contract is `flamingo-verifier-api-types`; the sealed client↔enclave payload is
+//! `flamingo-verifier-sealed-types`.
 
 #![deny(
     clippy::all,
@@ -16,12 +15,8 @@ mod error;
 mod health;
 mod keys;
 mod matches;
-mod messages;
 
-pub use error::{EnclaveError, FramingError};
+pub use error::EnclaveError;
 pub use health::HealthRequest;
 pub use keys::{GetEncryptionKeyRequest, KeyAttestation};
 pub use matches::{MatchRequest, MatchResponse};
-pub use messages::{
-    AttestedStatement, FailureReason, MATCH_RESULT_ENVELOPE_LEN, MatchInputs, MatchResult,
-};
