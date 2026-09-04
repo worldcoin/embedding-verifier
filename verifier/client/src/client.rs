@@ -228,7 +228,7 @@ impl FaceVerifierClient {
             .open(&SealedResponse::from_bytes(ciphertext))
             .map_err(ClientError::Channel)?;
         let result =
-            MatchResult::from_cbor(&plaintext).map_err(|_| ClientError::MalformedResult)?;
+            MatchResult::from_padded_cbor(&plaintext).map_err(|_| ClientError::MalformedResult)?;
 
         // Only a statement needs the key, so a rejection skips the attestation entirely.
         if let MatchResult::Success(statement) = &result {
