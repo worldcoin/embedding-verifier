@@ -10,36 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::Error;
 use url::Url;
 
-use pontifex::attestation::{PcrConfig, Verifier};
-
-/// One expected PCR measurement in the client configuration.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PcrMeasurement {
-    /// PCR index; every configuration must include PCR0.
-    pub index: u32,
-    /// SHA-384 measurement, serialized as hex. A `0x` prefix is accepted on input.
-    #[serde(
-        serialize_with = "hex::serde::serialize",
-        deserialize_with = "deserialize_pcr"
-    )]
-    pub value: Vec<u8>,
-}
-
-impl PcrMeasurement {
-    /// Creates a measurement for a client configuration.
-    #[must_use]
-    pub fn new(index: u32, value: impl Into<Vec<u8>>) -> Self {
-        Self {
-            index,
-            value: value.into(),
-        }
-    }
-}
-
-fn deserialize_pcr<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
-    let value = String::deserialize(deserializer)?;
-    hex::decode(value.strip_prefix("0x").unwrap_or(&value)).map_err(serde::de::Error::custom)
-}
+use pontifex::attestation::{PcrConfig, PcrMeasurement, Verifier};
 
 /// Default freshness bound, matching the few-hour lifetime of a Nitro certificate.
 const fn default_max_attestation_age_millis() -> u64 {
@@ -62,6 +33,7 @@ pub struct Config {
     host_url: Url,
     /// Measurements to trust. A document is accepted if it matches any one configuration in
     /// full, which lets several enclave versions be trusted at once during a rollout.
+    #[serde(with = "pcr_configs")]
     allowed_pcr_configs: Vec<Vec<PcrMeasurement>>,
     /// How old an attestation document's own timestamp may be.
     #[serde(default = "default_max_attestation_age_millis")]
@@ -190,6 +162,62 @@ impl Config {
     }
 }
 
+mod pcr_configs {
+    use pontifex::PcrMeasurement;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize)]
+    struct Measurement {
+        index: u32,
+        #[serde(
+            serialize_with = "hex::serde::serialize",
+            deserialize_with = "deserialize_pcr"
+        )]
+        value: Vec<u8>,
+    }
+
+    fn deserialize_pcr<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<u8>, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        hex::decode(value.strip_prefix("0x").unwrap_or(&value)).map_err(serde::de::Error::custom)
+    }
+
+    pub(super) fn serialize<S: serde::Serializer>(
+        configs: &[Vec<PcrMeasurement>],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let configs: Vec<Vec<Measurement>> = configs
+            .iter()
+            .map(|measurements| {
+                measurements
+                    .iter()
+                    .map(|pcr| Measurement {
+                        index: pcr.index,
+                        value: pcr.value.clone(),
+                    })
+                    .collect()
+            })
+            .collect();
+        configs.serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<Vec<PcrMeasurement>>, D::Error> {
+        let configs = Vec::<Vec<Measurement>>::deserialize(deserializer)?;
+        Ok(configs
+            .into_iter()
+            .map(|measurements| {
+                measurements
+                    .into_iter()
+                    .map(|pcr| PcrMeasurement::new(pcr.index, pcr.value))
+                    .collect()
+            })
+            .collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -283,14 +311,31 @@ mod tests {
 
     #[test]
     fn round_trips_through_json_with_defaults_applied() {
-        let json = r#"{
-            "host_url": "http://localhost:8000",
-            "allowed_pcr_configs": [[{ "index": 0, "value": "abcd" }]]
-        }"#;
+        let config = Config::new(
+            "http://localhost:8000",
+            vec![
+                vec![
+                    pontifex::PcrMeasurement::new(0, [0xab; 48]),
+                    pontifex::PcrMeasurement::new(1, [0xcd; 48]),
+                ],
+                vec![pontifex::PcrMeasurement::new(0, [0xef; 48])],
+            ],
+        )
+        .expect("Pontifex measurements should be accepted");
+        let json = serde_json::to_value(&config).expect("config should serialize");
+        assert_eq!(
+            json["allowed_pcr_configs"],
+            serde_json::json!([
+                [
+                    { "index": 0, "value": "ab".repeat(48) },
+                    { "index": 1, "value": "cd".repeat(48) }
+                ],
+                [{ "index": 0, "value": "ef".repeat(48) }]
+            ])
+        );
 
-        let json = json.replace("abcd", &"ab".repeat(48));
-        let config = Config::from_json(&json).expect("config should parse");
-
-        assert_eq!(config.request_timeout(), Duration::from_mins(1));
+        let decoded = Config::from_json(&json.to_string()).expect("config should parse");
+        assert_eq!(decoded.request_timeout(), Duration::from_mins(1));
+        assert_eq!(serde_json::to_value(decoded).unwrap(), json);
     }
 }

@@ -33,6 +33,6 @@ mod config;
 mod error;
 
 pub use client::{FaceVerifierClient, VerifiedAssignment};
-pub use config::{Config, PcrMeasurement};
+pub use config::Config;
 pub use error::Error;
-pub use pontifex::ChannelConsumer;
+pub use pontifex::{ChannelConsumer, PcrMeasurement};
