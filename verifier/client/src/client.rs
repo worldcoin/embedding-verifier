@@ -44,6 +44,7 @@ impl VerifiedAssignment {
     }
 }
 
+// TODO: Rename FaceVerifierClient to FlamingoVerifierClient.
 /// Calls the face verifier host and verifies the attestation documents it relays.
 ///
 /// Nothing is returned until the enclave that produced it has been verified, so callers
