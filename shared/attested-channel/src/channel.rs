@@ -87,7 +87,7 @@ const _: () = assert!(RESPONSE_NONCE_LEN >= AEAD_NONCE_LEN);
 
 /// Why a channel operation did not complete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChannelError {
+pub enum Error {
     /// A wire body was too short to hold its framing, a tag, and any plaintext.
     Truncated,
     /// The encapsulated key was malformed, or yielded the all-zero shared secret that
@@ -175,7 +175,7 @@ fn derive_response_key_nonce(
     secret: &ResponseSecret,
     encapsulated_key: &[u8; ENCAPSULATED_KEY_LEN],
     response_nonce: &[u8; RESPONSE_NONCE_LEN],
-) -> Result<(Zeroizing<[u8; AEAD_KEY_LEN]>, [u8; AEAD_NONCE_LEN]), ChannelError> {
+) -> Result<(Zeroizing<[u8; AEAD_KEY_LEN]>, [u8; AEAD_NONCE_LEN]), Error> {
     let mut salt = Vec::with_capacity(ENCAPSULATED_KEY_LEN + RESPONSE_NONCE_LEN);
     salt.extend_from_slice(encapsulated_key);
     salt.extend_from_slice(response_nonce);
@@ -186,7 +186,7 @@ fn derive_response_key_nonce(
     let mut nonce = [0u8; AEAD_NONCE_LEN];
     hkdf.expand(INFO_KEY, key.as_mut_slice())
         .and_then(|()| hkdf.expand(INFO_NONCE, &mut nonce))
-        .map_err(|_| ChannelError::DeriveFailed)?;
+        .map_err(|_| Error::DeriveFailed)?;
 
     Ok((key, nonce))
 }
@@ -195,7 +195,7 @@ fn derive_response_aead(
     secret: &ResponseSecret,
     encapsulated_key: &[u8; ENCAPSULATED_KEY_LEN],
     response_nonce: &[u8; RESPONSE_NONCE_LEN],
-) -> Result<(Aes256Gcm, Nonce<Aes256Gcm>), ChannelError> {
+) -> Result<(Aes256Gcm, Nonce<Aes256Gcm>), Error> {
     let (key, nonce) = derive_response_key_nonce(secret, encapsulated_key, response_nonce)?;
 
     Ok((
@@ -241,23 +241,22 @@ impl Responder {
     ///
     /// # Errors
     ///
-    /// Returns [`ChannelError`] if the request is too short, the encapsulated key is unusable, the
+    /// Returns [`Error`] if the request is too short, the encapsulated key is unusable, the
     /// ciphertext fails authentication, or the response secret cannot be exported.
     pub fn open(
         &self,
         request: &SealedRequest,
-    ) -> Result<(Zeroizing<Vec<u8>>, ResponseSealer), ChannelError> {
+    ) -> Result<(Zeroizing<Vec<u8>>, ResponseSealer), Error> {
         let body = request.as_ref();
         if body.len() <= ENCAPSULATED_KEY_LEN + AEAD_TAG_LEN {
-            return Err(ChannelError::Truncated);
+            return Err(Error::Truncated);
         }
         let (encapsulated, ciphertext) = body.split_at(ENCAPSULATED_KEY_LEN);
-        let encapsulated_key: [u8; ENCAPSULATED_KEY_LEN] = encapsulated
-            .try_into()
-            .map_err(|_| ChannelError::Truncated)?;
+        let encapsulated_key: [u8; ENCAPSULATED_KEY_LEN] =
+            encapsulated.try_into().map_err(|_| Error::Truncated)?;
 
         let encapped = <Kem as KemTrait>::EncappedKey::from_bytes(encapsulated)
-            .map_err(|_| ChannelError::InvalidEncapsulatedKey)?;
+            .map_err(|_| Error::InvalidEncapsulatedKey)?;
 
         let info = channel_info(CHANNEL_VERSION, &self.public_key);
         let mut context = setup_receiver::<ChannelAead, Kdf, Kem>(
@@ -266,16 +265,16 @@ impl Responder {
             &encapped,
             &info,
         )
-        .map_err(|_| ChannelError::InvalidEncapsulatedKey)?;
+        .map_err(|_| Error::InvalidEncapsulatedKey)?;
 
         let plaintext = context
             .open(ciphertext, &[])
-            .map_err(|_| ChannelError::OpenFailed)?;
+            .map_err(|_| Error::OpenFailed)?;
 
         let mut secret = Zeroizing::new([0u8; RESPONSE_NONCE_LEN]);
         context
             .export(RESPONSE_EXPORTER_LABEL, secret.as_mut_slice())
-            .map_err(|_| ChannelError::ExportFailed)?;
+            .map_err(|_| Error::ExportFailed)?;
 
         Ok((
             Zeroizing::new(plaintext),
@@ -302,10 +301,10 @@ impl Requester {
     ///
     /// # Errors
     ///
-    /// Returns [`ChannelError::InvalidEncryptionKey`] if `public_key` cannot be decoded.
-    pub fn new(public_key: [u8; ENCRYPTION_KEY_LEN]) -> Result<Self, ChannelError> {
+    /// Returns [`Error::InvalidEncryptionKey`] if `public_key` cannot be decoded.
+    pub fn new(public_key: [u8; ENCRYPTION_KEY_LEN]) -> Result<Self, Error> {
         <Kem as KemTrait>::PublicKey::from_bytes(&public_key)
-            .map_err(|_| ChannelError::InvalidEncryptionKey)?;
+            .map_err(|_| Error::InvalidEncryptionKey)?;
         Ok(Self { public_key })
     }
 
@@ -313,13 +312,13 @@ impl Requester {
     ///
     /// # Errors
     ///
-    /// Returns [`ChannelError::InvalidEncryptionKey`] if `public_key` is not exactly
+    /// Returns [`Error::InvalidEncryptionKey`] if `public_key` is not exactly
     /// [`ENCRYPTION_KEY_LEN`] bytes or cannot be decoded; see [`Self::new`] for what decoding
     /// does and does not validate.
-    pub fn from_attestation(public_key: &[u8]) -> Result<Self, ChannelError> {
+    pub fn from_attestation(public_key: &[u8]) -> Result<Self, Error> {
         let public_key: [u8; ENCRYPTION_KEY_LEN] = public_key
             .try_into()
-            .map_err(|_| ChannelError::InvalidEncryptionKey)?;
+            .map_err(|_| Error::InvalidEncryptionKey)?;
         Self::new(public_key)
     }
 
@@ -333,12 +332,12 @@ impl Requester {
     ///
     /// # Errors
     ///
-    /// Returns [`ChannelError`] if the AEAD refuses to seal.
+    /// Returns [`Error`] if the AEAD refuses to seal.
     pub fn seal(
         &self,
         plaintext: &[u8],
         rng: &mut impl CryptoRng,
-    ) -> Result<(SealedRequest, ResponseOpener), ChannelError> {
+    ) -> Result<(SealedRequest, ResponseOpener), Error> {
         self.seal_with_version(CHANNEL_VERSION, plaintext, rng)
     }
 
@@ -347,24 +346,24 @@ impl Requester {
         version: u8,
         plaintext: &[u8],
         rng: &mut impl CryptoRng,
-    ) -> Result<(SealedRequest, ResponseOpener), ChannelError> {
+    ) -> Result<(SealedRequest, ResponseOpener), Error> {
         let public_key = <Kem as KemTrait>::PublicKey::from_bytes(&self.public_key)
-            .map_err(|_| ChannelError::InvalidEncryptionKey)?;
+            .map_err(|_| Error::InvalidEncryptionKey)?;
 
         let info = channel_info(version, &self.public_key);
         let (encapped, mut context) =
             setup_sender_with_rng::<ChannelAead, Kdf, Kem>(&OpModeS::Base, &public_key, &info, rng)
-                .map_err(|_| ChannelError::InvalidEncryptionKey)?;
+                .map_err(|_| Error::InvalidEncryptionKey)?;
 
         let ciphertext = context
             .seal(plaintext, &[])
-            .map_err(|_| ChannelError::SealFailed)?;
+            .map_err(|_| Error::SealFailed)?;
 
         let encapsulated = encapped.to_bytes();
         let encapsulated_key: [u8; ENCAPSULATED_KEY_LEN] = encapsulated
             .as_slice()
             .try_into()
-            .map_err(|_| ChannelError::InvalidEncapsulatedKey)?;
+            .map_err(|_| Error::InvalidEncapsulatedKey)?;
 
         let mut body = encapsulated_key.to_vec();
         body.extend_from_slice(&ciphertext);
@@ -390,29 +389,28 @@ impl ResponseOpener {
     ///
     /// # Errors
     ///
-    /// Returns [`ChannelError`] if the response is too short, the secret cannot be exported or
+    /// Returns [`Error`] if the response is too short, the secret cannot be exported or
     /// expanded, or the ciphertext fails authentication.
-    pub fn open(&self, response: &SealedResponse) -> Result<Zeroizing<Vec<u8>>, ChannelError> {
+    pub fn open(&self, response: &SealedResponse) -> Result<Zeroizing<Vec<u8>>, Error> {
         let sealed = response.as_ref();
         if sealed.len() <= RESPONSE_NONCE_LEN + AEAD_TAG_LEN {
-            return Err(ChannelError::Truncated);
+            return Err(Error::Truncated);
         }
         let (response_nonce, ciphertext) = sealed.split_at(RESPONSE_NONCE_LEN);
-        let response_nonce: [u8; RESPONSE_NONCE_LEN] = response_nonce
-            .try_into()
-            .map_err(|_| ChannelError::Truncated)?;
+        let response_nonce: [u8; RESPONSE_NONCE_LEN] =
+            response_nonce.try_into().map_err(|_| Error::Truncated)?;
 
         let mut secret = Zeroizing::new([0u8; RESPONSE_NONCE_LEN]);
         self.context
             .export(RESPONSE_EXPORTER_LABEL, secret.as_mut_slice())
-            .map_err(|_| ChannelError::ExportFailed)?;
+            .map_err(|_| Error::ExportFailed)?;
 
         let (cipher, nonce) =
             derive_response_aead(&secret, &self.encapsulated_key, &response_nonce)?;
 
         let plaintext = cipher
             .decrypt(&nonce, ciphertext)
-            .map_err(|_| ChannelError::OpenFailed)?;
+            .map_err(|_| Error::OpenFailed)?;
 
         Ok(Zeroizing::new(plaintext))
     }
@@ -429,13 +427,9 @@ impl ResponseSealer {
     ///
     /// # Errors
     ///
-    /// Returns [`ChannelError`] if the key or nonce cannot be expanded, or the AEAD refuses to
+    /// Returns [`Error`] if the key or nonce cannot be expanded, or the AEAD refuses to
     /// seal.
-    pub fn seal(
-        self,
-        plaintext: &[u8],
-        rng: &mut impl CryptoRng,
-    ) -> Result<SealedResponse, ChannelError> {
+    pub fn seal(self, plaintext: &[u8], rng: &mut impl CryptoRng) -> Result<SealedResponse, Error> {
         let mut response_nonce = [0u8; RESPONSE_NONCE_LEN];
         rng.fill_bytes(&mut response_nonce);
 
@@ -444,7 +438,7 @@ impl ResponseSealer {
 
         let ciphertext = cipher
             .encrypt(&nonce, plaintext)
-            .map_err(|_| ChannelError::SealFailed)?;
+            .map_err(|_| Error::SealFailed)?;
 
         let mut sealed = response_nonce.to_vec();
         sealed.extend_from_slice(&ciphertext);
@@ -459,7 +453,7 @@ mod tests {
     use hpke::rand_core::UnwrapErr;
 
     use super::{
-        AEAD_TAG_LEN, CHANNEL_INFO_DOMAIN, CHANNEL_VERSION, ChannelError, ENCAPSULATED_KEY_LEN,
+        AEAD_TAG_LEN, CHANNEL_INFO_DOMAIN, CHANNEL_VERSION, ENCAPSULATED_KEY_LEN, Error,
         RESPONSE_NONCE_LEN, Requester, Responder, ResponseOpener, SealedRequest, SealedResponse,
         channel_info,
     };
@@ -490,7 +484,7 @@ mod tests {
     fn rejects_a_non_32_byte_attestation_key() {
         assert_eq!(
             Requester::from_attestation(&[0u8; 31]).err(),
-            Some(ChannelError::InvalidEncryptionKey)
+            Some(Error::InvalidEncryptionKey)
         );
     }
 
@@ -571,10 +565,7 @@ mod tests {
         let other = Responder::generate(&mut test_rng());
         let (request, _) = seal_to(&other, b"match inputs");
 
-        assert_eq!(
-            responder.open(&request).err(),
-            Some(ChannelError::OpenFailed)
-        );
+        assert_eq!(responder.open(&request).err(), Some(Error::OpenFailed));
     }
 
     #[test]
@@ -585,10 +576,7 @@ mod tests {
             .seal_with_version(CHANNEL_VERSION + 1, b"match inputs", &mut test_rng())
             .expect("sealing should succeed");
 
-        assert_eq!(
-            responder.open(&request).err(),
-            Some(ChannelError::OpenFailed)
-        );
+        assert_eq!(responder.open(&request).err(), Some(Error::OpenFailed));
     }
 
     #[test]
@@ -600,7 +588,7 @@ mod tests {
 
         assert_eq!(
             responder.open(&SealedRequest(body)).err(),
-            Some(ChannelError::InvalidEncapsulatedKey)
+            Some(Error::InvalidEncapsulatedKey)
         );
     }
 
@@ -613,7 +601,7 @@ mod tests {
                 responder
                     .open(&SealedRequest::from_bytes(vec![0u8; length]))
                     .err(),
-                Some(ChannelError::Truncated),
+                Some(Error::Truncated),
                 "length {length}"
             );
         }
@@ -628,7 +616,7 @@ mod tests {
 
         assert_eq!(
             responder.open(&SealedRequest(body)).err(),
-            Some(ChannelError::OpenFailed)
+            Some(Error::OpenFailed)
         );
     }
 
@@ -642,7 +630,7 @@ mod tests {
                 opener
                     .open(&SealedResponse::from_bytes(vec![0u8; length]))
                     .err(),
-                Some(ChannelError::Truncated),
+                Some(Error::Truncated),
                 "length {length}"
             );
         }
@@ -659,10 +647,7 @@ mod tests {
             .seal(b"statement", &mut test_rng())
             .expect("sealing should succeed");
 
-        assert_eq!(
-            eavesdropper.open(&response).err(),
-            Some(ChannelError::OpenFailed)
-        );
+        assert_eq!(eavesdropper.open(&response).err(), Some(Error::OpenFailed));
     }
 
     #[test]
@@ -679,7 +664,7 @@ mod tests {
 
         assert_eq!(
             opener.open(&SealedResponse(body)).err(),
-            Some(ChannelError::OpenFailed)
+            Some(Error::OpenFailed)
         );
     }
 
@@ -697,7 +682,7 @@ mod tests {
 
         assert_eq!(
             opener.open(&SealedResponse(body)).err(),
-            Some(ChannelError::OpenFailed)
+            Some(Error::OpenFailed)
         );
     }
 
@@ -707,7 +692,7 @@ mod tests {
         let requester = Requester::new([0u8; 32]).expect("all-zero key encodes");
         let result = requester.seal(b"match inputs", &mut test_rng());
 
-        assert_eq!(result.err(), Some(ChannelError::InvalidEncryptionKey));
+        assert_eq!(result.err(), Some(Error::InvalidEncryptionKey));
     }
 }
 

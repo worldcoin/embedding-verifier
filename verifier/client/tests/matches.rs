@@ -17,10 +17,9 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use flamingo_verifier_client as client;
 use flamingo_verifier_client::nitro::PcrMeasurement;
-use flamingo_verifier_client::{
-    ClientError, Config, FaceVerifierClient, Requester, VerifiedAssignment,
-};
+use flamingo_verifier_client::{Config, FaceVerifierClient, Requester, VerifiedAssignment};
 use flamingo_verifier_protocol::match_token::MatchToken;
 use flamingo_verifier_sealed_types::{AttestedStatement, FailureReason, MatchInputs, MatchResult};
 use getrandom::SysRng;
@@ -220,7 +219,7 @@ async fn a_reply_from_another_exchange_cannot_be_opened() {
         .await
         .expect_err("a reply sealed on another exchange must not open");
 
-    assert!(matches!(error, ClientError::Channel(_)), "got {error:?}");
+    assert!(matches!(error, client::Error::Channel(_)), "got {error:?}");
 }
 
 #[tokio::test]
@@ -235,7 +234,7 @@ async fn a_stale_assignment_asks_for_a_reassignment() {
         .expect_err("a 409 is an error, not a result");
 
     assert!(
-        matches!(error, ClientError::ReassignRequired),
+        matches!(error, client::Error::ReassignRequired),
         "a 409 must be distinguishable so the caller can retry once, got {error:?}"
     );
 }
@@ -252,7 +251,7 @@ async fn other_envelopes_keep_their_code_and_retry_flag() {
         .expect_err("a 413 is an error");
 
     match error {
-        ClientError::Api {
+        client::Error::Api {
             status,
             code,
             allow_retry,
@@ -280,7 +279,7 @@ async fn a_status_without_an_envelope_still_surfaces() {
         .await
         .expect_err("a 413 is an error");
 
-    assert!(matches!(error, ClientError::Status(502)), "got {error:?}");
+    assert!(matches!(error, client::Error::Status(502)), "got {error:?}");
 }
 
 /// A statement is only as good as the attestation beside it, so one that does not verify must be
@@ -302,7 +301,7 @@ async fn a_statement_whose_attestation_does_not_verify_is_rejected() {
             .expect_err("an unverifiable attestation must not yield a statement");
 
         assert!(
-            matches!(error, ClientError::Attestation(_)),
+            matches!(error, client::Error::Attestation(_)),
             "expected an attestation failure, got {error:?}"
         );
     }

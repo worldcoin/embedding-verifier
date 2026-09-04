@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 /// Errors that can occur during enclave attestation verification.
 #[derive(Debug, thiserror::Error)]
-pub enum EnclaveAttestationError {
+pub enum Error {
     /// Failed to parse the attestation document.
     #[error("failed to parse attestation document: {0}")]
     AttestationDocumentParseError(String),
@@ -52,7 +52,7 @@ pub enum EnclaveAttestationError {
 }
 
 /// Result type for enclave attestation operations.
-pub type EnclaveAttestationResult<T, E = EnclaveAttestationError> = Result<T, E>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// One expected PCR measurement. Serializes with the value as hex.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

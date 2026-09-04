@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Coarse on the match path: detail worth disclosing travels sealed in the response ciphertext.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EnclaveError {
+pub enum Error {
     /// The enclave is reachable but not ready to process requests.
     NotReady,
     /// The Nitro Secure Module is unavailable.

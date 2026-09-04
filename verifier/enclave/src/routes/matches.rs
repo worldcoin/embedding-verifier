@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use attested_channel::channel::{SealedRequest, SealedResponse, UnwrapErr};
-use flamingo_verifier_enclave_types::{EnclaveError, MatchRequest, MatchResponse};
+use flamingo_verifier_enclave_types as enclave_types;
+use flamingo_verifier_enclave_types::{MatchRequest, MatchResponse};
 use flamingo_verifier_protocol::match_token::MatchClaims;
-use flamingo_verifier_sealed_types::{
-    AttestedStatement, FailureReason, FramingError, MatchInputs, MatchResult,
-};
+use flamingo_verifier_sealed_types as sealed;
+use flamingo_verifier_sealed_types::{AttestedStatement, FailureReason, MatchInputs, MatchResult};
 use getrandom::SysRng;
 use pontifex::Request;
 use sha2::{Digest, Sha256};
@@ -19,13 +19,13 @@ use crate::{pcp, state::EnclaveState};
 ///
 /// # Errors
 ///
-/// Returns [`EnclaveError`] for the only two things the host may see: a request that would not open
+/// Returns [`enclave_types::Error`] for the only two things the host may see: a request that would not open
 /// (no channel exists, so nothing can be sealed) and an enclave fault. Every other failure is a
 /// sealed [`FailureReason`].
 pub async fn handler(
     state: Arc<EnclaveState>,
     request: MatchRequest,
-) -> Result<MatchResponse, EnclaveError> {
+) -> Result<MatchResponse, enclave_types::Error> {
     let (plaintext, sealer) = state
         .responder()
         .open(&SealedRequest::from_bytes(request.body))
@@ -35,7 +35,7 @@ pub async fn handler(
                 route = MatchRequest::ROUTE_ID,
                 "failed to open sealed request"
             );
-            EnclaveError::RequestNotOpened
+            enclave_types::Error::RequestNotOpened
         })?;
 
     // Read before `run`, which is sync. A clone of the cached document, not an attest.
@@ -59,7 +59,7 @@ fn run(
     state: &EnclaveState,
     plaintext: &[u8],
     signing_key_attestation: &[u8],
-) -> Result<MatchResult, EnclaveError> {
+) -> Result<MatchResult, enclave_types::Error> {
     let inputs = match MatchInputs::from_cbor(plaintext) {
         Ok(inputs) => inputs,
         Err(error) => {
@@ -69,12 +69,12 @@ fn run(
                 "unusable match payload"
             );
             return match error {
-                FramingError::Malformed => Ok(MatchResult::Failed(FailureReason::MalformedInputs)),
-                FramingError::UnsupportedChannelVersion => {
+                sealed::Error::Malformed => Ok(MatchResult::Failed(FailureReason::MalformedInputs)),
+                sealed::Error::UnsupportedChannelVersion => {
                     Ok(MatchResult::Failed(FailureReason::UnsupportedVersion))
                 }
                 // Decoding produces no other variant; anything else is a bug in this crate.
-                _ => Err(EnclaveError::Internal),
+                _ => Err(enclave_types::Error::Internal),
             };
         }
     };
@@ -149,10 +149,10 @@ fn evaluate(state: &EnclaveState, inputs: &MatchInputs) -> Result<MatchClaims, F
 fn sign(
     state: &EnclaveState,
     claims: &MatchClaims,
-) -> Result<flamingo_verifier_protocol::match_token::MatchToken, EnclaveError> {
+) -> Result<flamingo_verifier_protocol::match_token::MatchToken, enclave_types::Error> {
     state.signing_key().sign_claims(claims).map_err(|error| {
         tracing::error!(?error, "failed to build the match statement");
-        EnclaveError::Internal
+        enclave_types::Error::Internal
     })
 }
 
@@ -160,17 +160,17 @@ fn sign(
 fn seal(
     sealer: attested_channel::channel::ResponseSealer,
     result: &MatchResult,
-) -> Result<SealedResponse, EnclaveError> {
+) -> Result<SealedResponse, enclave_types::Error> {
     let encoded = result.to_padded_cbor().map_err(|error| {
         tracing::error!(?error, "failed to encode the match result");
-        EnclaveError::Internal
+        enclave_types::Error::Internal
     })?;
 
     sealer
         .seal(&encoded, &mut UnwrapErr(SysRng))
         .map_err(|error| {
             tracing::error!(?error, "failed to seal the match response");
-            EnclaveError::Internal
+            enclave_types::Error::Internal
         })
 }
 
@@ -181,7 +181,8 @@ mod tests {
     use attested_channel::channel::{
         CHANNEL_VERSION, Requester, ResponseOpener, SealedResponse, UnwrapErr,
     };
-    use flamingo_verifier_enclave_types::{EnclaveError, MatchRequest};
+    use flamingo_verifier_enclave_types as enclave_types;
+    use flamingo_verifier_enclave_types::MatchRequest;
     use flamingo_verifier_protocol::match_token;
     use flamingo_verifier_sealed_types::{FailureReason, MatchInputs, MatchResult};
     use getrandom::SysRng;
@@ -417,7 +418,7 @@ mod tests {
 
         assert_eq!(
             handler(state, request).await.err(),
-            Some(EnclaveError::RequestNotOpened)
+            Some(enclave_types::Error::RequestNotOpened)
         );
     }
 

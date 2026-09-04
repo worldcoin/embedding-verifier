@@ -14,8 +14,10 @@
 
 mod client;
 mod config;
+mod error;
 
 pub use attested_channel::channel::Requester;
 pub use attested_channel::nitro;
-pub use client::{ClientError, FaceVerifierClient, VerifiedAssignment};
-pub use config::{Config, ConfigError};
+pub use client::{FaceVerifierClient, VerifiedAssignment};
+pub use config::Config;
+pub use error::Error;

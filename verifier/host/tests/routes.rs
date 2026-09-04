@@ -9,9 +9,9 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use common::{StubEnclaveClient, state_with};
-use flamingo_verifier_enclave_types::EnclaveError;
+use flamingo_verifier_enclave_types as enclave_types;
 use flamingo_verifier_host::AppState;
-use flamingo_verifier_host::enclave::EnclaveClientError;
+use flamingo_verifier_host::enclave;
 use flamingo_verifier_host::routes;
 use http_body_util::BodyExt as _;
 use serde_json::Value;
@@ -122,25 +122,25 @@ async fn enclave_keys_are_not_served_as_a_route() {
 async fn assignment_surfaces_enclave_failures_as_structured_errors() {
     let cases = [
         (
-            EnclaveClientError::Timeout,
+            enclave::Error::Timeout,
             StatusCode::GATEWAY_TIMEOUT,
             "enclave_timeout",
             true,
         ),
         (
-            EnclaveClientError::Transport("boom".to_string()),
+            enclave::Error::Transport("boom".to_string()),
             StatusCode::SERVICE_UNAVAILABLE,
             "enclave_unreachable",
             true,
         ),
         (
-            EnclaveClientError::Operation(EnclaveError::NotReady),
+            enclave::Error::Operation(enclave_types::Error::NotReady),
             StatusCode::SERVICE_UNAVAILABLE,
             "enclave_not_ready",
             true,
         ),
         (
-            EnclaveClientError::Operation(EnclaveError::RequestNotOpened),
+            enclave::Error::Operation(enclave_types::Error::RequestNotOpened),
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
             false,
@@ -222,8 +222,8 @@ async fn matches_maps_an_unopenable_request_to_conflict() {
     // Re-assign and re-seal: the client cannot tell this from a corrupt ciphertext, which is why
     // the retry has to be bounded client-side.
     let state = state_with(StubEnclaveClient {
-        match_result: Some(Err(EnclaveClientError::Operation(
-            EnclaveError::RequestNotOpened,
+        match_result: Some(Err(enclave::Error::Operation(
+            enclave_types::Error::RequestNotOpened,
         ))),
         ..StubEnclaveClient::default()
     });
@@ -273,7 +273,7 @@ async fn readiness_follows_the_enclave() {
 
     let (unreachable, _) = send(
         state_with(StubEnclaveClient {
-            health: Some(Err(EnclaveClientError::Timeout)),
+            health: Some(Err(enclave::Error::Timeout)),
             ..StubEnclaveClient::default()
         }),
         request(),

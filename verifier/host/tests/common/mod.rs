@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use flamingo_verifier_enclave_types::{MatchRequest, MatchResponse};
-use flamingo_verifier_host::enclave::{EnclaveClient, EnclaveClientError};
+use flamingo_verifier_host::enclave::{self, EnclaveClient};
 use flamingo_verifier_host::{AppState, Environment};
 
 /// An [`EnclaveClient`] answering from fixed results.
@@ -13,26 +13,26 @@ use flamingo_verifier_host::{AppState, Environment};
 #[derive(Default)]
 pub struct StubEnclaveClient {
     /// `None` is healthy, so only a test about readiness has to say anything.
-    pub health: Option<Result<(), EnclaveClientError>>,
-    pub encryption_key: Option<Result<Vec<u8>, EnclaveClientError>>,
-    pub match_result: Option<Result<MatchResponse, EnclaveClientError>>,
+    pub health: Option<Result<(), enclave::Error>>,
+    pub encryption_key: Option<Result<Vec<u8>, enclave::Error>>,
+    pub match_result: Option<Result<MatchResponse, enclave::Error>>,
     /// Asserted against the sealed body the route forwards, if set.
     pub expected_body: Option<Vec<u8>>,
 }
 
 #[async_trait]
 impl EnclaveClient for StubEnclaveClient {
-    async fn health(&self) -> Result<(), EnclaveClientError> {
+    async fn health(&self) -> Result<(), enclave::Error> {
         self.health.clone().unwrap_or(Ok(()))
     }
 
-    async fn encryption_key_attestation(&self) -> Result<Vec<u8>, EnclaveClientError> {
+    async fn encryption_key_attestation(&self) -> Result<Vec<u8>, enclave::Error> {
         self.encryption_key
             .clone()
             .expect("route asked for the encryption key but the stub was not configured to answer")
     }
 
-    async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, EnclaveClientError> {
+    async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, enclave::Error> {
         if let Some(expected) = &self.expected_body {
             assert_eq!(&request.body, expected);
         }

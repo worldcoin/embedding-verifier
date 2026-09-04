@@ -6,8 +6,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::Router;
 use axum::http::StatusCode;
 use axum::routing::post;
+use flamingo_verifier_client as client;
 use flamingo_verifier_client::nitro::PcrMeasurement;
-use flamingo_verifier_client::{ClientError, Config, FaceVerifierClient};
+use flamingo_verifier_client::{Config, FaceVerifierClient};
 use hex_literal::hex;
 
 /// Reaches into `attested-channel`'s fixtures rather than keeping a second copy: the document
@@ -99,7 +100,7 @@ async fn rejects_an_assignment_whose_attestation_does_not_verify() {
         .expect_err("an unverifiable document must not be accepted");
 
     assert!(
-        matches!(error, ClientError::Attestation(_)),
+        matches!(error, client::Error::Attestation(_)),
         "unexpected error: {error}"
     );
 }
@@ -119,7 +120,7 @@ async fn surfaces_a_host_error_status_rather_than_retrying() {
         .expect_err("a 503 should surface to the caller");
 
     assert!(
-        matches!(error, ClientError::Status(503)),
+        matches!(error, client::Error::Status(503)),
         "unexpected error: {error}"
     );
 }
