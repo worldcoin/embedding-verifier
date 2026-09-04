@@ -7,6 +7,8 @@ pub enum Error {
     Malformed,
     /// CBOR encoding failed.
     Encoding,
+    /// An encoded match result exceeded its fixed sealed-response envelope.
+    ResponseTooLarge,
     /// Match inputs declared a channel version this build does not implement.
     ///
     /// Distinct from [`Self::UnsupportedTokenVersion`]: this is the sealed channel's version, not

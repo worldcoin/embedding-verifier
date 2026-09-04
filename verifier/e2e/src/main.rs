@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
     let sealed_outcome = opener
         .open(&SealedResponse::from_bytes(response.ciphertext))
         .map_err(|error| anyhow!("failed to open the sealed response: {error:?}"))?;
-    let result = MatchResult::from_cbor(&sealed_outcome)
+    let result = MatchResult::from_padded_cbor(&sealed_outcome)
         .map_err(|error| anyhow!("failed to decode the sealed result: {error:?}"))?;
 
     // The sealed result is the only account of what happened; the host reported nothing but success.

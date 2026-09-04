@@ -101,6 +101,10 @@ pub enum MatchResult {
     Failed(FailureReason),
 }
 
+/// Fixed plaintext size of every sealed match response.
+pub const MATCH_RESULT_ENVELOPE_LEN: usize = 16 * 1024;
+const MATCH_RESULT_LENGTH_LEN: usize = 2;
+
 impl MatchResult {
     /// Encodes the result as CBOR.
     ///
@@ -114,6 +118,25 @@ impl MatchResult {
         Ok(encoded)
     }
 
+    /// Encodes this result in the fixed-size sealed-response envelope.
+    pub fn to_padded_cbor(&self) -> Result<Vec<u8>, Error> {
+        let encoded = self.to_cbor()?;
+        let max_result_len = MATCH_RESULT_ENVELOPE_LEN - MATCH_RESULT_LENGTH_LEN;
+        let length: u16 = encoded
+            .len()
+            .try_into()
+            .map_err(|_| Error::ResponseTooLarge)?;
+        if encoded.len() > max_result_len {
+            return Err(Error::ResponseTooLarge);
+        }
+
+        let mut envelope = vec![0; MATCH_RESULT_ENVELOPE_LEN];
+        envelope[..MATCH_RESULT_LENGTH_LEN].copy_from_slice(&length.to_be_bytes());
+        envelope[MATCH_RESULT_LENGTH_LEN..MATCH_RESULT_LENGTH_LEN + encoded.len()]
+            .copy_from_slice(&encoded);
+        Ok(envelope)
+    }
+
     /// Decodes a result.
     ///
     /// # Errors
@@ -121,6 +144,27 @@ impl MatchResult {
     /// Returns [`Error::Malformed`] if the bytes are not this framing.
     pub fn from_cbor(bytes: &[u8]) -> Result<Self, Error> {
         ciborium::from_reader(bytes).map_err(|_| Error::Malformed)
+    }
+
+    /// Decodes a result from the fixed-size sealed-response envelope.
+    pub fn from_padded_cbor(bytes: &[u8]) -> Result<Self, Error> {
+        if bytes.len() != MATCH_RESULT_ENVELOPE_LEN {
+            return Err(Error::Malformed);
+        }
+        let length = u16::from_be_bytes(
+            bytes[..MATCH_RESULT_LENGTH_LEN]
+                .try_into()
+                .map_err(|_| Error::Malformed)?,
+        ) as usize;
+        let result_end = MATCH_RESULT_LENGTH_LEN
+            .checked_add(length)
+            .filter(|end| *end <= bytes.len())
+            .ok_or(Error::Malformed)?;
+        if bytes[result_end..].iter().any(|byte| *byte != 0) {
+            return Err(Error::Malformed);
+        }
+
+        Self::from_cbor(&bytes[MATCH_RESULT_LENGTH_LEN..result_end])
     }
 }
 
@@ -151,7 +195,10 @@ pub enum FailureReason {
 mod tests {
     use attested_channel::channel::CHANNEL_VERSION;
 
-    use super::{AttestedStatement, Error, FailureReason, MatchInputs, MatchResult};
+    use super::{
+        AttestedStatement, Error, FailureReason, MATCH_RESULT_ENVELOPE_LEN, MatchInputs,
+        MatchResult,
+    };
 
     use crate::match_token::MatchToken;
 
@@ -270,6 +317,50 @@ mod tests {
                 result
             );
         }
+    }
+
+    #[test]
+    fn result_envelopes_have_the_same_length_for_every_outcome() {
+        let success = MatchResult::Success(AttestedStatement {
+            token: MatchToken::from_bytes(b"cose-sign1".to_vec()),
+            signing_key_attestation: vec![7; 5_000],
+        });
+        let failures = [
+            FailureReason::MalformedInputs,
+            FailureReason::UnsupportedVersion,
+            FailureReason::InvalidHashesJson,
+            FailureReason::ThumbnailHashMismatch,
+            FailureReason::MatchBelowThreshold,
+            FailureReason::ImageAnalysisFailed,
+        ];
+
+        let success_envelope = success.to_padded_cbor().expect("success should fit");
+
+        assert_eq!(success_envelope.len(), MATCH_RESULT_ENVELOPE_LEN);
+        assert_eq!(
+            MatchResult::from_padded_cbor(&success_envelope),
+            Ok(success)
+        );
+        for failure in failures {
+            let envelope = MatchResult::Failed(failure)
+                .to_padded_cbor()
+                .expect("failure should fit");
+            assert_eq!(envelope.len(), MATCH_RESULT_ENVELOPE_LEN);
+            assert_eq!(
+                MatchResult::from_padded_cbor(&envelope),
+                Ok(MatchResult::Failed(failure))
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_result_that_does_not_fit_the_envelope() {
+        let result = MatchResult::Success(AttestedStatement {
+            token: MatchToken::from_bytes(b"cose-sign1".to_vec()),
+            signing_key_attestation: vec![0; MATCH_RESULT_ENVELOPE_LEN],
+        });
+
+        assert_eq!(result.to_padded_cbor(), Err(Error::ResponseTooLarge));
     }
 
     /// A round trip that dropped the document would leave a token nothing can verify.
