@@ -41,8 +41,8 @@ type ChannelAead = hpke::aead::AesGcm256;
 
 /// Version of the match channel's wire contract.
 ///
-/// Bound into the HPKE `info` (see [`channel_info`]) and repeated inside the sealed request
-/// plaintext, so a version change fails at channel setup rather than as a misparse.
+/// Bound into the HPKE `info` (see [`channel_info`]) and nowhere else, so a version change fails
+/// at channel setup rather than as a misparse.
 pub const CHANNEL_VERSION: u8 = 1;
 
 /// Length of an X25519 public key, which is what the enclave attests.
