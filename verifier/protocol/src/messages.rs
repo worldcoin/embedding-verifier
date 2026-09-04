@@ -10,10 +10,6 @@ use crate::match_token::MatchToken;
 /// The sealed inputs to one match.
 ///
 /// All three frames travel here; the requester downloads the challenge image from the RP itself.
-///
-/// No channel version travels in the payload: the HPKE `info` binds
-/// [`attested_channel::channel::CHANNEL_VERSION`] on both ends, so a requester speaking another
-/// version cannot open a channel at all and never reaches this framing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchInputs {
     /// Raw liveness image bytes.
