@@ -12,8 +12,8 @@ use crate::error::Error;
 /// All three frames travel here; the requester downloads the challenge image from the RP itself.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchInputs {
-    /// Channel version the requester believes it is speaking. Advisory: the HPKE `info` binds the
-    /// same value, so a mismatched requester cannot open a channel at all.
+    /// Match payload version. The corresponding Pontifex domain is [`crate::MATCH_CHANNEL_DOMAIN`];
+    /// decoding also rejects a payload that declares an unsupported version.
     pub version: u8,
     /// Raw liveness image bytes.
     #[serde(with = "serde_bytes")]
@@ -56,11 +56,11 @@ impl MatchInputs {
     ///
     /// Returns [`Error::Malformed`] if the bytes are not this framing, or
     /// [`Error::UnsupportedChannelVersion`] if the declared version is not
-    /// [`attested_channel::channel::CHANNEL_VERSION`].
+    /// [`crate::MATCH_PROTOCOL_VERSION`].
     pub fn from_cbor(bytes: &[u8]) -> Result<Self, Error> {
         let inputs: Self = ciborium::from_reader(bytes).map_err(|_| Error::Malformed)?;
 
-        if inputs.version == attested_channel::channel::CHANNEL_VERSION {
+        if inputs.version == crate::MATCH_PROTOCOL_VERSION {
             Ok(inputs)
         } else {
             Err(Error::UnsupportedChannelVersion)
@@ -201,7 +201,7 @@ pub enum FailureReason {
 
 #[cfg(test)]
 mod tests {
-    use attested_channel::channel::CHANNEL_VERSION;
+    use crate::MATCH_PROTOCOL_VERSION;
 
     use flamingo_verifier_protocol::match_token::MatchToken;
 
@@ -212,7 +212,7 @@ mod tests {
 
     fn inputs() -> MatchInputs {
         MatchInputs {
-            version: CHANNEL_VERSION,
+            version: MATCH_PROTOCOL_VERSION,
             live_image: b"liveness-frame".to_vec(),
             credential_image: b"credential-thumbnail".to_vec(),
             light_guard_image: None,
@@ -272,7 +272,7 @@ mod tests {
         }
 
         let old = WithoutChallenge {
-            version: CHANNEL_VERSION,
+            version: MATCH_PROTOCOL_VERSION,
             live_image: b"liveness-frame".to_vec(),
             credential_image: b"credential-thumbnail".to_vec(),
             light_guard_image: None,
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn rejects_an_unsupported_version() {
         let mut inputs = inputs();
-        inputs.version = CHANNEL_VERSION + 1;
+        inputs.version = MATCH_PROTOCOL_VERSION + 1;
         let encoded = inputs.to_cbor().expect("encoding should succeed");
 
         assert_eq!(

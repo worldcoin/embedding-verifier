@@ -3,15 +3,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::Error;
 
-/// One NSM attestation document, for whichever key was asked for.
-///
-/// An attestation carries a single `public_key` field, so each key needs its own document. Both are
-/// public and relay unsealed.
+/// This boot's channel encryption key and the NSM document attesting its commitment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyAttestation {
     /// Raw COSE-encoded document.
     #[serde(with = "serde_bytes")]
     pub document: Vec<u8>,
+    /// Full X-Wing public key. The document's `public_key` field contains its Pontifex commitment.
+    #[serde(with = "serde_bytes")]
+    pub public_key: Vec<u8>,
 }
 
 /// Requests the attestation for this boot's encryption key.

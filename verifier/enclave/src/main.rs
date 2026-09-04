@@ -35,9 +35,9 @@ async fn main() -> anyhow::Result<()> {
     let (encryption_refresh, signing_refresh) = state.start_attestation_refresh();
     let state = Arc::new(state);
 
-    let attestation = state.encryption_key_attestation().await;
-    let document = SecureModule::parse_raw_attestation_doc(&attestation)
-        .map_err(|error| anyhow!("failed to parse the boot attestation document: {error:?}"))?;
+    let document = SecureModule::global()
+        .attest(None::<Vec<u8>>, None::<Vec<u8>>, None::<Vec<u8>>)
+        .context("failed to read boot measurements")?;
     attestation::log_boot_measurements(&document);
 
     info!(port = PONTIFEX_PORT, "starting enclave Pontifex server");

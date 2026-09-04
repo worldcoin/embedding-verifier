@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
-use attested_channel::channel::{SealedRequest, SealedResponse, UnwrapErr};
 use flamingo_verifier_enclave_types as enclave_types;
 use flamingo_verifier_enclave_types::{MatchRequest, MatchResponse};
 use flamingo_verifier_protocol::match_token::MatchClaims;
 use flamingo_verifier_sealed_types as sealed;
 use flamingo_verifier_sealed_types::{AttestedStatement, FailureReason, MatchInputs, MatchResult};
-use getrandom::SysRng;
 use pontifex::Request;
 use sha2::{Digest, Sha256};
 
@@ -26,17 +24,14 @@ pub async fn handler(
     state: Arc<EnclaveState>,
     request: MatchRequest,
 ) -> Result<MatchResponse, enclave_types::Error> {
-    let (plaintext, sealer) = state
-        .responder()
-        .open(&SealedRequest::from_bytes(request.body))
-        .map_err(|error| {
-            tracing::warn!(
-                ?error,
-                route = MatchRequest::ROUTE_ID,
-                "failed to open sealed request"
-            );
-            enclave_types::Error::RequestNotOpened
-        })?;
+    let (plaintext, sealer) = state.channel().open(&request.body).map_err(|error| {
+        tracing::warn!(
+            ?error,
+            route = MatchRequest::ROUTE_ID,
+            "failed to open sealed request"
+        );
+        enclave_types::Error::RequestNotOpened
+    })?;
 
     // Read before `run`, which is sync. A clone of the cached document, not an attest.
     let signing_key_attestation = state.signing_key_attestation().await;
@@ -45,7 +40,7 @@ pub async fn handler(
     let result = run(&state, &plaintext, &signing_key_attestation)?;
 
     Ok(MatchResponse {
-        ciphertext: seal(sealer, &result)?.into_bytes(),
+        ciphertext: seal(sealer, &result)?,
     })
 }
 
@@ -158,34 +153,30 @@ fn sign(
 
 /// Seals the authoritative result back to the requester.
 fn seal(
-    sealer: attested_channel::channel::ResponseSealer,
+    sealer: pontifex::ResponseSealer,
     result: &MatchResult,
-) -> Result<SealedResponse, enclave_types::Error> {
+) -> Result<Vec<u8>, enclave_types::Error> {
     let encoded = result.to_padded_cbor().map_err(|error| {
         tracing::error!(?error, "failed to encode the match result");
         enclave_types::Error::Internal
     })?;
 
-    sealer
-        .seal(&encoded, &mut UnwrapErr(SysRng))
-        .map_err(|error| {
-            tracing::error!(?error, "failed to seal the match response");
-            enclave_types::Error::Internal
-        })
+    sealer.seal(&encoded).map_err(|error| {
+        tracing::error!(?error, "failed to seal the match response");
+        enclave_types::Error::Internal
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use attested_channel::channel::{
-        CHANNEL_VERSION, Requester, ResponseOpener, SealedResponse, UnwrapErr,
-    };
     use flamingo_verifier_enclave_types as enclave_types;
     use flamingo_verifier_enclave_types::MatchRequest;
     use flamingo_verifier_protocol::match_token;
     use flamingo_verifier_sealed_types::{FailureReason, MatchInputs, MatchResult};
-    use getrandom::SysRng;
+    use flamingo_verifier_sealed_types::{MATCH_CHANNEL_DOMAIN, MATCH_PROTOCOL_VERSION};
+    use pontifex::{ChannelConsumer, ChannelDomain, ResponseOpener};
     use sha2::{Digest, Sha256};
 
     use super::handler;
@@ -270,7 +261,7 @@ mod tests {
 
     fn inputs(credential: &[u8], threshold: f32) -> MatchInputs {
         MatchInputs {
-            version: CHANNEL_VERSION,
+            version: MATCH_PROTOCOL_VERSION,
             live_image: LIVE.to_vec(),
             credential_image: credential.to_vec(),
             light_guard_image: None,
@@ -282,18 +273,17 @@ mod tests {
 
     /// Seals `inputs` to `state`, which is the whole request.
     fn request_for(state: &EnclaveState, inputs: &MatchInputs) -> (ResponseOpener, MatchRequest) {
-        let requester = Requester::new(state.encryption_public_key()).expect("valid key");
+        let requester = ChannelConsumer::from_unverified_public_key(
+            ChannelDomain::new(MATCH_CHANNEL_DOMAIN),
+            &state.encryption_public_key(),
+        )
+        .expect("valid key");
         let plaintext = inputs.to_cbor().expect("encoding should succeed");
         let (sealed, opener) = requester
-            .seal(&plaintext, &mut UnwrapErr(SysRng))
+            .seal_to_enclave(&plaintext)
             .expect("sealing should succeed");
 
-        (
-            opener,
-            MatchRequest {
-                body: sealed.into_bytes(),
-            },
-        )
+        (opener, MatchRequest { body: sealed })
     }
 
     #[tokio::test]
@@ -307,7 +297,7 @@ mod tests {
         let response = handler(state, request).await.expect("match should succeed");
 
         let plaintext = opener
-            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .open_from_enclave(&response.ciphertext)
             .expect("the requester should open its own response");
         let MatchResult::Success(attested) =
             MatchResult::from_padded_cbor(&plaintext).expect("result should decode")
@@ -348,7 +338,7 @@ mod tests {
         // The host sees only the coarse class...
         // ...while the reason travels sealed.
         let plaintext = opener
-            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .open_from_enclave(&response.ciphertext)
             .expect("should open");
         assert_eq!(
             MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
@@ -385,7 +375,7 @@ mod tests {
             .expect("should seal a rejection");
 
         let plaintext = opener
-            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .open_from_enclave(&response.ciphertext)
             .expect("should open");
         assert_eq!(
             MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
@@ -423,24 +413,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_a_wrong_domain_or_tampered_request_before_matching() {
+        for (domain, tamper) in [("another-protocol", false), (MATCH_CHANNEL_DOMAIN, true)] {
+            let state = crate::test_support::state_with(Arc::new(EchoAttestor));
+            let consumer = ChannelConsumer::from_unverified_public_key(
+                ChannelDomain::new(domain),
+                &state.encryption_public_key(),
+            )
+            .unwrap();
+            let (mut ciphertext, _) = consumer.seal_to_enclave(b"inputs").unwrap();
+            if tamper {
+                *ciphertext.last_mut().unwrap() ^= 1;
+            }
+            let error = handler(state, MatchRequest { body: ciphertext })
+                .await
+                .unwrap_err();
+            assert_eq!(error, enclave_types::Error::RequestNotOpened);
+        }
+    }
+
+    #[tokio::test]
     async fn a_non_cbor_plaintext_is_a_sealed_failure() {
         let state = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
-        let requester = Requester::new(state.encryption_public_key()).expect("valid key");
+        let requester = ChannelConsumer::from_unverified_public_key(
+            ChannelDomain::new(MATCH_CHANNEL_DOMAIN),
+            &state.encryption_public_key(),
+        )
+        .expect("valid key");
         let (sealed, opener) = requester
-            .seal(b"not cbor framing", &mut UnwrapErr(SysRng))
+            .seal_to_enclave(b"not cbor framing")
             .expect("sealing should succeed");
 
-        let response = handler(
-            state,
-            MatchRequest {
-                body: sealed.into_bytes(),
-            },
-        )
-        .await
-        .expect("a malformed plaintext is answered, not errored");
+        let response = handler(state, MatchRequest { body: sealed })
+            .await
+            .expect("a malformed plaintext is answered, not errored");
 
         let plaintext = opener
-            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .open_from_enclave(&response.ciphertext)
             .expect("should open");
         assert_eq!(
             MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
@@ -452,7 +461,7 @@ mod tests {
     async fn an_unsupported_payload_version_is_a_sealed_failure() {
         let state = state_with(MockFaceEngine::failing(FailureReason::ImageAnalysisFailed));
         let mut inputs = inputs(CREDENTIAL, 0.5);
-        inputs.version = CHANNEL_VERSION + 1;
+        inputs.version = MATCH_PROTOCOL_VERSION + 1;
         let (opener, request) = request_for(&state, &inputs);
 
         let response = handler(state, request)
@@ -460,7 +469,7 @@ mod tests {
             .expect("a bad version is answered, not errored");
 
         let plaintext = opener
-            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .open_from_enclave(&response.ciphertext)
             .expect("should open");
         assert_eq!(
             MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
@@ -484,7 +493,7 @@ mod tests {
             .expect("an unusable frame is answered, not errored");
 
         let plaintext = opener
-            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .open_from_enclave(&response.ciphertext)
             .expect("should open");
         assert_eq!(
             MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
@@ -507,7 +516,7 @@ mod tests {
         let response = handler(state, request).await.expect("match should succeed");
 
         let plaintext = opener
-            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .open_from_enclave(&response.ciphertext)
             .expect("should open");
         let MatchResult::Success(attested) =
             MatchResult::from_padded_cbor(&plaintext).expect("result should decode")
@@ -534,7 +543,7 @@ mod tests {
             .expect("a quality failure is answered, not errored");
 
         let plaintext = opener
-            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .open_from_enclave(&response.ciphertext)
             .expect("should open");
         assert_eq!(
             MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
@@ -556,7 +565,7 @@ mod tests {
             .expect("bad hashes.json is answered, not errored");
 
         let plaintext = opener
-            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .open_from_enclave(&response.ciphertext)
             .expect("should open");
         assert_eq!(
             MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
@@ -576,7 +585,7 @@ mod tests {
         let response = handler(state, request).await.expect("match should succeed");
 
         let plaintext = opener
-            .open(&SealedResponse::from_bytes(response.ciphertext))
+            .open_from_enclave(&response.ciphertext)
             .expect("should open");
         assert!(matches!(
             MatchResult::from_padded_cbor(&plaintext).expect("should decode"),
@@ -588,14 +597,14 @@ mod tests {
     async fn a_second_requester_cannot_open_the_response() {
         let state = state_with(MockFaceEngine::scoring(0.92, 0.87));
         let (_, request) = request_for(&state, &inputs(CREDENTIAL, 0.5));
-        // A different ephemeral, so a different exporter secret.
+        // A different response keypair for each request.
         let (eavesdropper, _) = request_for(&state, &inputs(CREDENTIAL, 0.5));
 
         let response = handler(state, request).await.expect("match should succeed");
 
         assert!(
             eavesdropper
-                .open(&SealedResponse::from_bytes(response.ciphertext))
+                .open_from_enclave(&response.ciphertext)
                 .is_err()
         );
     }
