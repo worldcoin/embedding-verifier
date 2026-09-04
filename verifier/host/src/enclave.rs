@@ -5,7 +5,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use flamingo_verifier_enclave_types as enclave_types;
 use flamingo_verifier_enclave_types::{
-    GetEncryptionKeyRequest, HealthRequest, MatchRequest, MatchResponse,
+    GetEncryptionKeyRequest, HealthRequest, KeyAttestation, MatchRequest, MatchResponse,
 };
 use pontifex::Request;
 use pontifex::client::ConnectionDetails;
@@ -32,8 +32,8 @@ pub trait EnclaveClient: Send + Sync {
     /// Checks whether the enclave process is reachable and ready.
     async fn health(&self) -> Result<(), Error>;
 
-    /// Fetches the attestation for the enclave's boot-scoped encryption key.
-    async fn encryption_key_attestation(&self) -> Result<Vec<u8>, Error>;
+    /// Fetches this boot's encryption key and the document attesting its commitment.
+    async fn encryption_key_attestation(&self) -> Result<KeyAttestation, Error>;
 
     /// Runs a match inside the enclave.
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, Error>;
@@ -73,10 +73,9 @@ impl EnclaveClient for PontifexEnclaveClient {
         self.call(HealthRequest, CONTROL_REQUEST_TIMEOUT).await
     }
 
-    async fn encryption_key_attestation(&self) -> Result<Vec<u8>, Error> {
+    async fn encryption_key_attestation(&self) -> Result<KeyAttestation, Error> {
         self.call(GetEncryptionKeyRequest, CONTROL_REQUEST_TIMEOUT)
             .await
-            .map(|attestation| attestation.document)
     }
 
     async fn run_match(&self, request: MatchRequest) -> Result<MatchResponse, Error> {
