@@ -17,7 +17,7 @@ pub const MAX_CACHED_AGE: Duration = Duration::from_mins(10);
 /// default `max_attestation_age_millis` (1h).
 pub const MAX_SERVABLE_AGE: Duration = Duration::from_hours(1);
 
-/// Produces attestation documents binding a public key to this enclave.
+/// Produces documents attesting a raw signing key or a channel-key commitment.
 pub trait Attestor: Send + Sync {
     /// Attests `public_key` in the document's `public_key` field.
     /// # Errors
@@ -50,7 +50,7 @@ struct CachedAttestation {
     attested_at: Instant,
 }
 
-/// A boot-scoped public key and its most recent attestation document.
+/// A boot-scoped key binding (raw key or commitment) and its latest attestation document.
 ///
 /// Call [`Self::start_refresh`] once; the returned handle must be supervised (see `main`).
 /// Until then the construction-time document is served. Readers always get the last

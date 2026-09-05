@@ -13,20 +13,16 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 ark-babyjubjub.workspace = true
-attested-channel.workspace = true
-ciborium.workspace = true
 flamingo-verifier-enclave-types.workspace = true
 flamingo-verifier-protocol.workspace = true
 flamingo-verifier-sealed-types.workspace = true
 eddsa-babyjubjub.workspace = true
 face-engine.workspace = true
-getrandom.workspace = true
 hex.workspace = true
 image.workspace = true
-pontifex = { workspace = true, features = ["nsm", "server"] }
+pontifex = { workspace = true, features = ["nsm", "server", "channel"] }
 rand.workspace = true
 serde.workspace = true
-serde_bytes.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true

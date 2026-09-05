@@ -6,7 +6,7 @@ use crate::Error;
 /// Requests a 3-way face match.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchRequest {
-    /// The sealed request: `enc || ciphertext`, relayed verbatim.
+    /// The sealed request, relayed verbatim.
     #[serde(with = "serde_bytes")]
     pub body: Vec<u8>,
 }
@@ -22,7 +22,7 @@ impl Request for MatchRequest {
 /// itself a fact about the request, so the host learns only that the enclave answered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchResponse {
-    /// The sealed payload: `response_nonce || ciphertext`, readable only by the requester.
+    /// The sealed response, readable only by the requester.
     #[serde(with = "serde_bytes")]
     pub ciphertext: Vec<u8>,
 }

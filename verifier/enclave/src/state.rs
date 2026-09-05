@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use attested_channel::channel::{ENCRYPTION_KEY_LEN, Responder, UnwrapErr};
 use eddsa_babyjubjub::EdDSAPublicKey;
 use flamingo_verifier_enclave_types as enclave_types;
-use getrandom::SysRng;
+use flamingo_verifier_sealed_types::MATCH_CHANNEL_DOMAIN;
+use pontifex::{ChannelDomain, ChannelEnclave};
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
 
 /// Immutable state generated once during enclave boot.
 pub struct EnclaveState {
-    responder: Responder,
+    channel: ChannelEnclave,
     signing_key: SigningKey,
     attested_encryption_key: AttestedKey,
     attested_signing_key: AttestedKey,
@@ -31,14 +31,18 @@ impl EnclaveState {
     ///
     /// # Errors
     ///
-    /// Returns [`enclave_types::Error`] if the signing public key cannot be serialized, or if either key
-    /// cannot be attested.
+    /// Returns [`enclave_types::Error`] if channel generation fails, the signing public key cannot
+    /// be serialized, or either key cannot be attested.
     pub fn generate(
         attestor: Arc<dyn Attestor>,
         face_engine: Arc<dyn FaceComparator>,
     ) -> Result<Self, enclave_types::Error> {
-        let mut rng = UnwrapErr(SysRng);
-        let responder = Responder::generate(&mut rng);
+        let channel = ChannelEnclave::generate(ChannelDomain::new(MATCH_CHANNEL_DOMAIN)).map_err(
+            |error| {
+                tracing::error!(?error, "failed to generate channel key");
+                enclave_types::Error::Internal
+            },
+        )?;
         let signing_key = SigningKey::generate();
         tracing::info!("generated boot-scoped sealed channel and signing keys");
 
@@ -54,14 +58,14 @@ impl EnclaveState {
 
         let attested_encryption_key = AttestedKey::new(
             Arc::clone(&attestor),
-            responder.public_key().to_vec(),
+            channel.public_key_commitment().to_vec(),
             MAX_CACHED_AGE,
         )?;
         let attested_signing_key =
             AttestedKey::new(attestor, signing_public_key.to_vec(), MAX_CACHED_AGE)?;
 
         Ok(Self {
-            responder,
+            channel,
             signing_key,
             attested_encryption_key,
             attested_signing_key,
@@ -69,16 +73,16 @@ impl EnclaveState {
         })
     }
 
-    /// Returns the responder that opens sealed requests for this boot.
+    /// Returns the channel that opens sealed requests for this boot.
     #[must_use]
-    pub const fn responder(&self) -> &Responder {
-        &self.responder
+    pub const fn channel(&self) -> &ChannelEnclave {
+        &self.channel
     }
 
-    /// Returns the X25519 public key attested for this enclave boot.
+    /// Returns the full X-Wing public key whose commitment is attested for this boot.
     #[must_use]
-    pub const fn encryption_public_key(&self) -> [u8; ENCRYPTION_KEY_LEN] {
-        self.responder.public_key()
+    pub fn encryption_public_key(&self) -> Vec<u8> {
+        self.channel.public_key()
     }
 
     /// Returns the signing key for this boot.
@@ -163,7 +167,7 @@ mod tests {
 
         assert_eq!(
             state.encryption_key_attestation().await,
-            state.encryption_public_key().to_vec()
+            pontifex::channel::public_key_commitment(&state.encryption_public_key()).to_vec()
         );
         assert_eq!(
             state.signing_key_attestation().await,

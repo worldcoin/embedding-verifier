@@ -12,9 +12,6 @@ use crate::error::Error;
 /// All three frames travel here; the requester downloads the challenge image from the RP itself.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchInputs {
-    /// Channel version the requester believes it is speaking. Advisory: the HPKE `info` binds the
-    /// same value, so a mismatched requester cannot open a channel at all.
-    pub version: u8,
     /// Raw liveness image bytes.
     #[serde(with = "serde_bytes")]
     pub live_image: Vec<u8>,
@@ -50,21 +47,13 @@ impl MatchInputs {
         Ok(Zeroizing::new(encoded))
     }
 
-    /// Decodes the inputs and checks the declared version.
+    /// Decodes the inputs from CBOR.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Malformed`] if the bytes are not this framing, or
-    /// [`Error::UnsupportedChannelVersion`] if the declared version is not
-    /// [`attested_channel::channel::CHANNEL_VERSION`].
+    /// Returns [`Error::Malformed`] if the bytes are not this framing.
     pub fn from_cbor(bytes: &[u8]) -> Result<Self, Error> {
-        let inputs: Self = ciborium::from_reader(bytes).map_err(|_| Error::Malformed)?;
-
-        if inputs.version == attested_channel::channel::CHANNEL_VERSION {
-            Ok(inputs)
-        } else {
-            Err(Error::UnsupportedChannelVersion)
-        }
+        ciborium::from_reader(bytes).map_err(|_| Error::Malformed)
     }
 }
 
@@ -185,8 +174,6 @@ impl MatchResult {
 pub enum FailureReason {
     /// The plaintext was not the CBOR framing [`MatchInputs`] writes.
     MalformedInputs,
-    /// The inputs declared a channel version the enclave does not implement.
-    UnsupportedVersion,
     /// `hashes.json` was absent, not JSON, or missing a usable `thumbnail.png` entry.
     InvalidHashesJson,
     /// The credential image did not match the `thumbnail.png` hash committed in `hashes.json`.
@@ -201,8 +188,6 @@ pub enum FailureReason {
 
 #[cfg(test)]
 mod tests {
-    use attested_channel::channel::CHANNEL_VERSION;
-
     use flamingo_verifier_protocol::match_token::MatchToken;
 
     use super::{
@@ -212,7 +197,6 @@ mod tests {
 
     fn inputs() -> MatchInputs {
         MatchInputs {
-            version: CHANNEL_VERSION,
             live_image: b"liveness-frame".to_vec(),
             credential_image: b"credential-thumbnail".to_vec(),
             light_guard_image: None,
@@ -259,7 +243,6 @@ mod tests {
     fn inputs_without_a_challenge_image_do_not_decode() {
         #[derive(serde::Serialize)]
         struct WithoutChallenge {
-            version: u8,
             #[serde(with = "serde_bytes")]
             live_image: Vec<u8>,
             #[serde(with = "serde_bytes")]
@@ -272,7 +255,6 @@ mod tests {
         }
 
         let old = WithoutChallenge {
-            version: CHANNEL_VERSION,
             live_image: b"liveness-frame".to_vec(),
             credential_image: b"credential-thumbnail".to_vec(),
             light_guard_image: None,
@@ -293,18 +275,6 @@ mod tests {
         assert_eq!(
             MatchInputs::from_cbor(b"not cbor framing").err(),
             Some(Error::Malformed)
-        );
-    }
-
-    #[test]
-    fn rejects_an_unsupported_version() {
-        let mut inputs = inputs();
-        inputs.version = CHANNEL_VERSION + 1;
-        let encoded = inputs.to_cbor().expect("encoding should succeed");
-
-        assert_eq!(
-            MatchInputs::from_cbor(&encoded).err(),
-            Some(Error::UnsupportedChannelVersion)
         );
     }
 
@@ -335,7 +305,6 @@ mod tests {
         });
         let failures = [
             FailureReason::MalformedInputs,
-            FailureReason::UnsupportedVersion,
             FailureReason::InvalidHashesJson,
             FailureReason::ThumbnailHashMismatch,
             FailureReason::MatchBelowThreshold,

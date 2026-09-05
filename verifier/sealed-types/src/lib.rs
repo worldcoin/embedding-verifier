@@ -11,6 +11,9 @@
 mod error;
 mod messages;
 
+/// Pontifex channel domain shared by the consumer and enclave.
+pub const MATCH_CHANNEL_DOMAIN: &str = "flamingo-verifier/matches/v1";
+
 pub use error::Error;
 pub use messages::{
     AttestedStatement, FailureReason, MATCH_RESULT_ENVELOPE_LEN, MatchInputs, MatchResult,
