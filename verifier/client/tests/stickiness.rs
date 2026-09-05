@@ -12,6 +12,7 @@ use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderMap, header};
 use axum::routing::post;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use flamingo_verifier_client::nitro::PcrMeasurement;
 use flamingo_verifier_client::{Config, FaceVerifierClient};
 use hex_literal::hex;
@@ -63,7 +64,8 @@ async fn carries_the_affinity_cookie_from_the_assignment_to_the_next_call() {
                     (
                         [(header::SET_COOKIE, AFFINITY_COOKIE)],
                         axum::Json(serde_json::json!({
-                            "attestation": REAL_ATTESTATION_DOC_BASE64.trim()
+                            "attestation": REAL_ATTESTATION_DOC_BASE64.trim(),
+                            "public_key": STANDARD.encode([0xab; 1216]),
                         })),
                     )
                 },

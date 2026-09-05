@@ -66,23 +66,27 @@ fn match_request(ciphertext: &str) -> Request<Body> {
 /// assertion that the assignment route asks for one key and not the other.
 fn encryption_key(attestation: Vec<u8>) -> StubEnclaveClient {
     StubEnclaveClient {
-        encryption_key: Some(Ok(attestation)),
+        encryption_key: Some(Ok(enclave_types::KeyAttestation {
+            document: attestation,
+            public_key: vec![0xab; 1216],
+        })),
         ..StubEnclaveClient::default()
     }
 }
 
 #[tokio::test]
-async fn assignment_returns_the_encryption_key_attestation_and_nothing_else() {
+async fn assignment_returns_the_document_and_full_key_in_base64() {
     let state = state_with(encryption_key(vec![1, 2, 3]));
 
     let (status, body) = send(state, assignment_request()).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["attestation"], "AQID");
+    assert_eq!(body["public_key"], STANDARD.encode(vec![0xab; 1216]));
     assert_eq!(
         body.as_object().map(serde_json::Map::len),
-        Some(1),
-        "the assignment must expose the attestation and nothing else"
+        Some(2),
+        "the assignment must expose the attestation and full public key"
     );
 }
 

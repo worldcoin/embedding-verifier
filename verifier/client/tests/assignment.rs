@@ -6,6 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::Router;
 use axum::http::StatusCode;
 use axum::routing::post;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use flamingo_verifier_client as client;
 use flamingo_verifier_client::nitro::PcrMeasurement;
 use flamingo_verifier_client::{Config, FaceVerifierClient};
@@ -58,7 +59,10 @@ async fn serve(router: Router) -> String {
 
 /// A stub host answering assignments as the real one does.
 async fn serve_assignment(attestation: &str) -> String {
-    let body = serde_json::json!({ "attestation": attestation.trim() });
+    let body = serde_json::json!({
+        "attestation": attestation.trim(),
+        "public_key": STANDARD.encode([0xab; 1216]),
+    });
 
     serve(Router::new().route(
         "/v1/enclave-assignment",
