@@ -10,7 +10,6 @@ members = [
     "verifier/protocol",
     "di/enclave",
     "di/host",
-    "shared/attested-channel",
 ]
 resolver = "3"
 
@@ -24,15 +23,12 @@ repository = "https://github.com/worldcoin/flamingo"
 publish = false
 
 [workspace.dependencies]
-aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
 anyhow = "1.0"
 ark-babyjubjub = { package = "taceo-ark-babyjubjub", version = "0.5" }
 ark-ff = "0.5"
 async-trait = "0.1"
-attested-channel = { version = "0.2.0", path = "shared/attested-channel" }
 axum = "0.8"
 base64 = "0.22"
-aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
 ciborium = "0.2"
 coset = "0.4.2"
 flamingo-verifier-api-types = { version = "0.2.0", path = "verifier/api-types" }
@@ -42,14 +38,10 @@ flamingo-verifier-protocol = { version = "0.2.0", path = "verifier/protocol" }
 flamingo-verifier-sealed-types = { version = "0.2.0", path = "verifier/sealed-types" }
 eddsa-babyjubjub = { package = "taceo-eddsa-babyjubjub", version = "0.5" }
 face-engine = { git = "https://github.com/worldcoin/biometric-engines", rev = "face-engine-v2.16.0", default-features = false, features = ["tract"] }
-getrandom = { version = "0.4", features = ["sys_rng"] }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 hex-literal = "1.1"
-hkdf = "0.13"
-hpke = { version = "0.14", default-features = false, features = ["alloc", "getrandom", "x25519", "aes"] }
 http-body-util = "0.1"
 image = { version = "=0.25.6", default-features = false, features = ["jpeg", "png", "webp"] }
-p384 = { version = "0.13", default-features = false, features = ["ecdsa", "sha384"] }
 pontifex = { version = "2.0.0", default-features = false }
 poseidon2 = { package = "taceo-poseidon2", version = "0.2" }
 rand = "0.8"
@@ -58,9 +50,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
 serde_json = "1.0"
 sha2 = { version = "0.10", default-features = false }
-# This specific version is used by the attested-channel
-# Look into that project for more details
-sha2_0_11 = { package = "sha2", version = "0.11" }
 thiserror = "2"
 tokio = { version = "1.48", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
 tower = { version = "0.5", features = ["util"] }
@@ -68,6 +57,4 @@ telemetry-batteries = { version = "0.4.1", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2", features = ["serde"] }
-webpki = "0.22"
-x509-cert = "0.2.5"
 zeroize = { version = "1", default-features = false, features = ["alloc"] }

@@ -6,29 +6,17 @@
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderMap, header};
 use axum::routing::post;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-use flamingo_verifier_client::nitro::PcrMeasurement;
+use flamingo_verifier_client::PcrMeasurement;
 use flamingo_verifier_client::{Config, FaceVerifierClient};
 use hex_literal::hex;
 
-const REAL_ATTESTATION_DOC_BASE64: &str =
-    include_str!("../../../shared/attested-channel/src/nitro/testdata/real_attestation_doc.b64");
-
-/// When the fixture was produced. Its chain is valid only for a few hours around this instant.
-const FIXTURE_TIMESTAMP_MILLIS: u64 = 1_758_628_609_915;
-
 /// What a target group's `lb_cookie` stickiness looks like on the wire.
 const AFFINITY_COOKIE: &str = "AWSALB=pod-a; Path=/";
-
-fn fixture_instant() -> SystemTime {
-    UNIX_EPOCH + Duration::from_millis(FIXTURE_TIMESTAMP_MILLIS)
-}
 
 fn config(base_url: &str) -> Config {
     let pcrs = vec![PcrMeasurement::new(
@@ -38,9 +26,7 @@ fn config(base_url: &str) -> Config {
         ),
     )];
 
-    Config::new(base_url, vec![pcrs])
-        .expect("config should be valid")
-        .with_max_attestation_age(Duration::from_secs(10 * 365 * 24 * 60 * 60))
+    Config::new(base_url, vec![pcrs]).expect("config should be valid")
 }
 
 /// Records the `Cookie` header of the request that follows the assignment.
@@ -64,8 +50,8 @@ async fn carries_the_affinity_cookie_from_the_assignment_to_the_next_call() {
                     (
                         [(header::SET_COOKIE, AFFINITY_COOKIE)],
                         axum::Json(serde_json::json!({
-                            "attestation": REAL_ATTESTATION_DOC_BASE64.trim(),
-                            "public_key": STANDARD.encode([0xab; 1216]),
+                            "attestation": "hEBAQEA=",
+                            "public_key": "a2V5"
                         })),
                     )
                 },
@@ -90,9 +76,9 @@ async fn carries_the_affinity_cookie_from_the_assignment_to_the_next_call() {
 
     for _ in 0..2 {
         client
-            .request_assignment(fixture_instant())
+            .request_assignment()
             .await
-            .expect("the fixture assignment should verify");
+            .expect_err("transport must preserve affinity even when the evidence is rejected");
     }
 
     let carried = seen

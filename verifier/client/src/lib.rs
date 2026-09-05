@@ -1,8 +1,24 @@
 //! Client for the embedding verifier's enclave-assignment flow.
 //!
 //! Fetches an assignment, verifies the AWS Nitro attestation document it carries, and yields
-//! a [`Requester`] for sealing requests to the enclave. The host is untrusted, so
-//! the enclave's identity, measurements and public key are all read from the signed document.
+//! a [`ChannelConsumer`] bound to the separately supplied public key. The signed document
+//! commits to that key; Pontifex checks the commitment, measurements, signature and freshness.
+//!
+//! ```no_run
+//! use flamingo_verifier_client::{Config, FaceVerifierClient, PcrMeasurement};
+//! use flamingo_verifier_sealed_types::MatchInputs;
+//!
+//! # async fn example(inputs: &MatchInputs, pcr0: [u8; 48]) -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Config::new(
+//!     "https://verifier.example.com",
+//!     vec![vec![PcrMeasurement::new(0, pcr0)]],
+//! )?;
+//! let client = FaceVerifierClient::new(config)?;
+//! let assignment = client.request_assignment().await?;
+//! let result = client.request_match(&assignment, inputs).await?;
+//! # Ok(())
+//! # }
+//! ```
 
 #![deny(
     clippy::all,
@@ -16,8 +32,7 @@ mod client;
 mod config;
 mod error;
 
-pub use attested_channel::channel::Requester;
-pub use attested_channel::nitro;
 pub use client::{FaceVerifierClient, VerifiedAssignment};
 pub use config::Config;
 pub use error::Error;
+pub use pontifex::{ChannelConsumer, PcrMeasurement};

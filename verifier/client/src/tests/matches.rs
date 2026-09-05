@@ -5,30 +5,24 @@
 //! be forged. `e2e` covers that against a real enclave. A *rejected* `Success` is covered here,
 //! and is the case that matters — forging one is exactly what an untrusted host would try.
 
-use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use attested_channel::channel::{Responder, SealedRequest, UnwrapErr};
-use attested_channel::nitro::VerifiedAttestation;
+use crate as client;
+use crate::PcrMeasurement;
+use crate::{Config, FaceVerifierClient};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use flamingo_verifier_client as client;
-use flamingo_verifier_client::nitro::PcrMeasurement;
-use flamingo_verifier_client::{Config, FaceVerifierClient, Requester, VerifiedAssignment};
 use flamingo_verifier_protocol::match_token::MatchToken;
-use flamingo_verifier_sealed_types::{AttestedStatement, FailureReason, MatchInputs, MatchResult};
-use getrandom::SysRng;
+use flamingo_verifier_sealed_types::{
+    AttestedStatement, FailureReason, MATCH_CHANNEL_DOMAIN, MatchInputs, MatchResult,
+};
 use hex_literal::hex;
+use pontifex::{ChannelConsumer, ChannelDomain, ChannelEnclave};
 use serde_json::{Value, json};
-
-fn instant() -> SystemTime {
-    UNIX_EPOCH + Duration::from_millis(1_758_628_609_915)
-}
 
 fn config(base_url: &str) -> Config {
     let pcrs = vec![PcrMeasurement::new(
@@ -73,7 +67,7 @@ async fn serve(router: Router) -> String {
 /// A stub that owns the enclave side of the channel.
 #[derive(Clone)]
 struct Enclave {
-    responder: Arc<Responder>,
+    responder: Arc<ChannelEnclave>,
     answer: MatchResult,
     /// The request body the client sent, for asserting the wire shape.
     seen: Arc<Mutex<Option<Value>>>,
@@ -81,24 +75,23 @@ struct Enclave {
     foreign_reply: bool,
 }
 
-/// Keyed to `responder`, bypassing `request_assignment` so the stub can open what the client seals.
-fn assignment_for(responder: &Responder) -> VerifiedAssignment {
-    VerifiedAssignment {
-        attestation: VerifiedAttestation {
-            enclave_public_key: responder.public_key().to_vec(),
-            module_id: "i-test-enc0".to_owned(),
-            timestamp_millis: 0,
-            pcrs: BTreeMap::new(),
-        },
-        requester: Requester::new(responder.public_key()).expect("key should decode"),
-    }
+// These unit tests exercise the private exchange helper with generated channel keys.
+// Verified assignments are constructed only by the public attestation-verifying path.
+fn consumer_for(enclave: &ChannelEnclave) -> ChannelConsumer {
+    ChannelConsumer::from_unverified_public_key(
+        ChannelDomain::new(MATCH_CHANNEL_DOMAIN),
+        &enclave.public_key(),
+    )
+    .expect("valid key")
 }
 
 async fn serve_enclave(
     answer: MatchResult,
     foreign_reply: bool,
-) -> (String, Arc<Responder>, Arc<Mutex<Option<Value>>>) {
-    let responder = Arc::new(Responder::generate(&mut UnwrapErr(SysRng)));
+) -> (String, Arc<ChannelEnclave>, Arc<Mutex<Option<Value>>>) {
+    let responder = Arc::new(
+        ChannelEnclave::generate(ChannelDomain::new(MATCH_CHANNEL_DOMAIN)).expect("channel key"),
+    );
     let seen = Arc::new(Mutex::new(None));
     let state = Enclave {
         responder: Arc::clone(&responder),
@@ -114,7 +107,7 @@ async fn serve_enclave(
                 |State(state): State<Enclave>, Json(body): Json<Value>| async move {
                     *state.seen.lock().expect("lock should be held") = Some(body.clone());
 
-                    let sealed = STANDARD
+                    let ciphertext = STANDARD
                         .decode(
                             body["ciphertext"]
                                 .as_str()
@@ -123,15 +116,18 @@ async fn serve_enclave(
                         .expect("ciphertext should be base64");
                     let (_, own_sealer) = state
                         .responder
-                        .open(&SealedRequest::from_bytes(sealed))
+                        .open(&ciphertext)
                         .expect("the enclave should open a request sealed to its own key");
 
                     // Same enclave key, different context: the client's opener must reject it.
                     let sealer = if state.foreign_reply {
-                        let stranger = Requester::new(state.responder.public_key())
-                            .expect("key should decode");
+                        let stranger = ChannelConsumer::from_unverified_public_key(
+                            ChannelDomain::new(MATCH_CHANNEL_DOMAIN),
+                            &state.responder.public_key(),
+                        )
+                        .expect("key should decode");
                         let (other, _) = stranger
-                            .seal(b"unrelated", &mut UnwrapErr(SysRng))
+                            .seal_to_enclave(b"unrelated")
                             .expect("sealing should succeed");
                         state
                             .responder
@@ -146,12 +142,10 @@ async fn serve_enclave(
                         .answer
                         .to_padded_cbor()
                         .expect("result should fit the envelope");
-                    let response = sealer
-                        .seal(&encoded, &mut UnwrapErr(SysRng))
-                        .expect("sealing should succeed");
+                    let response = sealer.seal(&encoded).expect("sealing should succeed");
 
                     Json(json!({
-                        "response_ciphertext": STANDARD.encode(response.into_bytes()),
+                        "response_ciphertext": STANDARD.encode(response),
                     }))
                 },
             ),
@@ -186,7 +180,7 @@ async fn a_sealed_rejection_round_trips() {
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
 
     let result = client
-        .request_match(&assignment_for(&responder), &inputs(), instant())
+        .request_match_with_consumer(&consumer_for(&responder), &inputs())
         .await
         .expect("a rejection is a normal return");
 
@@ -214,7 +208,7 @@ async fn a_reply_from_another_exchange_cannot_be_opened() {
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
 
     let error = client
-        .request_match(&assignment_for(&responder), &inputs(), instant())
+        .request_match_with_consumer(&consumer_for(&responder), &inputs())
         .await
         .expect_err("a reply sealed on another exchange must not open");
 
@@ -225,10 +219,11 @@ async fn a_reply_from_another_exchange_cannot_be_opened() {
 async fn a_stale_assignment_asks_for_a_reassignment() {
     let base_url = serve_error(StatusCode::CONFLICT, "reassign_required", true).await;
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
-    let responder = Responder::generate(&mut UnwrapErr(SysRng));
+    let responder =
+        ChannelEnclave::generate(ChannelDomain::new(MATCH_CHANNEL_DOMAIN)).expect("channel key");
 
     let error = client
-        .request_match(&assignment_for(&responder), &inputs(), instant())
+        .request_match_with_consumer(&consumer_for(&responder), &inputs())
         .await
         .expect_err("a 409 is an error, not a result");
 
@@ -242,10 +237,11 @@ async fn a_stale_assignment_asks_for_a_reassignment() {
 async fn other_envelopes_keep_their_code_and_retry_flag() {
     let base_url = serve_error(StatusCode::PAYLOAD_TOO_LARGE, "request_too_large", false).await;
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
-    let responder = Responder::generate(&mut UnwrapErr(SysRng));
+    let responder =
+        ChannelEnclave::generate(ChannelDomain::new(MATCH_CHANNEL_DOMAIN)).expect("channel key");
 
     let error = client
-        .request_match(&assignment_for(&responder), &inputs(), instant())
+        .request_match_with_consumer(&consumer_for(&responder), &inputs())
         .await
         .expect_err("a 413 is an error");
 
@@ -271,10 +267,11 @@ async fn a_status_without_an_envelope_still_surfaces() {
     );
     let base_url = serve(router).await;
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
-    let responder = Responder::generate(&mut UnwrapErr(SysRng));
+    let responder =
+        ChannelEnclave::generate(ChannelDomain::new(MATCH_CHANNEL_DOMAIN)).expect("channel key");
 
     let error = client
-        .request_match(&assignment_for(&responder), &inputs(), instant())
+        .request_match_with_consumer(&consumer_for(&responder), &inputs())
         .await
         .expect_err("a 413 is an error");
 
@@ -295,7 +292,7 @@ async fn a_statement_whose_attestation_does_not_verify_is_rejected() {
         let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
 
         let error = client
-            .request_match(&assignment_for(&responder), &inputs(), instant())
+            .request_match_with_consumer(&consumer_for(&responder), &inputs())
             .await
             .expect_err("an unverifiable attestation must not yield a statement");
 

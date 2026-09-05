@@ -44,31 +44,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aes"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35f0f96ce78e38c3dc6d8948aa8163d06385be74000f3c7a95bf1eef35d3ea32"
-dependencies = [
- "cipher",
- "cpubits",
- "cpufeatures 0.3.1",
-]
-
-[[package]]
-name = "aes-gcm"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f2b8006a0c83f52b62ba44a97b58bf76fe2f70a329e588f67f89691d93d498f"
-dependencies = [
- "aead",
- "aes",
- "cipher",
- "ctr",
- "ctutils",
- "ghash",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -329,29 +304,6 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
-
-[[package]]
-name = "attested-channel"
-version = "0.2.0"
-dependencies = [
- "aes-gcm",
- "aws-nitro-enclaves-nsm-api",
- "base64",
- "ciborium",
- "coset",
- "getrandom 0.4.3",
- "hex",
- "hex-literal",
- "hkdf",
- "hpke",
- "p384",
- "serde",
- "sha2 0.11.0",
- "thiserror 2.0.20",
- "webpki",
- "x509-cert",
- "zeroize",
-]
 
 [[package]]
 name = "autocfg"
@@ -770,12 +722,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
-name = "const-oid"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
-
-[[package]]
 name = "constant_time_eq"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -825,12 +771,6 @@ dependencies = [
  "ciborium",
  "ciborium-io",
 ]
-
-[[package]]
-name = "cpubits"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15b85f9c39137c3a891689859392b1bd49812121d0d61c9caf00d46ed5ce06ae"
 
 [[package]]
 name = "cpufeatures"
@@ -929,15 +869,6 @@ checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
 dependencies = [
  "hybrid-array",
  "rand_core 0.10.1",
-]
-
-[[package]]
-name = "ctr"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baaca1c4b237092596f64d571e9db6ce4109c4ef9742e27590f1709594461f21"
-dependencies = [
- "cipher",
 ]
 
 [[package]]
@@ -1103,7 +1034,7 @@ version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
- "const-oid 0.9.6",
+ "const-oid",
  "der_derive",
  "flagset",
  "pem-rfc7468",
@@ -1164,7 +1095,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer 0.10.4",
- "const-oid 0.9.6",
+ "const-oid",
  "crypto-common 0.1.6",
  "subtle",
 ]
@@ -1176,7 +1107,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer 0.12.1",
- "const-oid 0.10.2",
  "crypto-common 0.2.2",
  "ctutils",
  "zeroize",
@@ -1497,14 +1427,14 @@ dependencies = [
 name = "flamingo-verifier-client"
 version = "0.2.0"
 dependencies = [
- "attested-channel",
  "axum",
  "base64",
  "flamingo-verifier-api-types",
  "flamingo-verifier-protocol",
  "flamingo-verifier-sealed-types",
- "getrandom 0.4.3",
+ "hex",
  "hex-literal",
+ "pontifex",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -1518,15 +1448,12 @@ name = "flamingo-verifier-e2e"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "attested-channel",
  "flamingo-verifier-client",
  "flamingo-verifier-enclave-types",
  "flamingo-verifier-protocol",
  "flamingo-verifier-sealed-types",
- "getrandom 0.4.3",
  "hex",
  "pontifex",
- "rand 0.8.8",
  "sha2 0.10.9",
  "tokio",
 ]
@@ -1786,15 +1713,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ghash"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eecf2d5dc9b66b732b97707a0210906b1d30523eb773193ab777c0c84b3e8d5"
-dependencies = [
- "polyval",
-]
-
-[[package]]
 name = "gimli"
 version = "0.32.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1961,9 +1879,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd5130e119706b4d8c2180da6126f7e60b6c38c2d340d539219f57051f0a7af7"
 dependencies = [
  "aead",
- "aes-gcm",
  "chacha20poly1305",
- "getrandom 0.4.3",
  "hkdf",
  "hybrid-array",
  "ml-kem",
@@ -3368,17 +3284,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "polyval"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0fa31d631f2b2cb2a544d0aa321ce847a94764d701ca2becc411138b93d49cd"
-dependencies = [
- "cpubits",
- "cpufeatures 0.3.1",
- "universal-hash",
-]
-
-[[package]]
 name = "pontifex"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3388,6 +3293,7 @@ dependencies = [
  "ciborium",
  "const-fnv1a-hash",
  "coset",
+ "p384",
  "quantum-box",
  "rmp-serde",
  "serde",
@@ -3397,6 +3303,8 @@ dependencies = [
  "tokio",
  "tokio-vsock",
  "tracing",
+ "webpki",
+ "x509-cert",
  "zeroize",
 ]
 
@@ -5911,7 +5819,7 @@ version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1301e935010a701ae5f8655edc0ad17c44bad3ac5ce8c39185f75453b720ae94"
 dependencies = [
- "const-oid 0.9.6",
+ "const-oid",
  "der",
  "spki",
  "tls_codec",

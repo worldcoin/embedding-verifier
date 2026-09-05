@@ -1,8 +1,7 @@
-use std::{env, fs, path::PathBuf, time::SystemTime};
+use std::{env, fs, path::PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use attested_channel::channel::{SealedResponse, UnwrapErr};
-use flamingo_verifier_client::{Config, FaceVerifierClient};
+use flamingo_verifier_client::{Config, FaceVerifierClient, VerifiedAssignment};
 use flamingo_verifier_enclave_types::MatchRequest;
 use flamingo_verifier_protocol::match_token::{self, EdDSAPublicKey};
 use flamingo_verifier_sealed_types::{MatchInputs, MatchResult};
@@ -19,20 +18,16 @@ async fn main() -> Result<()> {
     let live_image = read_image(&image_paths.live, "live")?;
     let challenge_image = read_image(&image_paths.challenge, "challenge")?;
 
-    let enclave_cid = required_u32("ENCLAVE_CID")?;
-    let enclave_port = optional_u32("ENCLAVE_PORT", DEFAULT_ENCLAVE_PORT)?;
     let match_threshold = optional_f32("MATCH_THRESHOLD", DEFAULT_MATCH_THRESHOLD)?;
-    let connection = ConnectionDetails::new(enclave_cid, enclave_port);
 
     let config = load_config()?;
-    let verifier = config.verifier();
+    let verifier = config.verifier()?;
 
-    let assignment = FaceVerifierClient::new(config)
-        .context("failed to build the assignment client")?
-        .request_assignment(SystemTime::now())
+    let client = FaceVerifierClient::new(config).context("failed to build the client")?;
+    let assignment = client
+        .request_assignment()
         .await
         .context("enclave assignment did not verify")?;
-    let requester = assignment.requester;
 
     let hashes_json = hashes_json_for(&credential_image);
     let inputs = MatchInputs {
@@ -46,28 +41,13 @@ async fn main() -> Result<()> {
         challenge_image: challenge_image.clone(),
         match_threshold,
     };
-    let plaintext = inputs
-        .to_cbor()
-        .map_err(|error| anyhow!("failed to encode the match inputs: {error:?}"))?;
-    let (sealed, opener) = requester
-        .seal(&plaintext, &mut UnwrapErr(getrandom::SysRng))
-        .map_err(|error| anyhow!("failed to seal the match request: {error:?}"))?;
-
-    let response = pontifex::client::send(
-        connection,
-        &MatchRequest {
-            body: sealed.into_bytes(),
-        },
-    )
-    .await
-    .context("failed to call the enclave matches route")?
-    .map_err(|error| anyhow!("enclave rejected the match request: {error:?}"))?;
-
-    let sealed_outcome = opener
-        .open(&SealedResponse::from_bytes(response.ciphertext))
-        .map_err(|error| anyhow!("failed to open the sealed response: {error:?}"))?;
-    let result = MatchResult::from_padded_cbor(&sealed_outcome)
-        .map_err(|error| anyhow!("failed to decode the sealed result: {error:?}"))?;
+    let result = match env::var("VERIFIER_E2E_TRANSPORT").as_deref() {
+        Err(env::VarError::NotPresent) | Ok("http") => {
+            client.request_match(&assignment, &inputs).await?
+        }
+        Ok("vsock") => request_match_vsock(&assignment, &inputs).await?,
+        _ => bail!("VERIFIER_E2E_TRANSPORT must be http or vsock"),
+    };
 
     // The sealed result is the only account of what happened; the host reported nothing but success.
     let attested = match result {
@@ -77,9 +57,11 @@ async fn main() -> Result<()> {
 
     // The whole chain: pinned measurements, then the key the document attests, then its signature.
     let signing_key = verifier
-        .verify(&attested.signing_key_attestation, SystemTime::now())
+        .verify_attestation_document(&attested.signing_key_attestation)
         .context("the signing-key attestation document did not verify")?
-        .enclave_public_key;
+        .into_document()
+        .public_key
+        .context("attestation omitted the signing key")?;
     let signing_key = <[u8; 32]>::try_from(signing_key.as_slice())
         .map_err(|_| anyhow!("attested signing public key was not 32 bytes"))?;
     let signing_key = EdDSAPublicKey::from_compressed_bytes(signing_key)
@@ -114,6 +96,35 @@ async fn main() -> Result<()> {
         statement.match_coefficient, match_threshold
     );
     Ok(())
+}
+
+/// Exercises the internal host-to-enclave transport with the same verified assignment.
+async fn request_match_vsock(
+    assignment: &VerifiedAssignment,
+    inputs: &MatchInputs,
+) -> Result<MatchResult> {
+    let connection = ConnectionDetails::new(
+        required_u32("ENCLAVE_CID")?,
+        optional_u32("ENCLAVE_PORT", DEFAULT_ENCLAVE_PORT)?,
+    );
+    let plaintext = inputs
+        .to_cbor()
+        .map_err(|error| anyhow!("failed to encode the match inputs: {error:?}"))?;
+    let (sealed, opener) = assignment
+        .consumer()
+        .seal_to_enclave(&plaintext)
+        .map_err(|error| anyhow!("failed to seal the match request: {error:?}"))?;
+
+    let response = pontifex::client::send(connection, &MatchRequest { body: sealed })
+        .await
+        .context("failed to call the enclave matches route")?
+        .map_err(|error| anyhow!("enclave rejected the match request: {error:?}"))?;
+
+    let sealed_outcome = opener
+        .open_from_enclave(&response.ciphertext)
+        .map_err(|error| anyhow!("failed to open the sealed response: {error:?}"))?;
+    MatchResult::from_padded_cbor(&sealed_outcome)
+        .map_err(|error| anyhow!("failed to decode the sealed result: {error:?}"))
 }
 
 /// Loads the client configuration named by `VERIFIER_CONFIG`. Schema is in the README.

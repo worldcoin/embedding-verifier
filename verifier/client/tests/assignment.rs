@@ -1,29 +1,14 @@
 //! End-to-end tests for the assignment client, over real HTTP.
 
 use std::net::{Ipv4Addr, SocketAddr};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::http::StatusCode;
 use axum::routing::post;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use flamingo_verifier_client as client;
-use flamingo_verifier_client::nitro::PcrMeasurement;
+use flamingo_verifier_client::PcrMeasurement;
 use flamingo_verifier_client::{Config, FaceVerifierClient};
 use hex_literal::hex;
-
-/// Reaches into `attested-channel`'s fixtures rather than keeping a second copy: the document
-/// has to be a real signed one, and two copies would drift. A move breaks the build.
-const REAL_ATTESTATION_DOC_BASE64: &str =
-    include_str!("../../../shared/attested-channel/src/nitro/testdata/real_attestation_doc.b64");
-
-/// When the fixture was produced (2025-09-23T11:56:49.915Z). Its chain is valid only for a
-/// few hours around this instant, so tests pin the clock here.
-const FIXTURE_TIMESTAMP_MILLIS: u64 = 1_758_628_609_915;
-
-fn fixture_instant() -> SystemTime {
-    UNIX_EPOCH + Duration::from_millis(FIXTURE_TIMESTAMP_MILLIS)
-}
 
 fn config(base_url: &str) -> Config {
     let pcrs = vec![PcrMeasurement::new(
@@ -33,10 +18,7 @@ fn config(base_url: &str) -> Config {
         ),
     )];
 
-    Config::new(base_url, vec![pcrs])
-        .expect("config should be valid")
-        // Ten years, so the fixture is never rejected for staleness.
-        .with_max_attestation_age(Duration::from_secs(10 * 365 * 24 * 60 * 60))
+    Config::new(base_url, vec![pcrs]).expect("config should be valid")
 }
 
 /// Serves `router` on an ephemeral port and returns its base URL.
@@ -58,11 +40,8 @@ async fn serve(router: Router) -> String {
 }
 
 /// A stub host answering assignments as the real one does.
-async fn serve_assignment(attestation: &str) -> String {
-    let body = serde_json::json!({
-        "attestation": attestation.trim(),
-        "public_key": STANDARD.encode([0xab; 1216]),
-    });
+async fn serve_assignment(attestation: &str, public_key: &str) -> String {
+    let body = serde_json::json!({ "attestation": attestation, "public_key": public_key });
 
     serve(Router::new().route(
         "/v1/enclave-assignment",
@@ -75,38 +54,33 @@ async fn serve_assignment(attestation: &str) -> String {
 }
 
 #[tokio::test]
-async fn fetches_and_verifies_an_assignment_over_http() {
-    let base_url = serve_assignment(REAL_ATTESTATION_DOC_BASE64).await;
-
-    let verified = FaceVerifierClient::new(config(&base_url))
-        .expect("client should build")
-        .request_assignment(fixture_instant())
-        .await
-        .expect("a well-formed assignment should verify");
-
-    assert_eq!(
-        verified.attestation.timestamp_millis,
-        FIXTURE_TIMESTAMP_MILLIS
-    );
-    assert!(verified.attestation.module_id.contains("-enc"));
-    assert_eq!(verified.requester.public_key().len(), 32);
-}
-
-#[tokio::test]
 async fn rejects_an_assignment_whose_attestation_does_not_verify() {
     // A syntactically fine response carrying a document signed by nobody.
-    let base_url = serve_assignment("hEBAQEA=").await;
+    let base_url = serve_assignment("hEBAQEA=", "a2V5").await;
 
     let error = FaceVerifierClient::new(config(&base_url))
         .expect("client should build")
-        .request_assignment(fixture_instant())
+        .request_assignment()
         .await
         .expect_err("an unverifiable document must not be accepted");
 
     assert!(
-        matches!(error, client::Error::Attestation(_)),
+        matches!(error, client::Error::Channel(_)),
         "unexpected error: {error}"
     );
+}
+
+#[tokio::test]
+async fn rejects_malformed_base64_in_either_assignment_field() {
+    for (document, key) in [("!", "a2V5"), ("hEBAQEA=", "!")] {
+        let base_url = serve_assignment(document, key).await;
+        let error = FaceVerifierClient::new(config(&base_url))
+            .unwrap()
+            .request_assignment()
+            .await
+            .unwrap_err();
+        assert!(matches!(error, client::Error::MalformedAssignment));
+    }
 }
 
 #[tokio::test]
@@ -119,7 +93,7 @@ async fn surfaces_a_host_error_status_rather_than_retrying() {
 
     let error = FaceVerifierClient::new(config(&base_url))
         .expect("client should build")
-        .request_assignment(fixture_instant())
+        .request_assignment()
         .await
         .expect_err("a 503 should surface to the caller");
 
