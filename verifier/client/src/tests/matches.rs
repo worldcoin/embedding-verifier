@@ -10,9 +10,10 @@ use std::sync::{Arc, Mutex};
 
 use crate as client;
 use crate::PcrMeasurement;
+use crate::headers::ExtraHeaders;
 use crate::{Config, FaceVerifierClient};
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -173,6 +174,55 @@ async fn serve_error(status: StatusCode, code: &'static str, allow_retry: bool) 
     serve(router).await
 }
 
+/// The match carries a different body than the assignment, so a header bound to the request has
+/// to reach this route too — reaching only the assignment fails the match once it is spent.
+#[tokio::test]
+async fn carries_configured_and_per_request_headers() {
+    let enclave =
+        ChannelEnclave::generate(ChannelDomain::new(MATCH_CHANNEL_DOMAIN)).expect("channel key");
+    let seen: Arc<Mutex<Option<HeaderMap>>> = Arc::new(Mutex::new(None));
+
+    let router = Router::new()
+        .route(
+            "/v1/matches",
+            post(
+                |State(seen): State<Arc<Mutex<Option<HeaderMap>>>>, headers: HeaderMap| async move {
+                    *seen.lock().expect("lock should be held") = Some(headers);
+
+                    StatusCode::BAD_GATEWAY
+                },
+            ),
+        )
+        .with_state(Arc::clone(&seen));
+    let base_url = serve(router).await;
+
+    let config = config(&base_url)
+        .with_headers([("client-name", "world-app")])
+        .expect("configured headers should be valid");
+    let client = FaceVerifierClient::new(config).expect("client should build");
+    let headers = ExtraHeaders::new([("integrity-token", "match-token")])
+        .expect("per-request headers should be valid");
+
+    // The stub cannot answer a sealed request; what it recorded on the way in is the assertion.
+    client
+        .request_match_with_consumer(&consumer_for(&enclave), &inputs(), &headers)
+        .await
+        .expect_err("the stub answers 502");
+
+    let sent = |name: &str| {
+        seen.lock()
+            .expect("lock should be held")
+            .as_ref()
+            .expect("the route should have been called")
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+    };
+
+    assert_eq!(sent("client-name").as_deref(), Some("world-app"));
+    assert_eq!(sent("integrity-token").as_deref(), Some("match-token"));
+}
+
 #[tokio::test]
 async fn a_sealed_rejection_round_trips() {
     let answer = MatchResult::Failed(FailureReason::MatchBelowThreshold);
@@ -180,7 +230,11 @@ async fn a_sealed_rejection_round_trips() {
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
 
     let result = client
-        .request_match_with_consumer(&consumer_for(&responder), &inputs())
+        .request_match_with_consumer(
+            &consumer_for(&responder),
+            &inputs(),
+            &ExtraHeaders::default(),
+        )
         .await
         .expect("a rejection is a normal return");
 
@@ -208,7 +262,11 @@ async fn a_reply_from_another_exchange_cannot_be_opened() {
     let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
 
     let error = client
-        .request_match_with_consumer(&consumer_for(&responder), &inputs())
+        .request_match_with_consumer(
+            &consumer_for(&responder),
+            &inputs(),
+            &ExtraHeaders::default(),
+        )
         .await
         .expect_err("a reply sealed on another exchange must not open");
 
@@ -223,7 +281,11 @@ async fn a_stale_assignment_asks_for_a_reassignment() {
         ChannelEnclave::generate(ChannelDomain::new(MATCH_CHANNEL_DOMAIN)).expect("channel key");
 
     let error = client
-        .request_match_with_consumer(&consumer_for(&responder), &inputs())
+        .request_match_with_consumer(
+            &consumer_for(&responder),
+            &inputs(),
+            &ExtraHeaders::default(),
+        )
         .await
         .expect_err("a 409 is an error, not a result");
 
@@ -241,7 +303,11 @@ async fn other_envelopes_keep_their_code_and_retry_flag() {
         ChannelEnclave::generate(ChannelDomain::new(MATCH_CHANNEL_DOMAIN)).expect("channel key");
 
     let error = client
-        .request_match_with_consumer(&consumer_for(&responder), &inputs())
+        .request_match_with_consumer(
+            &consumer_for(&responder),
+            &inputs(),
+            &ExtraHeaders::default(),
+        )
         .await
         .expect_err("a 413 is an error");
 
@@ -271,7 +337,11 @@ async fn a_status_without_an_envelope_still_surfaces() {
         ChannelEnclave::generate(ChannelDomain::new(MATCH_CHANNEL_DOMAIN)).expect("channel key");
 
     let error = client
-        .request_match_with_consumer(&consumer_for(&responder), &inputs())
+        .request_match_with_consumer(
+            &consumer_for(&responder),
+            &inputs(),
+            &ExtraHeaders::default(),
+        )
         .await
         .expect_err("a 413 is an error");
 
@@ -292,7 +362,11 @@ async fn a_statement_whose_attestation_does_not_verify_is_rejected() {
         let client = FaceVerifierClient::new(config(&base_url)).expect("client should build");
 
         let error = client
-            .request_match_with_consumer(&consumer_for(&responder), &inputs())
+            .request_match_with_consumer(
+                &consumer_for(&responder),
+                &inputs(),
+                &ExtraHeaders::default(),
+            )
             .await
             .expect_err("an unverifiable attestation must not yield a statement");
 
