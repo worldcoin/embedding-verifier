@@ -9,6 +9,9 @@ members = [
     "verifier/host",
     "verifier/protocol",
     "di/enclave",
+    "verifier/worker-rpc",
+    "verifier/worker-protocol",
+    "verifier/worker-process",
     "di/host",
     "shared/attested-channel",
 ]
@@ -30,7 +33,7 @@ ark-babyjubjub = { package = "taceo-ark-babyjubjub", version = "0.5" }
 ark-ff = "0.5"
 async-trait = "0.1"
 attested-channel = { version = "0.2.0", path = "shared/attested-channel" }
-axum = "0.8"
+axum = { version = "0.8", default-features = false }
 base64 = "0.22"
 aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
 ciborium = "0.2"
@@ -42,6 +45,8 @@ flamingo-verifier-protocol = { version = "0.2.0", path = "verifier/protocol" }
 flamingo-verifier-sealed-types = { version = "0.2.0", path = "verifier/sealed-types" }
 eddsa-babyjubjub = { package = "taceo-eddsa-babyjubjub", version = "0.5" }
 face-engine = { git = "https://github.com/worldcoin/biometric-engines", rev = "face-engine-v2.16.0", default-features = false, features = ["tract"] }
+flamingo-verifier-worker-protocol = { path = "verifier/worker-protocol" }
+flamingo-verifier-worker-rpc = { path = "verifier/worker-rpc" }
 getrandom = { version = "0.4", features = ["sys_rng"] }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 hex-literal = "1.1"
@@ -49,6 +54,9 @@ hkdf = "0.13"
 hpke = { version = "0.14", default-features = false, features = ["alloc", "getrandom", "x25519", "aes"] }
 http-body-util = "0.1"
 image = { version = "=0.25.6", default-features = false, features = ["jpeg", "png", "webp"] }
+libc = "0.2"
+metrics = "0.24"
+minijail = { git = "https://github.com/google/minijail", rev = "b0b5dc6997956cdc027295ade5e425c416f30d33" }
 p384 = { version = "0.13", default-features = false, features = ["ecdsa", "sha384"] }
 pontifex = { version = "1.1.2", default-features = false }
 poseidon2 = { package = "taceo-poseidon2", version = "0.2" }
