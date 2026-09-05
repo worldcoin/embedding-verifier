@@ -12,6 +12,7 @@ use pontifex::{ChannelConsumer, ChannelDomain};
 
 use crate::config::Config;
 use crate::error::Error;
+use crate::headers::ExtraHeaders;
 
 /// Path of the assignment endpoint.
 const ASSIGNMENT_PATH: &str = "/v1/enclave-assignment";
@@ -44,6 +45,40 @@ impl VerifiedAssignment {
     }
 }
 
+/// A borrowed client with extra headers attached, sharing its pool and affinity cookie store.
+#[derive(Debug)]
+pub struct WithExtraHeaders<'a> {
+    client: &'a FaceVerifierClient,
+    headers: ExtraHeaders,
+}
+
+impl WithExtraHeaders<'_> {
+    /// Requests an assignment and returns it only if its attestation verifies.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] if the request fails, the host answers with an error status,
+    /// or the attestation document does not verify.
+    pub async fn request_assignment(&self) -> Result<VerifiedAssignment, Error> {
+        self.client.assignment(&self.headers).await
+    }
+
+    /// Runs a match against the enclave `assignment` names.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ReassignRequired`] on a stale assignment — retry once with a fresh one.
+    pub async fn request_match(
+        &self,
+        assignment: &VerifiedAssignment,
+        inputs: &MatchInputs,
+    ) -> Result<MatchResult, Error> {
+        self.client
+            .request_match_with_consumer(assignment.consumer(), inputs, &self.headers)
+            .await
+    }
+}
+
 // TODO: Rename FaceVerifierClient to FlamingoVerifierClient.
 /// Calls the face verifier host and verifies the attestation documents it relays.
 ///
@@ -68,6 +103,7 @@ impl FaceVerifierClient {
             .cookie_store(true)
             .connect_timeout(config.connect_timeout())
             .timeout(config.request_timeout())
+            .default_headers(config.headers().as_map().clone())
             .build()
             .map_err(Error::Transport)?;
 
@@ -78,6 +114,25 @@ impl FaceVerifierClient {
         })
     }
 
+    /// Adds `headers` to the requests made through the returned handle, over the configured ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a name or value is not usable in a header, or if `Cookie` is given.
+    pub fn with_request_headers<K, V>(
+        &self,
+        headers: impl IntoIterator<Item = (K, V)>,
+    ) -> Result<WithExtraHeaders<'_>, Error>
+    where
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        Ok(WithExtraHeaders {
+            client: self,
+            headers: ExtraHeaders::new(headers)?,
+        })
+    }
+
     /// Requests an assignment and returns it only if its attestation verifies.
     ///
     /// # Errors
@@ -85,11 +140,21 @@ impl FaceVerifierClient {
     /// Returns [`Error`] if the request fails, the host answers with an error status,
     /// or the attestation document does not verify.
     pub async fn request_assignment(&self) -> Result<VerifiedAssignment, Error> {
+        self.assignment(&ExtraHeaders::default()).await
+    }
+
+    async fn assignment(&self, headers: &ExtraHeaders) -> Result<VerifiedAssignment, Error> {
         let url = format!(
             "{}{ASSIGNMENT_PATH}",
             self.config.host_url().as_str().trim_end_matches('/')
         );
-        let response = self.http.post(url).send().await.map_err(Error::Request)?;
+        let response = self
+            .http
+            .post(url)
+            .headers(headers.as_map().clone())
+            .send()
+            .await
+            .map_err(Error::Request)?;
 
         let status = response.status();
         if !status.is_success() {
@@ -134,7 +199,7 @@ impl FaceVerifierClient {
         assignment: &VerifiedAssignment,
         inputs: &MatchInputs,
     ) -> Result<MatchResult, Error> {
-        self.request_match_with_consumer(assignment.consumer(), inputs)
+        self.request_match_with_consumer(assignment.consumer(), inputs, &ExtraHeaders::default())
             .await
     }
 
@@ -142,6 +207,7 @@ impl FaceVerifierClient {
         &self,
         consumer: &ChannelConsumer,
         inputs: &MatchInputs,
+        headers: &ExtraHeaders,
     ) -> Result<MatchResult, Error> {
         let plaintext = inputs.to_cbor().map_err(|_| Error::MalformedResult)?;
         let (sealed, opener) = consumer
@@ -158,6 +224,7 @@ impl FaceVerifierClient {
             .json(&MatchRequestBody {
                 ciphertext: STANDARD.encode(sealed),
             })
+            .headers(headers.as_map().clone())
             .send()
             .await
             .map_err(Error::Request)?;

@@ -26,7 +26,11 @@ fn config(base_url: &str) -> Config {
         ),
     )];
 
-    Config::new(base_url, vec![pcrs]).expect("config should be valid")
+    Config::new(base_url, vec![pcrs])
+        .expect("config should be valid")
+        // Configured here so the run also proves headers do not displace the cookie.
+        .with_headers([("client-name", "world-app")])
+        .expect("configured headers should be valid")
 }
 
 /// Records the `Cookie` header of the request that follows the assignment.
@@ -74,8 +78,11 @@ async fn carries_the_affinity_cookie_from_the_assignment_to_the_next_call() {
     let client =
         FaceVerifierClient::new(config(&format!("http://{address}"))).expect("client should build");
 
+    // A handle per request, since that is how a caller sets headers bound to one of them.
     for _ in 0..2 {
         client
+            .with_request_headers([("integrity-token", "per-request")])
+            .expect("per-request headers should be valid")
             .request_assignment()
             .await
             .expect_err("transport must preserve affinity even when the evidence is rejected");

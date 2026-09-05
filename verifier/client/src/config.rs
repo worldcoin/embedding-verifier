@@ -8,6 +8,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
+use crate::headers::ExtraHeaders;
 use url::Url;
 
 use pontifex::attestation::{PcrConfig, PcrMeasurement, Verifier};
@@ -44,6 +45,9 @@ pub struct Config {
     /// Bound on a whole request.
     #[serde(default = "default_request_timeout_millis")]
     request_timeout_millis: u64,
+    /// Headers to add to every request. Set with [`Config::with_headers`], never from JSON.
+    #[serde(skip)]
+    headers: ExtraHeaders,
 }
 
 impl Config {
@@ -68,6 +72,7 @@ impl Config {
             max_attestation_age_millis: default_max_attestation_age_millis(),
             connect_timeout_millis: default_connect_timeout_millis(),
             request_timeout_millis: default_request_timeout_millis(),
+            headers: ExtraHeaders::default(),
         };
         config.validate()?;
 
@@ -79,6 +84,24 @@ impl Config {
     pub fn with_max_attestation_age(mut self, max_age: Duration) -> Self {
         self.max_attestation_age_millis = u64::try_from(max_age.as_millis()).unwrap_or(u64::MAX);
         self
+    }
+
+    /// Sends `headers` on every request, replacing any set by an earlier call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a name or value is not usable in a header, or if `Cookie` is given.
+    pub fn with_headers<K, V>(
+        mut self,
+        headers: impl IntoIterator<Item = (K, V)>,
+    ) -> Result<Self, Error>
+    where
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        self.headers = ExtraHeaders::new(headers)?;
+
+        Ok(self)
     }
 
     /// Loads a configuration from JSON.
@@ -159,6 +182,11 @@ impl Config {
     #[must_use]
     pub const fn request_timeout(&self) -> Duration {
         Duration::from_millis(self.request_timeout_millis)
+    }
+
+    /// Headers to add to every request.
+    pub(crate) const fn headers(&self) -> &ExtraHeaders {
+        &self.headers
     }
 }
 

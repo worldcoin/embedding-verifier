@@ -31,8 +31,9 @@
 mod client;
 mod config;
 mod error;
+mod headers;
 
-pub use client::{FaceVerifierClient, VerifiedAssignment};
+pub use client::{FaceVerifierClient, VerifiedAssignment, WithExtraHeaders};
 pub use config::Config;
 pub use error::Error;
 pub use pontifex::{ChannelConsumer, PcrMeasurement};
